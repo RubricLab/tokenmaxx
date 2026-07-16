@@ -128,10 +128,12 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 		process.chdir(homedir())
 	} catch {}
 	process.on('unhandledRejection', reason => {
-		process.stderr.write(`unhandled rejection: ${errorMessage(reason)}\n`)
+		process.stderr.write(
+			`[${new Date().toISOString()}] unhandled rejection: ${errorMessage(reason)}\n`
+		)
 	})
 	process.on('uncaughtException', error => {
-		process.stderr.write(`uncaught exception: ${errorMessage(error)}\n`)
+		process.stderr.write(`[${new Date().toISOString()}] uncaught exception: ${errorMessage(error)}\n`)
 	})
 	const lock = await acquireDaemonLock(context.paths.managerLock)
 	try {

@@ -3,7 +3,7 @@ import { userInfo } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import { type Account, AccountEmailSchema } from '../../domain.ts'
-import { ApplicationError } from '../../errors.ts'
+import { ApplicationError, isNetworkFailureText } from '../../errors.ts'
 import type { FetchImplementation } from '../../http.ts'
 import type { ApplicationPaths } from '../../paths.ts'
 
@@ -66,7 +66,8 @@ export interface ClaudeCommandRunner {
 	): Promise<number>
 	captured(
 		command: readonly string[],
-		environment: Record<string, string | undefined>
+		environment: Record<string, string | undefined>,
+		stdinText?: string
 	): Promise<{
 		exitCode: number
 		stdout: string
@@ -105,11 +106,11 @@ function decodeSecurityOutput(output: string): string {
 
 export function defaultClaudeCommandRunner(): ClaudeCommandRunner {
 	return {
-		async captured(command, environment) {
+		async captured(command, environment, stdinText) {
 			const processHandle = Bun.spawn([...command], {
 				env: { ...process.env, ...environment },
 				stderr: 'pipe',
-				stdin: 'ignore',
+				stdin: stdinText === undefined ? 'ignore' : Buffer.from(stdinText),
 				stdout: 'pipe'
 			})
 			const timeout = setTimeout(() => processHandle.kill('SIGTERM'), 30_000)
@@ -326,20 +327,87 @@ function serializedScopes(scopes: ClaudeOauth['scopes']): string | undefined {
 	}
 }
 
+const profileRefreshTails = new Map<string, Promise<void>>()
+
+async function withProfileRefreshLock<Result>(
+	profilePath: string,
+	operation: () => Promise<Result>
+): Promise<Result> {
+	const key = canonicalClaudeProfilePath(profilePath)
+	const previous = profileRefreshTails.get(key) ?? Promise.resolve()
+	let release: (() => void) | undefined
+	const current = new Promise<void>(resolve => {
+		release = resolve
+	})
+	const tail = previous.then(() => current)
+	profileRefreshTails.set(key, tail)
+	await previous
+	try {
+		return await operation()
+	} finally {
+		release?.()
+		if (profileRefreshTails.get(key) === tail) {
+			profileRefreshTails.delete(key)
+		}
+	}
+}
+
+async function restoreClaudeCredentialIfClobbered(input: {
+	credential: ClaudeOauth
+	profilePath: string
+	reader: ClaudeProfileCredentialReader
+	runner: ClaudeCommandRunner
+}): Promise<void> {
+	const readable = await input.reader.read(input.profilePath).then(
+		() => true,
+		() => false
+	)
+	if (readable) {
+		return
+	}
+	// Written via `security -i` stdin so the credential never appears in argv;
+	// the interactive parser needs quotes and backslashes escaped.
+	const payload = JSON.stringify({ claudeAiOauth: input.credential }).replace(/["\\]/g, '\\$&')
+	await input.runner.captured(
+		['security', '-i'],
+		{},
+		`add-generic-password -U -a "${currentUser()}" -s "${claudeKeychainService(input.profilePath)}" -w "${payload}"\n`
+	)
+}
+
 export async function refreshClaudeProfile(input: {
 	profilePath: string
 	runner?: ClaudeCommandRunner
 	credentialReader?: ClaudeProfileCredentialReader
+	staleAccessToken?: string
 }): Promise<ClaudeOauth> {
 	const runner = input.runner ?? defaultClaudeCommandRunner()
 	const reader = input.credentialReader ?? defaultClaudeCredentialReader(runner)
-	const credential = await reader.read(input.profilePath)
-	await projectClaudeCredential({
-		credential,
-		runner,
-		targetProfilePath: input.profilePath
+	return withProfileRefreshLock(input.profilePath, async () => {
+		const credential = await reader.read(input.profilePath)
+		if (input.staleAccessToken !== undefined && credential.accessToken !== input.staleAccessToken) {
+			return credential
+		}
+		try {
+			await projectClaudeCredential({
+				credential,
+				runner,
+				targetProfilePath: input.profilePath
+			})
+			return await reader.read(input.profilePath)
+		} catch (error) {
+			// A failed `claude auth login` can leave the keychain holding empty
+			// tokens; put the pre-refresh credential back so the account is not
+			// bricked (it is still valid whenever the failure was network-side).
+			await restoreClaudeCredentialIfClobbered({
+				credential,
+				profilePath: input.profilePath,
+				reader,
+				runner
+			}).catch(() => undefined)
+			throw error
+		}
 	})
-	return reader.read(input.profilePath)
 }
 
 export async function projectClaudeCredential(input: {
@@ -354,9 +422,10 @@ export async function projectClaudeCredential(input: {
 		CLAUDE_CONFIG_DIR: input.targetProfilePath
 	})
 	if (result.exitCode !== 0) {
-		throw new ApplicationError(
-			'REAUTHENTICATION_REQUIRED',
-			result.stderr.trim() || `Claude profile refresh exited with ${result.exitCode}`
-		)
+		const detail = result.stderr.trim() || `Claude profile refresh exited with ${result.exitCode}`
+		if (isNetworkFailureText(detail)) {
+			throw new ApplicationError('PROVIDER_UNREACHABLE', detail)
+		}
+		throw new ApplicationError('REAUTHENTICATION_REQUIRED', detail)
 	}
 }

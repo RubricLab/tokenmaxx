@@ -1,5 +1,5 @@
 import type { ProviderId } from './domain.ts'
-import { ApplicationError, errorMessage } from './errors.ts'
+import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
 import type { FetchImplementation } from './http.ts'
 
 export interface UpstreamInjection {
@@ -200,6 +200,22 @@ function forwardHeaders(incoming: Headers, injection: UpstreamInjection): Header
 	return headers
 }
 
+function proxyErrorResponse(
+	provider: ProviderId,
+	status: number,
+	kind: string,
+	message: string
+): Response {
+	const payload =
+		provider === 'anthropic'
+			? { error: { message, type: 'api_error' }, type: 'error' }
+			: { error: { code: kind, message, type: 'api_error' } }
+	return new Response(`${JSON.stringify(payload)}\n`, {
+		headers: { 'content-type': 'application/json', 'x-tokenmaxx-error': kind },
+		status
+	})
+}
+
 function passThrough(response: Response): Response {
 	const headers = new Headers(response.headers)
 	for (const header of strippedResponseHeaders) {
@@ -236,35 +252,66 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 					signal: request.signal
 				})
 
+			const providerLabel = route.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'
 			let injection: UpstreamInjection | null
 			try {
 				injection = await options.source.resolve(route.provider)
 			} catch (error) {
-				return new Response(`tokenmaxx proxy: ${errorMessage(error)}\n`, { status: 502 })
+				if (isNetworkFailure(error)) {
+					return proxyErrorResponse(
+						route.provider,
+						502,
+						'credential-refresh-unreachable',
+						`tokenmaxx proxy: could not refresh ${route.provider} credentials — ${errorMessage(error)}. This is a local network/DNS/VPN problem, not an ${providerLabel} API error.`
+					)
+				}
+				return proxyErrorResponse(
+					route.provider,
+					503,
+					'credential-unusable',
+					`tokenmaxx proxy: ${errorMessage(error)}`
+				)
 			}
 			if (injection === null) {
-				return new Response(`tokenmaxx proxy: no active ${route.provider} account\n`, {
-					status: 503
-				})
+				return proxyErrorResponse(
+					route.provider,
+					503,
+					'no-active-account',
+					`tokenmaxx proxy: no active ${route.provider} account`
+				)
 			}
 
 			let response: Response
 			try {
 				response = await send(injection)
 			} catch (error) {
-				return new Response(`tokenmaxx proxy: upstream unreachable (${errorMessage(error)})\n`, {
-					status: 502
-				})
+				return proxyErrorResponse(
+					route.provider,
+					502,
+					'upstream-unreachable',
+					`tokenmaxx proxy: could not reach ${injection.baseUrl} — ${errorMessage(error)}. The request never left this machine (local network/DNS/VPN problem), so this is not an ${providerLabel} API error.`
+				)
 			}
 			if (response.status === 401) {
+				const originalStatus = response.status
+				const originalStatusText = response.statusText
+				const originalHeaders = response.headers
+				const originalBody = await response.arrayBuffer().catch(() => new ArrayBuffer(0))
+				let retried: Response | null = null
 				try {
-					await response.body?.cancel()
 					await options.source.refresh(route.provider)
 					const refreshed = await options.source.resolve(route.provider)
 					if (refreshed !== null) {
-						response = await send(refreshed)
+						retried = await send(refreshed)
 					}
 				} catch {}
+				response =
+					retried ??
+					new Response(originalBody, {
+						headers: originalHeaders,
+						status: originalStatus,
+						statusText: originalStatusText
+					})
 			}
 			const forwarded = passThrough(response)
 			if (options.record !== undefined && response.ok && forwarded.body !== null) {

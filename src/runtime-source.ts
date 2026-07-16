@@ -1,5 +1,5 @@
 import type { Account, ProviderId } from './domain.ts'
-import { ApplicationError } from './errors.ts'
+import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
 import type { FetchImplementation } from './http.ts'
 import { defaultClaudeCredentialReader, refreshClaudeProfile } from './providers/claude/auth.ts'
 import {
@@ -74,7 +74,8 @@ export function createRuntimeCredentialSource(
 		if (forceRefresh || stale) {
 			credential = await refreshClaudeProfile({
 				credentialReader: reader,
-				profilePath: account.profilePath
+				profilePath: account.profilePath,
+				staleAccessToken: credential.accessToken
 			})
 		}
 		return {
@@ -98,6 +99,13 @@ export function createRuntimeCredentialSource(
 				? await openAiInjection(account, forceRefresh)
 				: await anthropicInjection(account, forceRefresh)
 		} catch (error) {
+			if (isNetworkFailure(error)) {
+				throw new ApplicationError(
+					'UPSTREAM_UNREACHABLE',
+					`could not refresh ${account.label} credentials: ${errorMessage(error)}`,
+					{ cause: error instanceof Error ? error : undefined }
+				)
+			}
 			const cli = provider === 'openai' ? 'codex' : 'claude'
 			throw new ApplicationError(
 				'ACTIVE_CREDENTIAL_UNUSABLE',

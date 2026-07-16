@@ -66,7 +66,11 @@ export class AnthropicProviderAdapter implements ProviderAdapter {
 		const reader = defaultClaudeCredentialReader()
 		let credential = await reader.read(profilePath)
 		if (credential.expiresAt <= this.#dependencies.now().getTime() + 300_000) {
-			credential = await refreshClaudeProfile({ credentialReader: reader, profilePath })
+			credential = await refreshClaudeProfile({
+				credentialReader: reader,
+				profilePath,
+				staleAccessToken: credential.accessToken
+			})
 		}
 		if (!scopesPermitUsage(credential.scopes)) {
 			throw new ApplicationError(
@@ -93,7 +97,11 @@ export class AnthropicProviderAdapter implements ProviderAdapter {
 			if (!(error instanceof ApplicationError) || error.code !== 'REAUTHENTICATION_REQUIRED') {
 				throw error
 			}
-			credential = await refreshClaudeProfile({ credentialReader: reader, profilePath })
+			credential = await refreshClaudeProfile({
+				credentialReader: reader,
+				profilePath,
+				staleAccessToken: credential.accessToken
+			})
 			return verifyIdentity()
 		})
 		assertIdentity(anthropicAccount, profile.accountId)
@@ -105,7 +113,11 @@ export class AnthropicProviderAdapter implements ProviderAdapter {
 			if (!(error instanceof ApplicationError) || error.code !== 'ACCESS_TOKEN_REJECTED') {
 				throw error
 			}
-			credential = await refreshClaudeProfile({ credentialReader: reader, profilePath })
+			credential = await refreshClaudeProfile({
+				credentialReader: reader,
+				profilePath,
+				staleAccessToken: credential.accessToken
+			})
 			profile = await verifyIdentity()
 			return fetchClaudeUsage({
 				accessToken: credential.accessToken,

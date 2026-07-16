@@ -329,19 +329,25 @@ export class AccountManager {
 				continue
 			}
 			this.#lastProbeStartedAt.set(account.id, this.#dependencies.now().getTime())
-			await this.refreshAccount(account).catch(error => {
-				process.stderr.write(
-					`probe failed for ${account.provider} ${account.label}: ${errorMessage(error)}\n`
-				)
-				if (error instanceof ApplicationError && error.code === 'USAGE_RATE_LIMITED') {
-					this.#probeCooldownUntil.set(account.id, this.#dependencies.now().getTime() + 5 * 60_000)
+			await this.refreshAccount(account).then(
+				() => {
+					this.#probeCooldownUntil.delete(account.id)
+				},
+				error => {
+					process.stderr.write(
+						`[${this.#dependencies.now().toISOString()}] probe failed for ${account.provider} ${account.label}: ${errorMessage(error)}\n`
+					)
+					const cooldown = this.probeCooldownForError(error)
+					if (cooldown !== null) {
+						this.#probeCooldownUntil.set(account.id, this.#dependencies.now().getTime() + cooldown)
+					}
+					this.#store.saveAccount({
+						...account,
+						health: healthForError(error),
+						updatedAt: this.#dependencies.now().toISOString()
+					})
 				}
-				this.#store.saveAccount({
-					...account,
-					health: healthForError(error),
-					updatedAt: this.#dependencies.now().toISOString()
-				})
-			})
+			)
 		}
 		if (this.#stopping) {
 			return
@@ -351,6 +357,22 @@ export class AccountManager {
 				return
 			}
 			await this.evaluateAutomation(provider)
+		}
+	}
+
+	private probeCooldownForError(error: unknown): number | null {
+		if (!(error instanceof ApplicationError)) {
+			return null
+		}
+		switch (error.code) {
+			case 'USAGE_RATE_LIMITED':
+				return 5 * 60_000
+			// Each retry spawns `claude auth login`; hammering a dead refresh
+			// token every probe risks burning the whole token family.
+			case 'REAUTHENTICATION_REQUIRED':
+				return 15 * 60_000
+			default:
+				return null
 		}
 	}
 
