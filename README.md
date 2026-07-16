@@ -25,7 +25,7 @@
 ## Install
 
 ```bash
-bun add -g tokenmaxx@alpha      # pre-launch — drop @alpha at the first stable release
+bun add -g tokenmaxx
 ```
 
 ```bash
