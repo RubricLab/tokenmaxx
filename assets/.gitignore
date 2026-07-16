@@ -1,0 +1,6 @@
+# Intermediates — regenerated from assets.config.ts + the fixture seam.
+.tmp/
+tapes/
+
+# generated/ IS committed: the README embeds those images, so GitHub needs them
+# in the repo. Regenerate any time with `bun run assets`.

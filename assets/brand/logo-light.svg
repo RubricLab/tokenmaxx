@@ -1,0 +1,14 @@
+<svg width="660" height="132" viewBox="0 0 660 132" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-label="tokenmaxx — a Rubric Labs project">
+  <!-- logo mark: three rate-limit meters (green / amber / red) -->
+  <rect x="10" y="20" width="92" height="92" rx="22" fill="#f2f4f8" stroke="#c7cedb" stroke-width="1.5"/>
+  <rect x="30" y="42" width="52" height="9" rx="4.5" fill="#e3e9f2"/>
+  <rect x="30" y="42" width="20" height="9" rx="4.5" fill="#1f9d57"/>
+  <rect x="30" y="61" width="52" height="9" rx="4.5" fill="#e3e9f2"/>
+  <rect x="30" y="61" width="37" height="9" rx="4.5" fill="#b9770f"/>
+  <rect x="30" y="80" width="52" height="9" rx="4.5" fill="#e3e9f2"/>
+  <rect x="30" y="80" width="49" height="9" rx="4.5" fill="#d23b48"/>
+  <!-- wordmark -->
+  <text x="126" y="72" font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace" font-size="50" font-weight="700" fill="#0b62d6">tokenmaxx</text>
+  <text x="128" y="100" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="15.5" fill="#5a6472">a rate-limit control plane for Codex &amp; Claude Code</text>
+  <text x="650" y="30" text-anchor="end" font-family="ui-monospace, monospace" font-size="11" letter-spacing="3.5" fill="#aab2bd">RUBRIC LABS</text>
+</svg>

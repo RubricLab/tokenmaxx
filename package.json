@@ -1,0 +1,61 @@
+{
+  "name": "tokenmaxx",
+  "version": "0.0.0-alpha.0",
+  "description": "A local proxy that juggles rate limits across your Codex and Claude Code accounts — with live token-throughput analytics.",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "bin": {
+    "tokenmaxx": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "assets": "bun run assets:screens && bun run assets:flagship",
+    "assets:screens": "bun run assets/render.ts",
+    "assets:flagship": "bun run assets/flagship.ts",
+    "build": "bun run clean && bun build ./src/index.ts --target bun --outdir dist --external '@opentui/*' && chmod 755 dist/index.js",
+    "check": "bun run typecheck && bun run lint",
+    "clean": "rm -rf dist",
+    "dev": "bun run src/index.ts",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "prepublishOnly": "bun run check && bun run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "codex",
+    "claude-code",
+    "cli",
+    "proxy",
+    "rate-limits",
+    "tokens",
+    "analytics",
+    "tokenmaxx"
+  ],
+  "preferGlobal": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RubricLab/tokenmaxx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RubricLab/tokenmaxx/issues"
+  },
+  "homepage": "https://tokenmaxx.sh",
+  "author": "Rubric Labs",
+  "dependencies": {
+    "@opentui/core": "^0.4.3",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  }
+}

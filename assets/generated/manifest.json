@@ -1,0 +1,26 @@
+[
+  {
+    "name": "accounts",
+    "caption": "Every account and its live rate-limit windows, at a glance."
+  },
+  {
+    "name": "hot",
+    "caption": "The active Codex account is nearly out — auto-rotate is about to fire."
+  },
+  {
+    "name": "expanded",
+    "caption": "Press space: plan tier, per-window reset countdowns, account id."
+  },
+  {
+    "name": "analytics",
+    "caption": "Combined token throughput across all accounts and both providers."
+  },
+  {
+    "name": "analytics-week",
+    "caption": "Total tokens and ≈ API value over the timeframe."
+  },
+  {
+    "name": "onboarding",
+    "caption": "A fresh install: sign in, then route native codex & claude."
+  }
+]
