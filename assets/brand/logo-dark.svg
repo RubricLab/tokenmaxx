@@ -1,14 +1,14 @@
-<svg width="660" height="132" viewBox="0 0 660 132" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-label="tokenmaxx — a Rubric Labs project">
-  <!-- logo mark: three rate-limit meters (green / amber / red) -->
-  <rect x="10" y="20" width="92" height="92" rx="22" fill="#0f1216" stroke="#2a3038" stroke-width="1.5"/>
-  <rect x="30" y="42" width="52" height="9" rx="4.5" fill="#1b2330"/>
-  <rect x="30" y="42" width="20" height="9" rx="4.5" fill="#3ad07a"/>
-  <rect x="30" y="61" width="52" height="9" rx="4.5" fill="#1b2330"/>
-  <rect x="30" y="61" width="37" height="9" rx="4.5" fill="#f0a83a"/>
-  <rect x="30" y="80" width="52" height="9" rx="4.5" fill="#1b2330"/>
-  <rect x="30" y="80" width="49" height="9" rx="4.5" fill="#ff5f6e"/>
-  <!-- wordmark -->
-  <text x="126" y="72" font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace" font-size="50" font-weight="700" fill="#5ab0ff">tokenmaxx</text>
-  <text x="128" y="100" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="15.5" fill="#8b93a1">a rate-limit control plane for Codex &amp; Claude Code</text>
-  <text x="650" y="30" text-anchor="end" font-family="ui-monospace, monospace" font-size="11" letter-spacing="3.5" fill="#4b515c">RUBRIC LABS</text>
+<svg width="560" height="100" viewBox="0 0 560 100" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-label="tokenmaxx — a Rubric Labs project">
+  <!-- tokenmaxx mark: ascending token-throughput bars on the Rubric 3x3 grid -->
+  <g transform="translate(4,18) scale(2)">
+    <rect width="32" height="32" rx="3" fill="#12161c" stroke="#2a3038" stroke-width="0.75"/>
+    <path fill="#5ab0ff" d="M7 19h6v6H7zM13 13h6v12h-6zM19 7h6v18h-6z"/>
+  </g>
+  <text x="86" y="48" font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace" font-size="39" font-weight="700" letter-spacing="-1" fill="#5ab0ff">tokenmaxx</text>
+  <text x="88" y="74" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="13.5" fill="#8b93a1">rate-limit control plane · Codex + Claude Code</text>
+  <!-- Rubric mark -->
+  <g transform="translate(521,10) scale(0.9)">
+    <rect width="32" height="32" rx="3" fill="#12161c" stroke="#2a3038" stroke-width="0.75"/>
+    <path fill="#e6e6e6" d="M7 7h6v18H7zM13 13h6v6h-6zM19 7h6v6h-6z"/>
+  </g>
 </svg>

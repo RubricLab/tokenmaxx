@@ -106,7 +106,7 @@ Inspired by [`codex-account-switcher`](https://github.com/Sls0n/codex-account-sw
 
 <div align="center">
 <br/>
-<a href="https://rubriclabs.com"><img alt="Rubric Labs" src="assets/brand/rubric-mark.png" width="52"></a>
+<a href="https://rubriclabs.com"><img alt="Rubric Labs" src="assets/brand/rubric-mark.svg" width="44"></a>
 <br/>
 <sub>Built by <a href="https://rubriclabs.com">Rubric Labs</a> · <a href="./LICENSE">go nuts</a></sub>
 </div>
