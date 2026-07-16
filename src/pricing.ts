@@ -1,32 +1,31 @@
 export interface ModelPrice {
-  inputPerMTok: number;
-  outputPerMTok: number;
+	inputPerMTok: number
+	outputPerMTok: number
 }
 
 const PRICES: ReadonlyArray<{ match: string; price: ModelPrice }> = [
-  { match: "claude-opus", price: { inputPerMTok: 15, outputPerMTok: 75 } },
-  { match: "claude-sonnet", price: { inputPerMTok: 3, outputPerMTok: 15 } },
-  { match: "claude-haiku", price: { inputPerMTok: 0.8, outputPerMTok: 4 } },
-  { match: "claude-fable", price: { inputPerMTok: 1, outputPerMTok: 5 } },
-  { match: "gpt-5", price: { inputPerMTok: 1.25, outputPerMTok: 10 } },
-  { match: "o4", price: { inputPerMTok: 1.1, outputPerMTok: 4.4 } },
-];
+	{ match: 'claude-opus', price: { inputPerMTok: 15, outputPerMTok: 75 } },
+	{ match: 'claude-sonnet', price: { inputPerMTok: 3, outputPerMTok: 15 } },
+	{ match: 'claude-haiku', price: { inputPerMTok: 0.8, outputPerMTok: 4 } },
+	{ match: 'claude-fable', price: { inputPerMTok: 1, outputPerMTok: 5 } },
+	{ match: 'gpt-5', price: { inputPerMTok: 1.25, outputPerMTok: 10 } },
+	{ match: 'o4', price: { inputPerMTok: 1.1, outputPerMTok: 4.4 } }
+]
 
-const DEFAULT_PRICE: ModelPrice = { inputPerMTok: 3, outputPerMTok: 15 };
+const DEFAULT_PRICE: ModelPrice = { inputPerMTok: 3, outputPerMTok: 15 }
 
 export function priceFor(model: string | null | undefined): ModelPrice {
-  const key = (model ?? "").toLowerCase();
-  return PRICES.find((entry) => key.includes(entry.match))?.price ?? DEFAULT_PRICE;
+	const key = (model ?? '').toLowerCase()
+	return PRICES.find(entry => key.includes(entry.match))?.price ?? DEFAULT_PRICE
 }
 
 export function costUsd(
-  model: string | null | undefined,
-  inputTokens: number,
-  outputTokens: number,
+	model: string | null | undefined,
+	inputTokens: number,
+	outputTokens: number
 ): number {
-  const price = priceFor(model);
-  return (
-    (inputTokens / 1_000_000) * price.inputPerMTok +
-    (outputTokens / 1_000_000) * price.outputPerMTok
-  );
+	const price = priceFor(model)
+	return (
+		(inputTokens / 1_000_000) * price.inputPerMTok + (outputTokens / 1_000_000) * price.outputPerMTok
+	)
 }

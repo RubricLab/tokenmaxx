@@ -1,4 +1,4 @@
 export type FetchImplementation = (
-  input: string | URL | Request,
-  initialization?: RequestInit,
-) => Promise<Response>;
+	input: string | URL | Request,
+	initialization?: RequestInit
+) => Promise<Response>

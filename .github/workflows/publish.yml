@@ -1,0 +1,16 @@
+name: Release Package
+
+on:
+ push:
+  branches:
+   - main
+
+permissions:
+ contents: read
+ packages: write
+ id-token: write
+
+jobs:
+ release:
+  uses: rubriclab/package/.github/workflows/release-package.yml@main
+  secrets: inherit
