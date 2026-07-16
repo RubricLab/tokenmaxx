@@ -31,7 +31,8 @@ function buildTokens(scale: number): TokenAnalytics {
 		const target = Math.round(150_000 * hours * 0.5 * scale)
 		const buckets = raw.map(value => Math.round((value / rawSum) * target))
 		const totalTokens = buckets.reduce((sum, value) => sum + value, 0)
-		const totalInput = Math.round(totalTokens * 0.7)
+		const totalCached = Math.round(totalTokens * 0.62)
+		const totalInput = Math.round(totalTokens * 0.28)
 		const codexTokens = Math.round(totalTokens * 0.55)
 		const claudeTokens = totalTokens - codexTokens
 		const codexCost = costUsd(
@@ -57,8 +58,9 @@ function buildTokens(scale: number): TokenAnalytics {
 			key: timeframe.key,
 			peakPerHour: Math.round(peakBucket * (3_600_000 / bucketMs)),
 			topModel: totalTokens === 0 ? null : 'claude-opus-4-8',
+			totalCached,
 			totalInput,
-			totalOutput: totalTokens - totalInput,
+			totalOutput: totalTokens - totalInput - totalCached,
 			totalTokens
 		}
 	})

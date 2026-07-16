@@ -20,6 +20,7 @@ export interface ProxyUsageEvent {
 	model: string | null
 	inputTokens: number
 	outputTokens: number
+	cacheReadTokens: number
 }
 
 export interface ProxyOptions {
@@ -28,18 +29,33 @@ export interface ProxyOptions {
 	record?: (event: ProxyUsageEvent) => void
 }
 
+interface SseUsage {
+	input_tokens?: number
+	prompt_tokens?: number
+	output_tokens?: number
+	completion_tokens?: number
+	cache_read_input_tokens?: number
+	cache_creation_input_tokens?: number
+	input_tokens_details?: { cached_tokens?: number }
+}
+
 interface SseEvent {
 	type?: string
 	model?: string
-	message?: { model?: string; usage?: Record<string, number> }
-	usage?: Record<string, number>
-	response?: { model?: string; usage?: Record<string, number> }
+	message?: { model?: string; usage?: SseUsage }
+	usage?: SseUsage
+	response?: { model?: string; usage?: SseUsage }
 }
 
 function createUsageObserver(
 	provider: ProviderId,
 	contentType: string,
-	onUsage: (usage: { model: string | null; inputTokens: number; outputTokens: number }) => void
+	onUsage: (usage: {
+		model: string | null
+		inputTokens: number
+		outputTokens: number
+		cacheReadTokens: number
+	}) => void
 ) {
 	const decoder = new TextDecoder()
 	const isSse = contentType.includes('text/event-stream')
@@ -48,6 +64,7 @@ function createUsageObserver(
 	let model: string | null = null
 	let input = 0
 	let output = 0
+	let cacheRead = 0
 	let saw = false
 	const maxJson = 4_000_000
 
@@ -62,10 +79,8 @@ function createUsageObserver(
 			if (event.type === 'message_start' && event.message) {
 				model = event.message.model ?? model
 				const usage = event.message.usage ?? {}
-				input +=
-					(usage.input_tokens ?? 0) +
-					(usage.cache_read_input_tokens ?? 0) +
-					(usage.cache_creation_input_tokens ?? 0)
+				input += (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
+				cacheRead += usage.cache_read_input_tokens ?? 0
 				saw = true
 			} else if (event.type === 'message_delta' && event.usage) {
 				output = event.usage.output_tokens ?? output
@@ -75,7 +90,9 @@ function createUsageObserver(
 		}
 		const usage = event.response?.usage ?? event.usage
 		if (usage) {
-			input = usage.input_tokens ?? usage.prompt_tokens ?? input
+			const cached = usage.input_tokens_details?.cached_tokens ?? 0
+			input = Math.max(0, (usage.input_tokens ?? usage.prompt_tokens ?? input) - cached)
+			cacheRead = cached
 			output = usage.output_tokens ?? usage.completion_tokens ?? output
 			model = event.response?.model ?? event.model ?? model
 			saw = true
@@ -87,8 +104,9 @@ function createUsageObserver(
 			if (!isSse && jsonBuffer.length > 0) {
 				consume(jsonBuffer)
 			}
-			if (saw && input + output > 0) {
+			if (saw && input + output + cacheRead > 0) {
 				onUsage({
+					cacheReadTokens: cacheRead,
 					inputTokens: input,
 					model: model && model.length > 0 ? model : null,
 					outputTokens: output
@@ -256,6 +274,7 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 					usage =>
 						options.record?.({
 							at: Date.now(),
+							cacheReadTokens: usage.cacheReadTokens,
 							inputTokens: usage.inputTokens,
 							model: usage.model,
 							outputTokens: usage.outputTokens,

@@ -24,6 +24,7 @@ import type { StateStore, TokenTimeframeAggregate } from './storage.ts'
 function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe {
 	let totalInput = 0
 	let totalOutput = 0
+	let totalCached = 0
 	let costTotal = 0
 	const byProvider = {
 		anthropic: { costUsd: 0, tokens: 0 },
@@ -31,10 +32,11 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 	}
 	let top: { model: string; tokens: number } | null = null
 	for (const entry of aggregate.byModel) {
-		const entryCost = costUsd(entry.model, entry.input, entry.output)
-		const entryTokens = entry.input + entry.output
+		const entryCost = costUsd(entry.model, entry.input, entry.output, entry.cached)
+		const entryTokens = entry.input + entry.output + entry.cached
 		totalInput += entry.input
 		totalOutput += entry.output
+		totalCached += entry.cached
 		costTotal += entryCost
 		const bucket = entry.provider === 'anthropic' ? byProvider.anthropic : byProvider.openai
 		bucket.tokens += entryTokens
@@ -52,9 +54,10 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 		key: aggregate.key,
 		peakPerHour: peakBucket * (3_600_000 / aggregate.bucketMs),
 		topModel: top?.model ?? null,
+		totalCached,
 		totalInput,
 		totalOutput,
-		totalTokens: totalInput + totalOutput
+		totalTokens: totalInput + totalOutput + totalCached
 	}
 }
 

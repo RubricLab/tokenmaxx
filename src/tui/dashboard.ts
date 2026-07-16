@@ -10,7 +10,7 @@ import type {
 } from '../domain.ts'
 import { readAnalytics, refreshUsage, requestPolicy, requestSwitch } from '../ipc.ts'
 import {
-	brailleLine,
+	brailleArea,
 	compactNumber,
 	compactUsd,
 	detectThemeName,
@@ -297,30 +297,32 @@ function throughputCard(
 ) {
 	const body: ReturnType<typeof Box>[] = []
 	if (tokens === undefined || tokens.totalTokens === 0) {
-		for (let index = 0; index < Math.max(1, height - 1); index += 1) {
+		for (let index = 0; index < Math.max(1, Math.floor(height / 2)); index += 1) {
 			body.push(Box({ flexDirection: 'row' }, Text({ content: ' ', fg: rgb(ctx.theme.bg) })))
 		}
 		body.push(
 			Box(
-				{ flexDirection: 'row' },
-				Text({ content: '  no token usage yet — run ', fg: rgb(ctx.theme.dim) }),
+				{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
+				Text({ content: 'no token usage yet — run ', fg: rgb(ctx.theme.dim) }),
 				Text({ content: 'codex', fg: rgb(ctx.theme.fg) }),
 				Text({ content: ' or ', fg: rgb(ctx.theme.dim) }),
 				Text({ content: 'claude', fg: rgb(ctx.theme.fg) }),
-				Text({ content: ' and it fills in', fg: rgb(ctx.theme.dim) })
+				Text({ content: ' and it fills in live', fg: rgb(ctx.theme.dim) })
 			)
 		)
 	} else {
-		const columns = throughputColumns(tokens.buckets, width * 2)
+		const axisTop = `${compactNumber(tokens.peakPerHour)}/h`
+		const gutter = Math.max(6, axisTop.length)
+		const chartWidth = Math.max(16, width - gutter - 1)
+		const columns = throughputColumns(tokens.buckets, chartWidth * 2)
 		const peak = Math.max(...columns, 1)
-		const chart = brailleLine(columns, width, height, peak)
-		const axisTop = `${compactNumber(tokens.peakPerHour)}/h`.padStart(6)
+		const chart = brailleArea(columns, chartWidth, height, peak)
 		chart.forEach((line, index) => {
-			const axis = index === 0 ? axisTop : index === chart.length - 1 ? '     0' : '      '
+			const label = index === 0 ? axisTop : index === chart.length - 1 ? '0' : ''
 			body.push(
 				Box(
 					{ flexDirection: 'row' },
-					Text({ content: `${axis} `, fg: rgb(ctx.theme.faint) }),
+					Text({ content: `${label.padStart(gutter)} `, fg: rgb(ctx.theme.faint) }),
 					Text({ content: line, fg: rgb(ctx.theme.accent) })
 				)
 			)
@@ -328,14 +330,20 @@ function throughputCard(
 		body.push(
 			Box(
 				{ flexDirection: 'row' },
-				Text({ content: '       ', fg: rgb(ctx.theme.bg) }),
+				Text({ content: ' '.repeat(gutter + 1), fg: rgb(ctx.theme.bg) }),
 				Text({
-					content: `${timeframe.label} ago`.padEnd(Math.max(0, width - 3)),
+					content: `${timeframe.label} ago`.padEnd(Math.max(0, chartWidth - 3)),
 					fg: rgb(ctx.theme.faint)
 				}),
 				Text({ content: 'now', fg: rgb(ctx.theme.faint) })
 			)
 		)
+		const spanHours = (tokens.bucketMs * tokens.buckets.length) / 3_600_000
+		const averagePerHour = spanHours > 0 ? tokens.totalTokens / spanHours : 0
+		const recent = tokens.buckets.slice(-2)
+		const nowPerHour = Math.max(...recent, 0) * (3_600_000 / tokens.bucketMs)
+		const cachedShare =
+			tokens.totalTokens > 0 ? Math.round((tokens.totalCached / tokens.totalTokens) * 100) : 0
 		body.push(
 			Box(
 				{ flexDirection: 'row', paddingLeft: 1 },
@@ -347,8 +355,26 @@ function throughputCard(
 				}),
 				Text({ content: '   ≈ ', fg: rgb(ctx.theme.dim) }),
 				Text({ attributes: 1, content: compactUsd(tokens.costUsd), fg: rgb(ctx.theme.good) }),
+				Text({ content: ' API value', fg: rgb(ctx.theme.dim) }),
+				Text({
+					content: cachedShare > 0 ? `   ${cachedShare}% cached` : '',
+					fg: rgb(ctx.theme.dim)
+				})
+			)
+		)
+		body.push(
+			Box(
+				{ flexDirection: 'row', paddingLeft: 1 },
+				Text({ content: 'now ', fg: rgb(ctx.theme.dim) }),
+				Text({
+					attributes: 1,
+					content: `${compactNumber(nowPerHour)}/h`,
+					fg: rgb(nowPerHour > 0 ? ctx.theme.accent : ctx.theme.faint)
+				}),
 				Text({ content: '   peak ', fg: rgb(ctx.theme.dim) }),
-				Text({ content: `${compactNumber(tokens.peakPerHour)}/h`, fg: rgb(ctx.theme.accent) }),
+				Text({ content: `${compactNumber(tokens.peakPerHour)}/h`, fg: rgb(ctx.theme.fg) }),
+				Text({ content: '   avg ', fg: rgb(ctx.theme.dim) }),
+				Text({ content: `${compactNumber(averagePerHour)}/h`, fg: rgb(ctx.theme.fg) }),
 				Text({
 					content: tokens.topModel === null ? '' : `   top ${tokens.topModel}`,
 					fg: rgb(ctx.theme.faint)
@@ -395,7 +421,7 @@ function analyticsBody(ctx: Ctx, analytics: AnalyticsSnapshot, timeframe: Timefr
 	const cols = process.stdout.columns ?? 80
 	const rows = process.stdout.rows ?? 24
 	const width = Math.max(24, Math.min(160, cols - 12))
-	const height = Math.max(4, Math.min(10, rows - 16))
+	const height = Math.max(4, Math.min(10, rows - 17))
 	const tokens = analytics.tokens?.timeframes.find(entry => entry.key === timeframe.key)
 	return [timeframeBar(ctx, timeframe), throughputCard(ctx, tokens, timeframe, height, width)]
 }

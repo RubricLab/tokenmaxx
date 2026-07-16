@@ -148,6 +148,52 @@ export function brailleLine(
 	return rows
 }
 
+export function brailleArea(
+	columns: readonly (number | null)[],
+	width: number,
+	height: number,
+	max = 100
+): string[] {
+	const dotRows = height * 4
+	const dotCols = width * 2
+	const scale = max <= 0 ? 1 : max
+	const grid: boolean[][] = Array.from({ length: dotCols }, () => new Array(dotRows).fill(false))
+	for (let x = 0; x < dotCols; x += 1) {
+		const value = columns[x]
+		if (value === null || value === undefined || value <= 0) {
+			continue
+		}
+		const top = Math.max(1, Math.min(dotRows, Math.round((value / scale) * dotRows)))
+		const column = grid[x]
+		if (column === undefined) {
+			continue
+		}
+		for (let y = 0; y < top; y += 1) {
+			column[y] = true
+		}
+	}
+	const rows: string[] = []
+	for (let charRow = 0; charRow < height; charRow += 1) {
+		const topDotY = dotRows - 1 - charRow * 4
+		let line = ''
+		for (let charColumn = 0; charColumn < width; charColumn += 1) {
+			let bits = 0
+			for (let subColumn = 0; subColumn < 2; subColumn += 1) {
+				const gx = charColumn * 2 + subColumn
+				for (let subRow = 0; subRow < 4; subRow += 1) {
+					const gy = topDotY - subRow
+					if (gy >= 0 && grid[gx]?.[gy]) {
+						bits |= brailleDots[subColumn]?.[subRow] ?? 0
+					}
+				}
+			}
+			line += bits === 0 ? ' ' : String.fromCharCode(0x2800 + bits)
+		}
+		rows.push(line)
+	}
+	return rows
+}
+
 export function resetCountdown(resetAtIso: string | null, nowMillis: number): string | null {
 	if (resetAtIso === null) {
 		return null

@@ -185,6 +185,7 @@ export const TokenEventSchema = z
 	.object({
 		accountId: z.uuid().nullable(),
 		at: z.number().int().nonnegative(),
+		cacheReadTokens: z.number().int().nonnegative(),
 		inputTokens: z.number().int().nonnegative(),
 		model: z.string().min(1).nullable(),
 		outputTokens: z.number().int().nonnegative(),
@@ -208,6 +209,7 @@ export const TokenTimeframeSchema = z
 		key: z.string(),
 		peakPerHour: z.number().nonnegative(),
 		topModel: z.string().nullable(),
+		totalCached: z.number().nonnegative(),
 		totalInput: z.number().nonnegative(),
 		totalOutput: z.number().nonnegative(),
 		totalTokens: z.number().nonnegative()

@@ -32,7 +32,7 @@ export interface TokenTimeframeAggregate {
 	key: string
 	bucketMs: number
 	buckets: number[]
-	byModel: { model: string; provider: string; input: number; output: number }[]
+	byModel: { model: string; provider: string; input: number; output: number; cached: number }[]
 }
 
 export interface StateStore {
@@ -165,6 +165,7 @@ function migrate(database: Database): void {
       account_id TEXT,
       model TEXT,
       input_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
       output_tokens INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS token_events_at ON token_events(at);
@@ -178,6 +179,16 @@ function migrate(database: Database): void {
 			.all()
 			.map(column => column.name)
 	)
+	const tokenColumns = new Set(
+		database
+			.query<TableColumnRow, []>('PRAGMA table_info(token_events)')
+			.all()
+			.map(column => column.name)
+	)
+	if (!tokenColumns.has('cache_read_tokens')) {
+		database.exec('ALTER TABLE token_events ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0')
+		database.exec('DELETE FROM token_events')
+	}
 	const requiresLabelMigration = !accountColumns.has('label')
 	const requiresExternalAccountIdMigration = !accountColumns.has('external_account_id')
 	const requiresExternalUserIdMigration = !accountColumns.has('external_user_id')
@@ -513,7 +524,7 @@ export function createStateStore(databasePath: string): StateStore {
 		const parsed = TokenEventSchema.parse(event)
 		database
 			.query(
-				'INSERT INTO token_events (at, provider, account_id, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)'
+				'INSERT INTO token_events (at, provider, account_id, model, input_tokens, output_tokens, cache_read_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)'
 			)
 			.run(
 				parsed.at,
@@ -521,7 +532,8 @@ export function createStateStore(databasePath: string): StateStore {
 				parsed.accountId,
 				parsed.model,
 				parsed.inputTokens,
-				parsed.outputTokens
+				parsed.outputTokens,
+				parsed.cacheReadTokens
 			)
 		database.query('DELETE FROM token_events WHERE at < ?').run(parsed.at - maxTokenEventAgeMs)
 	}
@@ -534,13 +546,13 @@ export function createStateStore(databasePath: string): StateStore {
 			{ b: number; tokens: number },
 			[number, number, number, number]
 		>(
-			'SELECT CAST((at - ?) / ? AS INTEGER) AS b, SUM(input_tokens + output_tokens) AS tokens FROM token_events WHERE at >= ? AND at <= ? GROUP BY b'
+			'SELECT CAST((at - ?) / ? AS INTEGER) AS b, SUM(input_tokens + output_tokens + cache_read_tokens) AS tokens FROM token_events WHERE at >= ? AND at <= ? GROUP BY b'
 		)
 		const modelQuery = database.query<
-			{ model: string | null; provider: string; input: number; output: number },
+			{ model: string | null; provider: string; input: number; output: number; cached: number },
 			[number, number]
 		>(
-			'SELECT model, provider, SUM(input_tokens) AS input, SUM(output_tokens) AS output FROM token_events WHERE at >= ? AND at <= ? GROUP BY model, provider'
+			'SELECT model, provider, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached FROM token_events WHERE at >= ? AND at <= ? GROUP BY model, provider'
 		)
 		return timeframes.map(({ key, ms }) => {
 			const start = nowMillis - ms
@@ -551,6 +563,7 @@ export function createStateStore(databasePath: string): StateStore {
 				buckets[index] = (buckets[index] ?? 0) + row.tokens
 			}
 			const byModel = modelQuery.all(start, nowMillis).map(row => ({
+				cached: row.cached,
 				input: row.input,
 				model: row.model ?? 'unknown',
 				output: row.output,
