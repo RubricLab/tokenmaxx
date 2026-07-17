@@ -1,3 +1,4 @@
+- [2026-07-17] [drop the asset factory: fixture renders, remotion, brand generator](https://github.com/RubricLab/tokenmaxx/commit/3de71c1a13402ff8abb24bb111cdca42a25d5267)
 - [2026-07-17] [routing becomes a plain tokenmaxx on/off in settings
 
 The accounts title is quiet when on (just the auto policy) and shows '✗ off'
