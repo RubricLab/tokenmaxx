@@ -1,7 +1,7 @@
 {
 	"author": "Rubric Labs",
 	"bin": {
-		"tokenmaxx": "dist/index.js"
+		"tokenmaxx": "dist/launcher.cjs"
 	},
 	"dependencies": {
 		"@opentui/core": "^0.4.3",
@@ -50,7 +50,7 @@
 		"assets:flagship": "bun run assets/flagship.ts",
 		"assets:screens": "bun run assets/render.ts",
 		"bleed": "bun x npm-check-updates -u",
-		"build": "bun run clean && bun build ./src/index.ts --target bun --outdir dist --external '@opentui/*' && chmod 755 dist/index.js",
+		"build": "bun run clean && bun build ./src/index.ts --target bun --outdir dist --external '@opentui/*' && cp bin/launcher.cjs dist/launcher.cjs && chmod 755 dist/index.js dist/launcher.cjs",
 		"check": "bun run typecheck && bun x biome check . && bun test",
 		"clean": "rm -rf dist",
 		"dev": "bun run src/index.ts",
@@ -62,5 +62,5 @@
 		"post-commit": "bun x @rubriclab/package post-commit"
 	},
 	"type": "module",
-	"version": "0.0.14"
+	"version": "0.0.15"
 }

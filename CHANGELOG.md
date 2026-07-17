@@ -1,3 +1,4 @@
+- [2026-07-17] [run under any package manager via a bun-locating launcher](https://github.com/RubricLab/tokenmaxx/commit/0beb61a97cee44a780eeeaae46b0ce598fa19531)
 - [2026-07-17] [view modes, switch flash, update prompt, fewer probes](https://github.com/RubricLab/tokenmaxx/commit/2d4a9507b04d4e167b863cf3f4f2dcd5778b27f4)
 - [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/01bab2e6760ff74f92fb5d34e63949c7a690db78)
 - [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/6cacce71b04ff308e9ce235ac6d5a3a4d897fde6)
