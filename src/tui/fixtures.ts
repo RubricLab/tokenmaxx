@@ -556,7 +556,10 @@ const relay: ScenarioBuilder = now => {
 const blitz: ScenarioBuilder = now => {
 	const t0 = Date.parse('2026-07-15T11:00:00.000Z') // 7:00 AM in New York
 	const minutes = Math.max(0, (now - t0) / MINUTE)
-	const shiftLength = 95
+	// Short enough that all five Claude seats go hot (4 handoffs × 65 min = 260
+	// min) well BEFORE the first 5h window resets at minute 300 — the board
+	// fills to the last row, then availability starts coming back from the top.
+	const shiftLength = 65
 	interface Runner {
 		n: number
 		provider: ProviderId
@@ -568,8 +571,10 @@ const blitz: ScenarioBuilder = now => {
 		burnMinutes: number
 	}
 	const runners: Runner[] = [
-		{ burnMinutes: 380, email: 'dexter@rubriclabs.com', n: 1, provider: 'openai', sevenStart: 34 },
-		{ burnMinutes: 380, email: 'ship@rubriclabs.com', n: 2, provider: 'openai', sevenStart: 22 },
+		// Codex burns gently: legs land at minutes 455 and 910, mid-gap between
+		// Claude handoffs (multiples of 65, offset 33), so flashes never overlap.
+		{ burnMinutes: 455, email: 'dexter@rubriclabs.com', n: 1, provider: 'openai', sevenStart: 34 },
+		{ burnMinutes: 455, email: 'ship@rubriclabs.com', n: 2, provider: 'openai', sevenStart: 22 },
 		{ burnMinutes: 600, email: 'ops@rubriclabs.com', n: 6, provider: 'openai', sevenStart: 11 },
 		{ burnMinutes: 700, email: 'dexter@rubriclabs.com', n: 3, provider: 'anthropic', sevenStart: 44 },
 		{
@@ -631,9 +636,11 @@ const blitz: ScenarioBuilder = now => {
 	const claudeShiftStart = (k: number) => k * shiftLength + claudePhase
 	const claudeActive = (k: number): Runner | undefined =>
 		claudeRunners[((k % claudeRunners.length) + claudeRunners.length) % claudeRunners.length]
+	// The day starts cold: no pre-history shifts, so the board genuinely fills
+	// top-down from the morning instead of inheriting hot rows from "yesterday".
 	const lastShiftStart = (runner: Runner): number | null => {
 		const kNow = claudeShiftIndex(minutes)
-		for (let k = kNow; k >= kNow - claudeRunners.length; k -= 1) {
+		for (let k = kNow; k >= Math.max(0, kNow - claudeRunners.length); k -= 1) {
 			if (claudeActive(k)?.n === runner.n) {
 				return claudeShiftStart(k)
 			}
@@ -654,7 +661,7 @@ const blitz: ScenarioBuilder = now => {
 	}
 	const claudeActiveMinutes = (runner: Runner, m: number): number => {
 		let total = 0
-		for (let k = -1, kNow = claudeShiftIndex(m); k <= kNow; k += 1) {
+		for (let k = 0, kNow = claudeShiftIndex(m); k <= kNow; k += 1) {
 			if (claudeActive(k)?.n !== runner.n) {
 				continue
 			}
