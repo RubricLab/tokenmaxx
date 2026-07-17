@@ -349,6 +349,19 @@ async function login(
 			? `Signed in ${account.label}.\n`
 			: `Re-authenticated ${account.label}; live sessions pick it up on their next request.\n`
 	)
+	// A new account is only useful once its provider is routed. Turn routing on
+	// automatically the first time one is added, so onboarding is just "sign in"
+	// — the operator can still toggle it off later on the accounts page.
+	if (existing === undefined) {
+		const status = await installStatus()
+		const alreadyRouted = provider === 'openai' ? status.codexRouted : status.claudeRouted
+		if (!alreadyRouted) {
+			await setRouting(context, provider, true).catch(() => undefined)
+			process.stdout.write(
+				`Turned on native ${providerArgument} routing — run ${providerArgument} as usual.\n`
+			)
+		}
+	}
 }
 
 async function removeUnstoredAccount(account: Account): Promise<void> {

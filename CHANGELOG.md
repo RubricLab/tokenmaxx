@@ -1,3 +1,4 @@
+- [2026-07-17] [auto-enable routing when the first account is added](https://github.com/RubricLab/tokenmaxx/commit/c296237cdff57d09a3616a5438e3d50d5b97980e)
 - [2026-07-17] [compact tier shows two window columns](https://github.com/RubricLab/tokenmaxx/commit/eb8e6ab164aef67d55e0cd91c9d5199d8c9e18d6)
 - [2026-07-17] [content-fit account panels; calmer demo fixture (codex 7d, claude 5h+fable)](https://github.com/RubricLab/tokenmaxx/commit/90f68e234e843e80130856235efbb959b2ac0251)
 - [2026-07-17] [routing as a loud on/off on accounts; clearer metrics + settings; aligned resets](https://github.com/RubricLab/tokenmaxx/commit/28539c21d8eb42b5dc79f767cc9c9dda9b15bed2)
