@@ -1,9 +1,0 @@
-{
-	"redirects": [
-		{
-			"destination": "https://github.com/RubricLab/tokenmaxx",
-			"permanent": false,
-			"source": "/(.*)"
-		}
-	]
-}

@@ -11,7 +11,6 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.0.0",
 		"@rubriclab/config": "*",
-		"@rubriclab/package": "*",
 		"@types/bun": "^1.2.0",
 		"typescript": "^5.8.0"
 	},
@@ -52,12 +51,12 @@
 		"clean": "rm -rf dist",
 		"dev": "bun run src/index.ts",
 		"format": "bun x biome check --write .",
-		"prepare": "bun x @rubriclab/package prepare",
+		"prepare": "git config core.hooksPath .git/hooks && bun x simple-git-hooks",
 		"typecheck": "tsc --noEmit"
 	},
 	"simple-git-hooks": {
-		"post-commit": "bun x @rubriclab/package post-commit"
+		"post-commit": "[ -n \"$AMENDING\" ] || { bun -e 'const f=Bun.file(\"package.json\");const p=await f.json();const v=p.version.split(\".\").map(Number);v[2]++;p.version=v.join(\".\");await Bun.write(f,JSON.stringify(p,null,\"\\t\")+\"\\n\")' && git add package.json && AMENDING=1 git commit --amend --no-verify --no-edit; }"
 	},
 	"type": "module",
-	"version": "0.0.35"
+	"version": "0.0.36"
 }
