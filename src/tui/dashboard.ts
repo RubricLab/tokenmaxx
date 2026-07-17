@@ -1098,6 +1098,7 @@ export async function runTuiDashboard(
 					}, tick)
 				: null
 		let finished = false
+		const hangup = () => finish()
 		finish = (result?: DashboardAction) => {
 			if (finished) {
 				return
@@ -1107,11 +1108,21 @@ export async function runTuiDashboard(
 			if (interval !== null) {
 				clearInterval(interval)
 			}
+			process.stdin.off('end', hangup)
+			process.stdin.off('close', hangup)
+			process.stdin.off('error', hangup)
+			process.stdout.off('error', hangup)
+			process.off('SIGHUP', hangup)
 			try {
 				renderer.destroy()
 			} catch {}
 			resolve()
 		}
+		process.stdin.once('end', hangup)
+		process.stdin.once('close', hangup)
+		process.stdin.once('error', hangup)
+		process.stdout.once('error', hangup)
+		process.once('SIGHUP', hangup)
 		const changeTimeframe = (delta: number) => {
 			state.timeframeIndex = Math.max(0, Math.min(TIMEFRAMES.length - 1, state.timeframeIndex + delta))
 			paint()

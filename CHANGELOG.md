@@ -1,4 +1,5 @@
-- [2026-07-17] update rubriclab package
+- [2026-07-17] exit when the terminal goes away, fixes #2
+- [2026-07-17] [update rubriclab package](https://github.com/RubricLab/tokenmaxx/commit/6fbdedfde9cb80257a9ce7085747f93d9f1f421c)
 - [2026-07-17] [bring back rubriclab package](https://github.com/RubricLab/tokenmaxx/commit/90884242a1971fd4fa8271e67b02f9a8ff8c51cb)
 - [2026-07-17] [flatten providers, strip comments, drop dead code](https://github.com/RubricLab/tokenmaxx/commit/b5aa307b5010159591d713474589bcfd5cce3114)
 - [2026-07-17] [drop changelog, architecture doc, vercel redirect](https://github.com/RubricLab/tokenmaxx/commit/6cbdb2659d1d60acbdca8479b837d009e080affd)
