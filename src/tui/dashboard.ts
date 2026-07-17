@@ -22,7 +22,6 @@ import {
 	planTag,
 	pressureColor,
 	relativeAge,
-	resetCountdown,
 	shortReset,
 	shortWindow,
 	type Theme,
@@ -61,9 +60,6 @@ interface Row {
 	accountId: string
 }
 
-type ViewMode = 'all' | '5h' | '7d'
-const VIEW_MODES: readonly ViewMode[] = ['all', '5h', '7d']
-
 // One breakpoint set drives the whole layout: narrower shows less, wider shows
 // more, and everything stays centered in a column that grows with the terminal.
 type Tier = 'compact' | 'regular' | 'wide'
@@ -77,7 +73,6 @@ interface Ctx {
 	columns: number
 	rows: number
 	tier: Tier
-	view: ViewMode
 	// Native routing per provider, so panels can show routed / not routed and
 	// settings can toggle it.
 	routing: Record<ProviderId, boolean>
@@ -123,7 +118,6 @@ const BAR: Record<Tier, number> = { compact: 9, regular: 11, wide: 14 }
 function windowsShown(ctx: Ctx): number {
 	return ctx.tier === 'wide' ? 3 : 2
 }
-const FOCUSED_BAR = 28
 // A window cell is ` name ` + `bar pct` + ` ↻reset ` — its exact column width.
 function windowCellWidth(tier: Tier, window: UsageWindow): number {
 	return 2 + shortWindow(window.label).length + BAR[tier] + 5 + 6
@@ -139,20 +133,11 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 		const hidden = state?.policy.hiddenWindowIds ?? []
 		const windows = snapshot.usage.find(u => u.accountId === account.id)?.windows ?? []
 		const visible = visibleWindows(windows, hidden)
-		const focused =
-			ctx.view === '5h'
-				? visible.filter(isFiveHour)
-				: ctx.view === '7d'
-					? visible.filter(w => !isFiveHour(w))
-					: visible
 		const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
 		const base = 3 + (labels - 2) + (tag === null ? 0 : tag.length + 1) + 2
-		const body =
-			ctx.view !== 'all'
-				? 1 + FOCUSED_BAR + 6 + 8
-				: focused
-						.slice(0, windowsShown(ctx))
-						.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
+		const body = visible
+			.slice(0, windowsShown(ctx))
+			.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
 		widest = Math.max(widest, base + body)
 	}
 	return Math.min(CONTENT_MAX, ctx.columns - 2, widest)
@@ -213,14 +198,6 @@ function visibleWindows(
 		.sort((left, right) => rank(left) - rank(right))
 }
 
-function bindingWindow(windows: readonly UsageWindow[]): UsageWindow | undefined {
-	return windows.reduce<UsageWindow | undefined>(
-		(worst, candidate) =>
-			worst === undefined || candidate.usedPercent > worst.usedPercent ? candidate : worst,
-		undefined
-	)
-}
-
 // One window's cell on an account row: name, bar, %, and its own reset. The
 // name and reset are fixed-width so every window column lines up down the panel
 // — a missing or longer reset never shifts the cells to its right.
@@ -260,15 +237,12 @@ function accountLine(
 	account: Account,
 	windows: readonly UsageWindow[],
 	hiddenIds: readonly string[],
-	width: number,
 	isActive: boolean,
 	isSelected: boolean,
 	justSwitchedTo: boolean
 ) {
 	const badge = healthBadge(ctx.theme, account)
 	const labels = labelWidth(ctx)
-	// The panel's real inner width, so a focused-view bar fills it exactly.
-	const cols = width
 	const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
 	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
 	const markerColor =
@@ -297,42 +271,13 @@ function accountLine(
 		Text({ content: badge === null ? ' ' : ' *', fg: rgb(badge?.color ?? ctx.theme.dim) })
 	]
 	const visible = visibleWindows(windows, hiddenIds)
-	const focused =
-		ctx.view === '5h'
-			? visible.filter(isFiveHour)
-			: ctx.view === '7d'
-				? visible.filter(window => !isFiveHour(window))
-				: visible
-	if (focused.length === 0) {
+	if (visible.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
-	} else if (ctx.view === 'all') {
+	} else {
 		// Two windows even at the smallest size, three when wide — fixed meter
 		// widths so the columns line up straight down the panel.
-		const shown = focused.slice(0, windowsShown(ctx))
-		for (const window of shown) {
+		for (const window of visible.slice(0, windowsShown(ctx))) {
 			children.push(...windowCell(ctx, window, BAR[ctx.tier], true))
-		}
-	} else {
-		// Focused 5h / 7d view: one wide bar for the binding window, with a
-		// countdown — the switching story in bold.
-		const window = bindingWindow(focused)
-		if (window === undefined) {
-			children.push(Text({ content: ' —', fg: rgb(ctx.theme.dim) }))
-		} else {
-			const reset = resetCountdown(window.resetAt, ctx.now)
-			const cellTag = focused.length > 1 ? `${shortWindow(window.label)} ` : ''
-			const barWidth = Math.max(10, cols - labels - 24 - cellTag.length)
-			children.push(
-				Text({ content: ' ', fg: rgb(ctx.theme.bg) }),
-				Text({
-					content: `${meter(window.usedPercent, barWidth)} ${percentLabel(window.usedPercent)}`,
-					fg: rgb(pressureColor(ctx.theme, window.usedPercent))
-				}),
-				Text({
-					content: reset === null ? `  ${cellTag}`.trimEnd() : `  ${cellTag}↻ ${reset}`,
-					fg: rgb(ctx.theme.faint)
-				})
-			)
 		}
 	}
 	return Box(
@@ -350,8 +295,7 @@ function providerPanel(
 	snapshot: DashboardSnapshot,
 	provider: ProviderId,
 	rows: Row[],
-	selected: number,
-	width: number
+	selected: number
 ) {
 	const state: ProviderState | undefined = snapshot.providers.find(s => s.provider === provider)
 	const switched = recentSwitch(ctx, state)
@@ -375,7 +319,6 @@ function providerPanel(
 			account,
 			windows ?? [],
 			hiddenIds,
-			width,
 			state?.activeAccountId === entry.row.accountId,
 			isSelected,
 			switched
@@ -859,8 +802,8 @@ function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], select
 	return column(
 		ctx,
 		[
-			providerPanel(ctx, snapshot, 'openai', rows, selected, width),
-			providerPanel(ctx, snapshot, 'anthropic', rows, selected, width),
+			providerPanel(ctx, snapshot, 'openai', rows, selected),
+			providerPanel(ctx, snapshot, 'anthropic', rows, selected),
 			...(note === null ? [] : [note])
 		],
 		width + 2
@@ -879,7 +822,6 @@ interface ViewState {
 	note: string
 	updateAvailable: string | null
 	updateDismissed: boolean
-	view: ViewMode
 }
 
 export type DashboardAction =
@@ -898,7 +840,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const footer =
 		state.tab === 'accounts'
-			? '↑↓ select · ⏎ switch/add · r route on/off · a auto · v view · tab next'
+			? '↑↓ select · ⏎ switch/add · r route on/off · a auto · tab next'
 			: state.tab === 'analytics'
 				? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
 				: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
@@ -1007,8 +949,7 @@ export async function runTuiDashboard(
 		tab: 'accounts',
 		timeframeIndex: 2,
 		updateAvailable: live ? null : (process.env.TOKENMAXX_FAKE_UPDATE ?? null),
-		updateDismissed: false,
-		view: 'all'
+		updateDismissed: false
 	}
 	if (live) {
 		void availableUpdate().then(version => {
@@ -1035,10 +976,9 @@ export async function runTuiDashboard(
 					now: live ? Date.now() : simulatedNow,
 					routing: options.routing,
 					rows: process.stdout.rows ?? 24,
-					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 55 * 60_000 : 120_000,
+					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 24 * 60_000 : 120_000,
 					theme: currentTheme(),
-					tier: tierFor(columns),
-					view: state.view
+					tier: tierFor(columns)
 				},
 				analytics,
 				rows,
@@ -1237,9 +1177,6 @@ export async function runTuiDashboard(
 					finish({ kind: 'update', version: state.updateAvailable })
 				} else if (key.name === 'x' && state.updateAvailable !== null && !state.updateDismissed) {
 					state.updateDismissed = true
-					paint()
-				} else if (key.name === 'v' && state.tab === 'accounts') {
-					state.view = VIEW_MODES[(VIEW_MODES.indexOf(state.view) + 1) % VIEW_MODES.length] as ViewMode
 					paint()
 				} else if (key.name === 'm' && state.tab === 'analytics') {
 					state.analyticsView = state.analyticsView === 'chart' ? 'table' : 'chart'

@@ -584,7 +584,13 @@ const blitz: ScenarioBuilder = now => {
 			sevenDeadHour: 16.5,
 			sevenStart: 34
 		},
-		{ email: 'zero@rubriclabs.com', n: 5, provider: 'anthropic', sevenDeadHour: 18.5, sevenStart: 25 },
+		{
+			email: 'zero@rubriclabs.com',
+			n: 5,
+			provider: 'anthropic',
+			sevenDeadHour: 18.5,
+			sevenStart: 25
+		},
 		{
 			email: 'design@rubriclabs.com',
 			n: 7,
@@ -604,18 +610,27 @@ const blitz: ScenarioBuilder = now => {
 		clamp(runner.sevenStart + ((100 - runner.sevenStart) / (runner.sevenDeadHour * 60)) * atMinutes)
 	const aliveAt = (provider: ProviderId, atMinutes: number) =>
 		runners.filter(r => r.provider === provider && seven(r, atMinutes) < 100)
-	// Deterministic shift schedule per provider: who was active in shift k.
-	const activeInShift = (provider: ProviderId, k: number): Runner | undefined => {
-		const start = k * shiftLength
-		const alive = aliveAt(provider, start)
-		const roster = alive.length > 0 ? alive : runners.filter(r => r.provider === provider)
-		return roster[k % roster.length]
+	// Deterministic shift schedule per provider, each on its own phase so the two
+	// providers never hand off on the same minute: Codex runs on the round clock,
+	// Claude is offset by half a shift. One relay switches, then later the other.
+	const shiftPhase: Record<ProviderId, number> = {
+		anthropic: Math.round(shiftLength / 2),
+		openai: 0
 	}
-	const currentShift = Math.floor(minutes / shiftLength)
+	const shiftIndexAt = (provider: ProviderId, atMinutes: number): number =>
+		Math.floor((atMinutes - shiftPhase[provider]) / shiftLength)
+	const shiftStartOf = (provider: ProviderId, k: number): number =>
+		k * shiftLength + shiftPhase[provider]
+	const activeInShift = (provider: ProviderId, k: number): Runner | undefined => {
+		const alive = aliveAt(provider, Math.max(0, shiftStartOf(provider, k)))
+		const roster = alive.length > 0 ? alive : runners.filter(r => r.provider === provider)
+		return roster[((k % roster.length) + roster.length) % roster.length]
+	}
 	const lastShiftStart = (runner: Runner): number | null => {
-		for (let k = currentShift; k >= 0; k -= 1) {
+		const kNow = shiftIndexAt(runner.provider, minutes)
+		for (let k = kNow; k >= kNow - runners.length; k -= 1) {
 			if (activeInShift(runner.provider, k)?.n === runner.n) {
-				return k * shiftLength
+				return shiftStartOf(runner.provider, k)
 			}
 		}
 		return null
@@ -678,14 +693,15 @@ const blitz: ScenarioBuilder = now => {
 					]
 	}))
 	const providerSeed = (provider: ProviderId): ProviderSeed => {
-		const active = activeInShift(provider, currentShift)
+		const k = shiftIndexAt(provider, minutes)
+		const active = activeInShift(provider, k)
 		return {
 			activeN: active?.n ?? null,
 			auto: true,
 			dwellMs: 300_000,
-			generation: currentShift + 2,
+			generation: k + 2,
 			provider,
-			switchedMinutesAgo: Math.max(0.2, minutes - currentShift * shiftLength),
+			switchedMinutesAgo: Math.max(0.2, minutes - shiftStartOf(provider, k)),
 			threshold: 90
 		}
 	}

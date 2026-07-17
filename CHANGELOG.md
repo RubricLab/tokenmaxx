@@ -1,3 +1,4 @@
+- [2026-07-17] [drop the accounts view toggle — settings now controls window visibility](https://github.com/RubricLab/tokenmaxx/commit/61e65d6b10088b15aa535222e6117ec8d0c66fdf)
 - [2026-07-17] [align the per-class cost row under its columns](https://github.com/RubricLab/tokenmaxx/commit/54e4756b5000d74a1fe99d1ea6f30ec07f0d0c6e)
 - [2026-07-17] [auto-enable routing when the first account is added](https://github.com/RubricLab/tokenmaxx/commit/c296237cdff57d09a3616a5438e3d50d5b97980e)
 - [2026-07-17] [compact tier shows two window columns](https://github.com/RubricLab/tokenmaxx/commit/eb8e6ab164aef67d55e0cd91c9d5199d8c9e18d6)
