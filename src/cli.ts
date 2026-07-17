@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -156,14 +156,29 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 			const stopped = new Promise<void>(resolve => {
 				requestStop = resolve
 			})
+			// A shutdown must actually finish. The proxy holds long-lived streaming
+			// connections (an active codex/claude session, or Claude Code itself),
+			// and draining them can stall indefinitely — which would keep port 8459
+			// held and block the next daemon from starting. So the moment a stop is
+			// requested, arm a watchdog that force-exits; the OS then frees the port
+			// and the stale lock is reclaimed on the next start.
+			const beginShutdown = () => {
+				const watchdog = setTimeout(() => {
+					process.stderr.write(
+						`[${new Date().toISOString()}] shutdown watchdog: forcing exit\n`
+					)
+					process.exit(0)
+				}, 4_000)
+				watchdog.unref()
+				requestStop?.()
+			}
 			const server = await startManagerServer({
 				manager,
-				onStop: () => requestStop?.(),
+				onStop: beginShutdown,
 				socketPath: context.paths.managerSocket
 			})
-			const signalHandler = () => requestStop?.()
-			process.once('SIGINT', signalHandler)
-			process.once('SIGTERM', signalHandler)
+			process.once('SIGINT', beginShutdown)
+			process.once('SIGTERM', beginShutdown)
 			await stopped
 			await server.close()
 		} finally {
@@ -216,14 +231,39 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 	}
 }
 
+// SIGKILL the daemon by the pid in its lock, then clear the lock and socket so
+// the next start can bind cleanly. The safety net for a daemon that won't drain
+// on its own (older builds without the shutdown watchdog).
+async function forceStopDaemon(context: ApplicationContext): Promise<void> {
+	const ownerPid = await readFile(context.paths.managerLock, 'utf8').then(
+		raw => {
+			try {
+				const pid = (JSON.parse(raw) as { processId?: unknown }).processId
+				return typeof pid === 'number' ? pid : null
+			} catch {
+				return null
+			}
+		},
+		() => null
+	)
+	if (ownerPid !== null) {
+		try {
+			process.kill(ownerPid, 'SIGKILL')
+		} catch {}
+	}
+	await Bun.sleep(300)
+	await rm(context.paths.managerLock, { force: true })
+	await rm(context.paths.managerSocket, { force: true })
+}
+
 async function stopDaemon(context: ApplicationContext): Promise<void> {
 	await managerRequest({
 		method: 'manager/stop',
 		schema: EmptyResultSchema,
 		socketPath: context.paths.managerSocket,
 		timeoutMilliseconds: 1_000
-	})
-	const deadline = Date.now() + 15_000
+	}).catch(() => undefined)
+	const deadline = Date.now() + 8_000
 	while (Date.now() < deadline) {
 		const running = await managerAvailable(context.paths.managerSocket)
 		const lockHeld = await stat(context.paths.managerLock).then(
@@ -236,7 +276,9 @@ async function stopDaemon(context: ApplicationContext): Promise<void> {
 		}
 		await Bun.sleep(200)
 	}
-	process.stdout.write('Manager daemon is still draining; check tokenmaxx daemon status.\n')
+	// Graceful drain didn't finish in time — force it so the port is freed.
+	await forceStopDaemon(context)
+	process.stdout.write('Manager daemon stopped.\n')
 }
 
 // A daemon from a different build speaks a different schema dialect than this
