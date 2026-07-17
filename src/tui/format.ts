@@ -374,3 +374,9 @@ export function compactUsd(value: number): string {
 	}
 	return `$${value.toFixed(2)}`
 }
+
+// Exact dollars with a thousands separator — for the metrics table, where the
+// value is an audit and rounding to "$1.0k" would read as imprecise.
+export function moneyUsd(value: number): string {
+	return `$${value.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`
+}

@@ -14,10 +14,10 @@ import { buildScenario } from './fixtures.ts'
 import {
 	brailleArea,
 	compactNumber,
-	compactUsd,
 	detectThemeName,
 	healthBadge,
 	meter,
+	moneyUsd,
 	percentLabel,
 	planTag,
 	pressureColor,
@@ -511,7 +511,7 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 					{ color: ctx.theme.dim, text: `↑${num(provider.input)}` },
 					{ color: ctx.theme.dim, text: `↓${num(provider.output)}` },
 					{ color: ctx.theme.dim, text: `⛁${num(provider.cached + provider.cacheCreation)}` },
-					{ color: ctx.theme.good, text: compactUsd(provider.costUsd) }
+					{ color: ctx.theme.good, text: moneyUsd(provider.costUsd) }
 				],
 				nameWidth
 			)
@@ -533,7 +533,7 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 				{ color: ctx.theme.fg, text: `↑${num(tokens.totalInput)}` },
 				{ color: ctx.theme.fg, text: `↓${num(tokens.totalOutput)}` },
 				{ color: ctx.theme.fg, text: `⛁${num(tokens.totalCached + tokens.totalCacheCreation)}` },
-				{ color: ctx.theme.good, text: compactUsd(tokens.costUsd) }
+				{ color: ctx.theme.good, text: moneyUsd(tokens.costUsd) }
 			],
 			nameWidth
 		)
@@ -542,7 +542,7 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 		body.push(
 			centered(
 				Text({
-					content: `input ${compactUsd(tokens.costInput)}  ·  output ${compactUsd(tokens.costOutput)}  ·  cache ${compactUsd(tokens.costCached + tokens.costCacheCreation)}`,
+					content: `input ${moneyUsd(tokens.costInput)}  ·  output ${moneyUsd(tokens.costOutput)}  ·  cache ${moneyUsd(tokens.costCached + tokens.costCacheCreation)}`,
 					fg: rgb(ctx.theme.faint)
 				})
 			)
@@ -560,7 +560,7 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 				{ color: ctx.theme.fg, text: model.model },
 				[
 					{ color: ctx.theme.dim, text: num(model.tokens) },
-					{ color: ctx.theme.good, text: compactUsd(model.costUsd) }
+					{ color: ctx.theme.good, text: moneyUsd(model.costUsd) }
 				],
 				nameWidth + 9
 			)
@@ -581,7 +581,7 @@ function chartView(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width
 	body.push(blankRow(ctx))
 	const headline = [
 		...stat(ctx, 'Σ', `${compactNumber(tokens.totalTokens)} tokens`),
-		...stat(ctx, '≈', `${compactUsd(tokens.costUsd)} value`, ctx.theme.good)
+		...stat(ctx, '≈', `${moneyUsd(tokens.costUsd)} value`, ctx.theme.good)
 	]
 	if (ctx.tier === 'wide') {
 		headline.push(

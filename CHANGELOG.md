@@ -1,3 +1,4 @@
+- [2026-07-17] [exact dollar values in the metrics table](https://github.com/RubricLab/tokenmaxx/commit/2d0e789c1bc8ddf9cb36308e9d2e03f50bee370f)
 - [2026-07-17] [responsive centered dashboard: inline resets, pricing metrics, in-ui onboarding](https://github.com/RubricLab/tokenmaxx/commit/1d3feadc7be6021425131ed123c257bce83b580b)
 - [2026-07-17] [fix stale relogin command in error hints](https://github.com/RubricLab/tokenmaxx/commit/6410fdb1c0bf03e3c7fe906176e97cff559ae5c6)
 - [2026-07-17] [run under any package manager via a bun-locating launcher](https://github.com/RubricLab/tokenmaxx/commit/0beb61a97cee44a780eeeaae46b0ce598fa19531)
