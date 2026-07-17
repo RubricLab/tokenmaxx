@@ -1,3 +1,6 @@
+- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/01bab2e6760ff74f92fb5d34e63949c7a690db78)
+- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/6cacce71b04ff308e9ce235ac6d5a3a4d897fde6)
+- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/f0972d14ad7ea685ea00e0aebac2e29e3f9757a0)
 - [2026-07-16] [style: give the analytics metrics hierarchy and alignment
 
 The block under the chart was five ragged rows fighting for attention.

@@ -9,6 +9,7 @@ import type {
 	UsageWindow
 } from '../domain.ts'
 import { readAnalytics, refreshUsage, requestPolicy, requestSwitch } from '../ipc.ts'
+import { availableUpdate } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
 import {
 	brailleArea,
@@ -45,7 +46,7 @@ function rgb(hex: string): RGBA {
 	return value
 }
 
-const labelWidth = 24
+const labelWidth = 26
 const providerTitles: Record<ProviderId, string> = {
 	anthropic: 'Anthropic · Claude Code',
 	openai: 'OpenAI · Codex'
@@ -164,7 +165,7 @@ function accountDetail(ctx: Ctx, account: Account, windows: readonly UsageWindow
 		lines.push(
 			Box(
 				{ backgroundColor: rgb(ctx.theme.selected), flexDirection: 'row' },
-				Text({ content: `${indent}${pad(window.label, 16)} `, fg: rgb(ctx.theme.dim) }),
+				Text({ content: `${indent}${pad(window.label, 20)} `, fg: rgb(ctx.theme.dim) }),
 				Text({
 					content: `${meter(window.usedPercent, 8)} ${percentLabel(window.usedPercent)}`,
 					fg: rgb(pressureColor(ctx.theme, window.usedPercent))
@@ -566,6 +567,7 @@ interface ViewState {
 	timeframeIndex: number
 	installed: boolean
 	note: string
+	updateAvailable: string | null
 }
 
 function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewState) {
@@ -587,6 +589,14 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 		Text({ attributes: 1, content: 'tokenmaxx', fg: rgb(ctx.theme.accent) }),
 		Text({ content: `  ${clock}`, fg: rgb(ctx.theme.dim) }),
 		Text({ content: `   ↻ ${refreshed}  ·  live per request + probes`, fg: rgb(ctx.theme.faint) }),
+		...(state.updateAvailable === null
+			? []
+			: [
+					Text({
+						content: `   ⬆ v${state.updateAvailable} — bun add -g tokenmaxx`,
+						fg: rgb(ctx.theme.warn)
+					})
+				]),
 		...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })])
 	)
 	const children: Array<ReturnType<typeof Box> | ReturnType<typeof Text>> = [header]
@@ -656,7 +666,16 @@ export async function runTuiDashboard(
 		selected: 0,
 		settingsSelected: 0,
 		tab: 'accounts',
-		timeframeIndex: 2
+		timeframeIndex: 2,
+		updateAvailable: null
+	}
+	if (live) {
+		void availableUpdate().then(version => {
+			if (version !== null) {
+				state.updateAvailable = version
+				paint()
+			}
+		})
 	}
 	let busy = false
 

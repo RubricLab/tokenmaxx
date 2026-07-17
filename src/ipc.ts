@@ -10,6 +10,7 @@ import {
 } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
 import type { AccountManager } from './manager.ts'
+import { VERSION } from './version.ts'
 
 const RpcRequestSchema = z
 	.object({
@@ -74,7 +75,7 @@ async function dispatch(
 ): Promise<unknown> {
 	switch (method) {
 		case 'manager/ping':
-			return { processId: process.pid, ready: true }
+			return { processId: process.pid, ready: true, version: VERSION }
 		case 'dashboard/read':
 			return manager.dashboard()
 		case 'usage/refresh':
@@ -227,15 +228,38 @@ export async function managerRequest<Result>(input: {
 	})
 }
 
+const PingSchema = z
+	.object({
+		processId: z.number().int().positive(),
+		ready: z.literal(true),
+		// Daemons older than 0.0.9 do not report a version.
+		version: z.string().optional()
+	})
+	.loose()
+
 export async function managerAvailable(socketPath: string): Promise<boolean> {
 	return managerRequest({
 		method: 'manager/ping',
-		schema: z.object({ processId: z.number().int().positive(), ready: z.literal(true) }),
+		schema: PingSchema,
 		socketPath,
 		timeoutMilliseconds: 500
 	})
 		.then(() => true)
 		.catch(() => false)
+}
+
+// The running daemon's version, or null when it is not running. A daemon on a
+// different build than the CLI speaks a different schema dialect, so callers
+// restart it on mismatch instead of surfacing parse errors to the user.
+export async function managerVersion(socketPath: string): Promise<string | null> {
+	return managerRequest({
+		method: 'manager/ping',
+		schema: PingSchema,
+		socketPath,
+		timeoutMilliseconds: 500
+	})
+		.then(result => result.version ?? 'pre-0.0.9')
+		.catch(() => null)
 }
 
 export function readDashboard(socketPath: string): Promise<DashboardSnapshot> {

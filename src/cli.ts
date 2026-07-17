@@ -18,6 +18,7 @@ import { ApplicationError, errorMessage } from './errors.ts'
 import {
 	managerAvailable,
 	managerRequest,
+	managerVersion,
 	readDashboard,
 	readProxyPort,
 	requestAccountSave,
@@ -32,6 +33,7 @@ import { registerCodexAccount } from './providers/codex/auth.ts'
 import { createMacOsKeychainVault } from './providers/codex/keychain.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
+import { availableUpdate, VERSION } from './version.ts'
 
 const CommandSchema = z.array(z.string())
 const EmptyResultSchema = z.unknown()
@@ -237,8 +239,18 @@ async function stopDaemon(context: ApplicationContext): Promise<void> {
 	process.stdout.write('Manager daemon is still draining; check tokenmaxx daemon status.\n')
 }
 
+// A daemon from a different build speaks a different schema dialect than this
+// CLI, which surfaces as cryptic "unrecognized key" parse errors. Heal the
+// skew automatically: restart the daemon onto the current build.
 async function ensureDaemon(context: ApplicationContext): Promise<void> {
 	if (!(await managerAvailable(context.paths.managerSocket))) {
+		await startDaemon(context)
+		return
+	}
+	const running = await managerVersion(context.paths.managerSocket)
+	if (running !== null && running !== VERSION) {
+		process.stdout.write(`Updating the manager daemon (${running} → ${VERSION})…\n`)
+		await stopDaemon(context)
 		await startDaemon(context)
 	}
 }
@@ -471,7 +483,16 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	}
 	process.stdout.write(`${Bun.which('security') === null ? 'missing' : 'ok     '}  security\n`)
 	const running = await managerAvailable(context.paths.managerSocket)
-	process.stdout.write(`${running ? 'running' : 'stopped'}  manager daemon\n`)
+	const daemonVersion = running ? await managerVersion(context.paths.managerSocket) : null
+	process.stdout.write(
+		`${running ? 'running' : 'stopped'}  manager daemon${daemonVersion === null ? '' : ` (${daemonVersion})`}\n`
+	)
+	const update = await availableUpdate()
+	process.stdout.write(
+		update === null
+			? `ok       version  ${VERSION} (latest)\n`
+			: `note     version  ${VERSION} — v${update} is out: bun add -g tokenmaxx\n`
+	)
 	if (running) {
 		const port = await readProxyPort(context.paths.managerSocket).catch(() => null)
 		process.stdout.write(
