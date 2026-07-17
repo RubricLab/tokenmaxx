@@ -1,3 +1,11 @@
+- [2026-07-17] [quiet switches, clearer routing hint, staggered 5h resets
+
+A switch no longer takes over the panel title or paints the border warn — the
+new active row's marker briefly reads ⟳ in the same green, and that is the
+whole announcement. The footer hint is now 'r routing', matching the panel's
+own 'routing on/off' language. In the demo, each 5h window opens when its
+account's shift starts, so reset countdowns stagger by rotation: hot rows count
+down on their own clocks, refresh, and drop to the bottom of the board.](https://github.com/RubricLab/tokenmaxx/commit/78f1a435fb10ff4cf4b934ca8f4ab45f4bfe0485)
 - [2026-07-17] [sort account rows by pressure, not active-first
 
 A switch now just moves the ● marker to another row instead of reshuffling the

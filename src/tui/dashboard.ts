@@ -252,28 +252,17 @@ function accountLine(
 	const badge = healthBadge(ctx.theme, account)
 	const labels = labelWidth(ctx)
 	const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
+	// A fresh switch is deliberately quiet: the ● briefly reads ⟳ on the new
+	// active row, same green, and that's the whole announcement.
 	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
-	const markerColor =
-		justSwitchedTo && isActive
-			? ctx.theme.warn
-			: isActive
-				? ctx.theme.good
-				: isSelected
-					? ctx.theme.accent
-					: ctx.theme.faint
+	const markerColor = isActive ? ctx.theme.good : isSelected ? ctx.theme.accent : ctx.theme.faint
 	const labelText = pad(account.label, labels - 2)
 	const children = [
 		Text({ content: ` ${marker} `, fg: rgb(markerColor) }),
 		Text({
 			attributes: isActive ? 1 : 0,
 			content: labelText,
-			fg: rgb(
-				justSwitchedTo && isActive
-					? ctx.theme.warn
-					: isActive || isSelected
-						? ctx.theme.fg
-						: ctx.theme.dim
-			)
+			fg: rgb(isActive || isSelected ? ctx.theme.fg : ctx.theme.dim)
 		}),
 		Text({ content: tag === null ? '' : ` ${tag}`, fg: rgb(ctx.theme.faint) }),
 		Text({ content: badge === null ? ' ' : ' *', fg: rgb(badge?.color ?? ctx.theme.dim) })
@@ -337,19 +326,14 @@ function providerPanel(
 	// an un-routed provider silently does nothing.
 	const routed = ctx.routing[provider]
 	const auto = state?.policy.enabled ? `⟳ auto ${state.policy.thresholdPercent}%` : 'auto off'
-	const activeLabel = snapshot.accounts.find(a => a.id === state?.activeAccountId)?.label
-	const title = switched
-		? ` ${providerTitles[provider]}   ⟳ switched → ${activeLabel ?? '?'} `
-		: routed
-			? ` ${providerTitles[provider]}   ● routing on · ${auto} `
-			: ` ${providerTitles[provider]}   ◯ ROUTING OFF — press r to turn on `
-	const titleColor = switched
+	const title = routed
+		? ` ${providerTitles[provider]}   ● routing on · ${auto} `
+		: ` ${providerTitles[provider]}   ◯ ROUTING OFF — press r to turn on `
+	const titleColor = !routed
 		? ctx.theme.warn
-		: !routed
-			? ctx.theme.warn
-			: state?.policy.enabled
-				? ctx.theme.good
-				: ctx.theme.dim
+		: state?.policy.enabled
+			? ctx.theme.good
+			: ctx.theme.dim
 	const banner = routed
 		? []
 		: [
@@ -364,7 +348,7 @@ function providerPanel(
 	return Box(
 		{
 			border: true,
-			borderColor: rgb(switched || !routed ? ctx.theme.warn : ctx.theme.border),
+			borderColor: rgb(routed ? ctx.theme.border : ctx.theme.warn),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
 			flexShrink: 0,
@@ -848,7 +832,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const footer =
 		state.tab === 'accounts'
-			? '↑↓ select · ⏎ switch/add · r route on/off · a auto · tab next'
+			? '↑↓ select · ⏎ switch/add · r routing · a auto · tab next'
 			: state.tab === 'analytics'
 				? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
 				: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'

@@ -666,6 +666,22 @@ const blitz: ScenarioBuilder = now => {
 	}
 	const fableWeekly = (runner: Runner, m: number): number =>
 		clamp(runner.sevenStart + burnRate(runner) * claudeActiveMinutes(runner, m))
+	// A 5h window opened when its account's shift started, so reset countdowns
+	// are staggered by the rotation: each hot 92% row counts down on its own
+	// clock, hits zero, refreshes, and drops to the bottom of the board — the
+	// "they come back to availability" half of the story. Refreshed or
+	// never-active accounts show a nearly fresh window.
+	const sessionFrac = (runner: Runner): number => {
+		const shiftStart = lastShiftStart(runner)
+		if (shiftStart === null) {
+			return 0.06
+		}
+		const sinceStart = minutes - shiftStart
+		return sinceStart < 300 ? Math.max(0.02, sinceStart / 300) : 0.06
+	}
+	// Weekly resets vary per account too — the fleet wasn't all provisioned in
+	// the same hour, so no two rows share one countdown.
+	const weeklyFrac = (n: number): number => 0.3 + (n % 5) * 0.06
 	const seeds: AccountSeed[] = runners.map(runner => ({
 		email: runner.email,
 		n: runner.n,
@@ -678,10 +694,10 @@ const blitz: ScenarioBuilder = now => {
 			runner.provider === 'openai'
 				? [
 						{
-							fillFrac: 0.5,
+							fillFrac: 0.02,
 							id: 'weekly',
 							label: '7 day · all models',
-							nowFrac: 0.5,
+							nowFrac: weeklyFrac(runner.n),
 							peak: codexWeekly(runner, minutes),
 							period: 7 * DAY,
 							seed: runner.n + 20,
@@ -690,20 +706,20 @@ const blitz: ScenarioBuilder = now => {
 					]
 				: [
 						{
-							fillFrac: 0.5,
+							fillFrac: 0.02,
 							id: 'session',
 							label: '5h session',
-							nowFrac: 0.5,
+							nowFrac: sessionFrac(runner),
 							peak: five(runner),
 							period: 5 * HOUR,
 							seed: runner.n,
 							wobble: 0
 						},
 						{
-							fillFrac: 0.5,
+							fillFrac: 0.02,
 							id: 'weekly_scoped:fable',
 							label: '7 day · Fable',
-							nowFrac: 0.5,
+							nowFrac: weeklyFrac(runner.n + 2),
 							peak: fableWeekly(runner, minutes),
 							period: 7 * DAY,
 							seed: runner.n + 40,
