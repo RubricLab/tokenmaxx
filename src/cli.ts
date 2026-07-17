@@ -8,7 +8,6 @@ import {
 	installClaudeConfig,
 	installCodexConfig,
 	installStatus,
-	isInstalled,
 	uninstallClaudeConfig,
 	uninstallCodexConfig
 } from './config-install.ts'
@@ -28,11 +27,11 @@ import {
 import { AccountManager } from './manager.ts'
 import { type ApplicationPaths, applicationPaths, ensureApplicationPaths } from './paths.ts'
 import { runCommand } from './process.ts'
-import { registerClaudeAccount, removeClaudeProfile } from './providers/claude/auth.ts'
+import { registerClaudeAccount } from './providers/claude/auth.ts'
 import { registerCodexAccount } from './providers/codex/auth.ts'
-import { createMacOsKeychainVault } from './providers/codex/keychain.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
+import { createMacOsKeychainVault } from './vault.ts'
 import { availableUpdate, VERSION } from './version.ts'
 
 const CommandSchema = z.array(z.string())
@@ -295,15 +294,12 @@ async function ensureDaemon(context: ApplicationContext): Promise<void> {
 	}
 }
 
-function registerIsolatedAccount(
-	context: ApplicationContext,
-	provider: 'openai' | 'anthropic'
-): Promise<Account> {
+function registerIsolatedAccount(provider: 'openai' | 'anthropic'): Promise<Account> {
 	switch (provider) {
 		case 'openai':
 			return registerCodexAccount({ vault: createMacOsKeychainVault() })
 		case 'anthropic':
-			return registerClaudeAccount({ paths: context.paths })
+			return registerClaudeAccount({ vault: createMacOsKeychainVault() })
 	}
 }
 
@@ -316,7 +312,7 @@ async function login(
 	}
 	const provider = providerFromCli(providerArgument)
 	await ensureDaemon(context)
-	const authenticated = await registerIsolatedAccount(context, provider)
+	const authenticated = await registerIsolatedAccount(provider)
 	const existing = context.store
 		.listAccounts(provider)
 		.find(
@@ -365,9 +361,6 @@ async function login(
 async function removeUnstoredAccount(account: Account): Promise<void> {
 	if (account.secretReference !== null) {
 		await createMacOsKeychainVault().remove(account.secretReference)
-	}
-	if (account.profilePath !== null) {
-		await removeClaudeProfile(account.profilePath)
 	}
 }
 

@@ -41,9 +41,9 @@ export const AccountSchema = z
 		}).strict(),
 		AccountFieldsSchema.extend({
 			externalUserId: z.null().default(null),
-			profilePath: z.string().trim().min(1),
+			profilePath: z.string().trim().min(1).nullable(),
 			provider: z.literal('anthropic'),
-			secretReference: z.null()
+			secretReference: z.string().trim().min(1).nullable()
 		}).strict()
 	])
 	.refine(account => account.label === account.identity, {

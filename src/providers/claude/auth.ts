@@ -1,11 +1,15 @@
-import { mkdir, readFile, rm, stat } from 'node:fs/promises'
-import { userInfo } from 'node:os'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir, userInfo } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
 import { z } from 'zod'
 import { type Account, AccountEmailSchema } from '../../domain.ts'
-import { ApplicationError, isNetworkFailureText } from '../../errors.ts'
+import { ApplicationError } from '../../errors.ts'
 import type { FetchImplementation } from '../../http.ts'
-import type { ApplicationPaths } from '../../paths.ts'
+import { type CredentialVault, exclusive } from '../../vault.ts'
+
+const anthropicClientId = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+const tokenEndpoint = 'https://console.anthropic.com/v1/oauth/token'
+const profileEndpoint = 'https://api.anthropic.com/api/oauth/profile'
 
 export const ClaudeOauthSchema = z
 	.object({
@@ -20,28 +24,14 @@ export const ClaudeOauthSchema = z
 	.passthrough()
 export type ClaudeOauth = z.infer<typeof ClaudeOauthSchema>
 
-export function claudePlanTier(credential: {
-	subscriptionType?: string
-	rateLimitTier?: string
-}): string | null {
-	const tier = credential.rateLimitTier?.trim()
-	if (tier !== undefined && tier.length > 0 && /\d+x|max|pro|team|enterprise/i.test(tier)) {
-		return tier
-	}
-	const subscription = credential.subscriptionType?.trim()
-	return subscription !== undefined && subscription.length > 0 ? subscription : null
-}
+const CliCredentialSchema = z.object({ claudeAiOauth: ClaudeOauthSchema }).passthrough()
 
-export const ClaudeCredentialPayloadSchema = z
-	.object({ claudeAiOauth: ClaudeOauthSchema })
-	.passthrough()
-
-const ClaudeAuthStatusSchema = z
+const TokenResponseSchema = z
 	.object({
-		authMethod: z.string().optional(),
-		email: z.string().email().optional(),
-		loggedIn: z.boolean(),
-		subscriptionType: z.string().optional()
+		access_token: z.string().min(1),
+		expires_in: z.number().positive(),
+		refresh_token: z.string().min(1).optional(),
+		scope: z.string().optional()
 	})
 	.passthrough()
 
@@ -59,36 +49,59 @@ const ClaudeProfileSchema = z
 	})
 	.passthrough()
 
-export interface ClaudeCommandRunner {
+export function claudePlanTier(credential: {
+	subscriptionType?: string
+	rateLimitTier?: string
+}): string | null {
+	const tier = credential.rateLimitTier?.trim()
+	if (tier !== undefined && tier.length > 0 && /\d+x|max|pro|team|enterprise/i.test(tier)) {
+		return tier
+	}
+	const subscription = credential.subscriptionType?.trim()
+	return subscription !== undefined && subscription.length > 0 ? subscription : null
+}
+
+export interface ClaudeLoginDependencies {
 	interactive(
 		command: readonly string[],
 		environment: Record<string, string | undefined>
 	): Promise<number>
-	captured(
-		command: readonly string[],
-		environment: Record<string, string | undefined>,
-		stdinText?: string
-	): Promise<{
-		exitCode: number
-		stdout: string
-		stderr: string
-	}>
+	captured(command: readonly string[]): Promise<{ exitCode: number; stdout: string }>
 }
 
-export interface ClaudeProfileCredentialReader {
-	read(profilePath: string): Promise<ClaudeOauth>
+export function defaultClaudeLoginDependencies(): ClaudeLoginDependencies {
+	return {
+		async captured(command) {
+			const processHandle = Bun.spawn([...command], {
+				stderr: 'ignore',
+				stdin: 'ignore',
+				stdout: 'pipe'
+			})
+			const timeout = setTimeout(() => processHandle.kill('SIGTERM'), 30_000)
+			const [exitCode, stdout] = await Promise.all([
+				processHandle.exited,
+				new Response(processHandle.stdout).text()
+			])
+			clearTimeout(timeout)
+			return { exitCode, stdout }
+		},
+		interactive(command, environment) {
+			return Bun.spawn([...command], {
+				env: { ...process.env, ...environment },
+				stderr: 'inherit',
+				stdin: 'inherit',
+				stdout: 'inherit'
+			}).exited
+		}
+	}
 }
 
 function currentUser(): string {
 	return process.env.USER ?? userInfo().username
 }
 
-export function canonicalClaudeProfilePath(profilePath: string): string {
-	return normalize(resolve(profilePath)).normalize('NFC')
-}
-
-export function claudeKeychainService(profilePath: string): string {
-	const canonical = canonicalClaudeProfilePath(profilePath)
+function claudeKeychainService(profilePath: string): string {
+	const canonical = normalize(resolve(profilePath)).normalize('NFC')
 	const digest = new Bun.CryptoHasher('sha256').update(canonical).digest('hex')
 	return `Claude Code-credentials-${digest.slice(0, 8)}`
 }
@@ -104,99 +117,121 @@ function decodeSecurityOutput(output: string): string {
 	return trimmed
 }
 
-export function defaultClaudeCommandRunner(): ClaudeCommandRunner {
-	return {
-		async captured(command, environment, stdinText) {
-			const processHandle = Bun.spawn([...command], {
-				env: { ...process.env, ...environment },
-				stderr: 'pipe',
-				stdin: stdinText === undefined ? 'ignore' : Buffer.from(stdinText),
-				stdout: 'pipe'
-			})
-			const timeout = setTimeout(() => processHandle.kill('SIGTERM'), 30_000)
-			const [exitCode, stdout, stderr] = await Promise.all([
-				processHandle.exited,
-				new Response(processHandle.stdout).text(),
-				new Response(processHandle.stderr).text()
-			])
-			clearTimeout(timeout)
-			return { exitCode, stderr, stdout }
-		},
-		async interactive(command, environment) {
-			return Bun.spawn([...command], {
-				env: { ...process.env, ...environment },
-				stderr: 'inherit',
-				stdin: 'inherit',
-				stdout: 'inherit'
-			}).exited
-		}
+async function importClaudeOauth(
+	profilePath: string,
+	dependencies: ClaudeLoginDependencies
+): Promise<ClaudeOauth> {
+	const keychain = await dependencies.captured([
+		'security',
+		'find-generic-password',
+		'-a',
+		currentUser(),
+		'-s',
+		claudeKeychainService(profilePath),
+		'-w'
+	])
+	const serialized =
+		keychain.exitCode === 0
+			? decodeSecurityOutput(keychain.stdout)
+			: await readFile(join(profilePath, '.credentials.json'), 'utf8').catch(() => null)
+	if (serialized === null) {
+		throw new ApplicationError(
+			'CREDENTIAL_MISSING',
+			`Claude profile ${profilePath} has no credential`
+		)
 	}
+	const parsed = CliCredentialSchema.safeParse(
+		(() => {
+			try {
+				return JSON.parse(serialized)
+			} catch {
+				return null
+			}
+		})()
+	)
+	if (!parsed.success) {
+		throw new ApplicationError(
+			'CREDENTIAL_MISSING',
+			`Claude profile ${profilePath} holds an unusable credential; sign in again`
+		)
+	}
+	return parsed.data.claudeAiOauth
 }
 
-export function defaultClaudeCredentialReader(
-	runner: ClaudeCommandRunner = defaultClaudeCommandRunner()
-): ClaudeProfileCredentialReader {
-	return {
-		async read(profilePath) {
-			const service = claudeKeychainService(profilePath)
-			const result = await runner.captured(
-				['security', 'find-generic-password', '-a', currentUser(), '-s', service, '-w'],
-				{}
-			)
-			let serialized: string
-			if (result.exitCode === 0) {
-				serialized = decodeSecurityOutput(result.stdout)
-			} else {
-				try {
-					const fallbackPath = join(profilePath, '.credentials.json')
-					const metadata = await stat(fallbackPath)
-					if ((metadata.mode & 0o077) !== 0) {
-						throw new ApplicationError(
-							'INSECURE_CREDENTIAL_FILE',
-							`Claude fallback credential ${fallbackPath} must be mode 0600`
-						)
-					}
-					serialized = await readFile(fallbackPath, 'utf8')
-				} catch (error) {
-					if (error instanceof ApplicationError) {
-						throw error
-					}
-					throw new ApplicationError(
-						'CREDENTIAL_MISSING',
-						`Claude profile ${profilePath} has no credential`,
-						{
-							cause: error
-						}
-					)
-				}
-			}
-			let decoded: unknown
-			try {
-				decoded = JSON.parse(serialized)
-			} catch (error) {
-				throw new ApplicationError(
-					'CREDENTIAL_MISSING',
-					`Claude profile ${profilePath} holds an unreadable credential`,
-					{ cause: error instanceof Error ? error : undefined }
-				)
-			}
-			const parsed = ClaudeCredentialPayloadSchema.safeParse(decoded)
-			if (!parsed.success) {
-				throw new ApplicationError(
-					'CREDENTIAL_MISSING',
-					`Claude profile ${profilePath} holds an unusable credential; sign in again`
-				)
-			}
-			return parsed.data.claudeAiOauth
-		}
+export async function removeClaudeProfile(
+	profilePath: string,
+	dependencies: ClaudeLoginDependencies = defaultClaudeLoginDependencies()
+): Promise<void> {
+	await dependencies.captured([
+		'security',
+		'delete-generic-password',
+		'-a',
+		currentUser(),
+		'-s',
+		claudeKeychainService(profilePath)
+	])
+	await rm(profilePath, { force: true, recursive: true })
+}
+
+export async function readClaudeCredential(
+	vault: CredentialVault,
+	reference: string
+): Promise<ClaudeOauth> {
+	const serialized = await vault.read(reference)
+	if (serialized === null) {
+		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
 	}
+	return ClaudeOauthSchema.parse(JSON.parse(serialized))
+}
+
+export async function refreshClaudeCredential(input: {
+	reference: string
+	vault: CredentialVault
+	fetchImplementation?: FetchImplementation
+	staleAccessToken?: string
+}): Promise<ClaudeOauth> {
+	return exclusive(input.reference, async () => {
+		const current = await readClaudeCredential(input.vault, input.reference)
+		if (input.staleAccessToken !== undefined && current.accessToken !== input.staleAccessToken) {
+			return current
+		}
+		const response = await (input.fetchImplementation ?? fetch)(tokenEndpoint, {
+			body: JSON.stringify({
+				client_id: anthropicClientId,
+				grant_type: 'refresh_token',
+				refresh_token: current.refreshToken
+			}),
+			headers: { 'Content-Type': 'application/json' },
+			method: 'POST',
+			signal: AbortSignal.timeout(7_000)
+		})
+		if (response.status === 400 || response.status === 401) {
+			throw new ApplicationError('REAUTHENTICATION_REQUIRED', 'Claude refresh token was rejected')
+		}
+		if (!response.ok) {
+			throw new ApplicationError(
+				'PROVIDER_UNREACHABLE',
+				`Claude token refresh returned HTTP ${response.status}`
+			)
+		}
+		const refreshed = TokenResponseSchema.parse(await response.json())
+		const updated = ClaudeOauthSchema.parse({
+			...current,
+			accessToken: refreshed.access_token,
+			expiresAt: Date.now() + refreshed.expires_in * 1000,
+			refreshToken: refreshed.refresh_token ?? current.refreshToken,
+			scopes: refreshed.scope === undefined ? current.scopes : refreshed.scope.split(' ')
+		})
+		await input.vault.write(input.reference, JSON.stringify(updated))
+		return updated
+	})
 }
 
 export async function fetchClaudeProfile(
 	accessToken: string,
 	fetchImplementation: FetchImplementation = fetch
 ): Promise<{ accountId: string; email: string | null }> {
-	const response = await fetchImplementation('https://api.anthropic.com/api/oauth/profile', {
+	const response = await fetchImplementation(profileEndpoint, {
 		headers: {
 			Authorization: `Bearer ${accessToken}`,
 			'anthropic-beta': 'oauth-2025-04-20'
@@ -224,208 +259,73 @@ export async function fetchClaudeProfile(
 }
 
 export async function registerClaudeAccount(input: {
-	email?: string
-	paths: ApplicationPaths
-	runner?: ClaudeCommandRunner
-	credentialReader?: ClaudeProfileCredentialReader
+	vault: CredentialVault
+	dependencies?: ClaudeLoginDependencies
 	fetchImplementation?: FetchImplementation
 }): Promise<Account> {
-	const id = crypto.randomUUID()
-	const profilePath = canonicalClaudeProfilePath(join(input.paths.claudeProfiles, id))
-	const runner = input.runner ?? defaultClaudeCommandRunner()
-	await mkdir(profilePath, { mode: 0o700, recursive: true })
-	let registered = false
+	const dependencies = input.dependencies ?? defaultClaudeLoginDependencies()
+	const profilePath = await mkdtemp(join(tmpdir(), 'tokenmaxx-claude-'))
 	try {
-		const command = ['claude', 'auth', 'login', '--claudeai']
-		if (input.email !== undefined) {
-			command.push('--email', input.email)
-		}
-		const exitCode = await runner.interactive(command, { CLAUDE_CONFIG_DIR: profilePath })
+		const exitCode = await dependencies.interactive(['claude', 'auth', 'login', '--claudeai'], {
+			CLAUDE_CONFIG_DIR: profilePath
+		})
 		if (exitCode !== 0) {
 			throw new ApplicationError('LOGIN_FAILED', `claude auth login exited with ${exitCode}`)
 		}
-		const statusResult = await runner.captured(['claude', 'auth', 'status', '--json'], {
-			CLAUDE_CONFIG_DIR: profilePath
-		})
-		if (statusResult.exitCode !== 0) {
-			throw new ApplicationError(
-				'AUTH_STATUS_FAILED',
-				statusResult.stderr.trim() || 'Claude auth status failed'
-			)
-		}
-		const status = ClaudeAuthStatusSchema.parse(JSON.parse(statusResult.stdout))
-		if (!status.loggedIn) {
-			throw new ApplicationError(
-				'LOGIN_FAILED',
-				'Claude reported that the isolated profile is not logged in'
-			)
-		}
-		const credentialReader = input.credentialReader ?? defaultClaudeCredentialReader(runner)
-		const credential = await credentialReader.read(profilePath)
+		const credential = await importClaudeOauth(profilePath, dependencies)
 		const profile = await fetchClaudeProfile(
 			credential.accessToken,
 			input.fetchImplementation ?? fetch
 		)
-		const email = AccountEmailSchema.safeParse(profile.email ?? status.email)
+		const email = AccountEmailSchema.safeParse(profile.email)
 		if (!email.success) {
 			throw new ApplicationError(
 				'ACCOUNT_EMAIL_MISSING',
 				'Claude did not return a verified account email; the login was not stored'
 			)
 		}
+		const id = crypto.randomUUID()
+		const secretReference = `claude:${id}`
+		await input.vault.write(secretReference, JSON.stringify(credential))
 		const now = new Date().toISOString()
-		const account: Account = {
+		return {
 			createdAt: now,
 			enabled: true,
 			externalAccountId: profile.accountId,
 			externalUserId: null,
-			health: credential.expiresAt <= Date.now() ? 'refreshDue' : 'ready',
+			health: 'ready',
 			id,
 			identity: email.data,
 			label: email.data,
 			plan: claudePlanTier(credential),
-			profilePath,
+			profilePath: null,
 			provider: 'anthropic',
-			secretReference: null,
+			secretReference,
 			updatedAt: now
 		}
-		registered = true
+	} finally {
+		await removeClaudeProfile(profilePath, dependencies).catch(() => undefined)
+	}
+}
+
+export async function migrateClaudeAccount(input: {
+	account: Extract<Account, { provider: 'anthropic' }>
+	vault: CredentialVault
+	dependencies?: ClaudeLoginDependencies
+}): Promise<Account> {
+	const { account } = input
+	if (account.secretReference !== null || account.profilePath === null) {
 		return account
-	} finally {
-		if (!registered) {
-			await removeClaudeProfile(profilePath, runner)
-		}
 	}
-}
-
-export async function removeClaudeProfile(
-	profilePath: string,
-	runner: ClaudeCommandRunner = defaultClaudeCommandRunner()
-): Promise<void> {
-	const service = claudeKeychainService(profilePath)
-	const result = await runner.captured(
-		['security', 'delete-generic-password', '-a', currentUser(), '-s', service],
-		{}
-	)
-	await rm(profilePath, { force: true, recursive: true })
-	if (result.exitCode !== 0 && result.exitCode !== 44) {
-		throw new ApplicationError(
-			'KEYCHAIN_DELETE_FAILED',
-			result.stderr.trim() || `Could not remove Claude Keychain service ${service}`
-		)
-	}
-}
-
-function serializedScopes(scopes: ClaudeOauth['scopes']): string | undefined {
-	switch (true) {
-		case Array.isArray(scopes):
-			return scopes.join(' ')
-		case typeof scopes === 'string':
-			return scopes
-		default:
-			return undefined
-	}
-}
-
-const profileRefreshTails = new Map<string, Promise<void>>()
-
-async function withProfileRefreshLock<Result>(
-	profilePath: string,
-	operation: () => Promise<Result>
-): Promise<Result> {
-	const key = canonicalClaudeProfilePath(profilePath)
-	const previous = profileRefreshTails.get(key) ?? Promise.resolve()
-	let release: (() => void) | undefined
-	const current = new Promise<void>(resolve => {
-		release = resolve
-	})
-	const tail = previous.then(() => current)
-	profileRefreshTails.set(key, tail)
-	await previous
-	try {
-		return await operation()
-	} finally {
-		release?.()
-		if (profileRefreshTails.get(key) === tail) {
-			profileRefreshTails.delete(key)
-		}
-	}
-}
-
-async function restoreClaudeCredentialIfClobbered(input: {
-	credential: ClaudeOauth
-	profilePath: string
-	reader: ClaudeProfileCredentialReader
-	runner: ClaudeCommandRunner
-}): Promise<void> {
-	const readable = await input.reader.read(input.profilePath).then(
-		() => true,
-		() => false
-	)
-	if (readable) {
-		return
-	}
-	// Written via `security -i` stdin so the credential never appears in argv;
-	// the interactive parser needs quotes and backslashes escaped.
-	const payload = JSON.stringify({ claudeAiOauth: input.credential }).replace(/["\\]/g, '\\$&')
-	await input.runner.captured(
-		['security', '-i'],
-		{},
-		`add-generic-password -U -a "${currentUser()}" -s "${claudeKeychainService(input.profilePath)}" -w "${payload}"\n`
-	)
-}
-
-export async function refreshClaudeProfile(input: {
-	profilePath: string
-	runner?: ClaudeCommandRunner
-	credentialReader?: ClaudeProfileCredentialReader
-	staleAccessToken?: string
-}): Promise<ClaudeOauth> {
-	const runner = input.runner ?? defaultClaudeCommandRunner()
-	const reader = input.credentialReader ?? defaultClaudeCredentialReader(runner)
-	return withProfileRefreshLock(input.profilePath, async () => {
-		const credential = await reader.read(input.profilePath)
-		if (input.staleAccessToken !== undefined && credential.accessToken !== input.staleAccessToken) {
-			return credential
-		}
-		try {
-			await projectClaudeCredential({
-				credential,
-				runner,
-				targetProfilePath: input.profilePath
-			})
-			return await reader.read(input.profilePath)
-		} catch (error) {
-			// A failed `claude auth login` can leave the keychain holding empty
-			// tokens; put the pre-refresh credential back so the account is not
-			// bricked (it is still valid whenever the failure was network-side).
-			await restoreClaudeCredentialIfClobbered({
-				credential,
-				profilePath: input.profilePath,
-				reader,
-				runner
-			}).catch(() => undefined)
-			throw error
-		}
-	})
-}
-
-export async function projectClaudeCredential(input: {
-	credential: ClaudeOauth
-	targetProfilePath: string
-	runner?: ClaudeCommandRunner
-}): Promise<void> {
-	const runner = input.runner ?? defaultClaudeCommandRunner()
-	const result = await runner.captured(['claude', 'auth', 'login', '--claudeai'], {
-		CLAUDE_CODE_OAUTH_REFRESH_TOKEN: input.credential.refreshToken,
-		CLAUDE_CODE_OAUTH_SCOPES: serializedScopes(input.credential.scopes),
-		CLAUDE_CONFIG_DIR: input.targetProfilePath
-	})
-	if (result.exitCode !== 0) {
-		const detail = result.stderr.trim() || `Claude profile refresh exited with ${result.exitCode}`
-		if (isNetworkFailureText(detail)) {
-			throw new ApplicationError('PROVIDER_UNREACHABLE', detail)
-		}
-		throw new ApplicationError('REAUTHENTICATION_REQUIRED', detail)
+	const dependencies = input.dependencies ?? defaultClaudeLoginDependencies()
+	const credential = await importClaudeOauth(account.profilePath, dependencies)
+	const secretReference = `claude:${account.id}`
+	await input.vault.write(secretReference, JSON.stringify(credential))
+	await removeClaudeProfile(account.profilePath, dependencies).catch(() => undefined)
+	return {
+		...account,
+		profilePath: null,
+		secretReference,
+		updatedAt: new Date().toISOString()
 	}
 }

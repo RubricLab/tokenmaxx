@@ -13,15 +13,15 @@ import { ApplicationError, errorMessage } from './errors.ts'
 import type { FetchImplementation } from './http.ts'
 import type { ApplicationPaths } from './paths.ts'
 import { costUsd } from './pricing.ts'
-import { removeClaudeProfile } from './providers/claude/auth.ts'
+import { migrateClaudeAccount, removeClaudeProfile } from './providers/claude/auth.ts'
 import { AnthropicProviderAdapter } from './providers/claude/provider.ts'
-import type { CredentialVault } from './providers/codex/auth.ts'
 import { OpenAiProviderAdapter } from './providers/codex/provider.ts'
 import type { ProviderAdapter } from './providers/provider.ts'
 import { type ProxyLimitEvent, type RunningProxy, startProxy } from './proxy.ts'
 import { createRuntimeCredentialSource } from './runtime-source.ts'
 import { selectRotation } from './selection.ts'
 import type { StateStore, TokenTimeframeAggregate } from './storage.ts'
+import type { CredentialVault } from './vault.ts'
 
 interface TokenBreakdownAccumulator {
 	cacheCreation: number
@@ -162,7 +162,10 @@ export class AccountManager {
 		this.#adapters =
 			input.adapters ??
 			({
-				anthropic: new AnthropicProviderAdapter({ dependencies: this.#dependencies }),
+				anthropic: new AnthropicProviderAdapter({
+					dependencies: this.#dependencies,
+					vault: input.vault
+				}),
 				openai: new OpenAiProviderAdapter({
 					dependencies: this.#dependencies,
 					vault: input.vault
@@ -185,6 +188,7 @@ export class AccountManager {
 
 	public async start(): Promise<void> {
 		this.#stopping = false
+		await this.migrateClaudeProfiles()
 		const source = createRuntimeCredentialSource({
 			fetchImplementation: this.#dependencies.fetchImplementation,
 			store: { activeAccount: provider => this.activeAccount(provider) },
@@ -204,6 +208,30 @@ export class AccountManager {
 		this.#monitor = setInterval(() => {
 			void this.refreshAll().catch(() => undefined)
 		}, 60_000)
+	}
+
+	private async migrateClaudeProfiles(): Promise<void> {
+		for (const account of this.#store.listAccounts()) {
+			if (
+				account.provider !== 'anthropic' ||
+				account.secretReference !== null ||
+				account.profilePath === null
+			) {
+				continue
+			}
+			try {
+				this.#store.saveAccount(await migrateClaudeAccount({ account, vault: this.#vault }))
+			} catch (error) {
+				process.stderr.write(
+					`[${this.#dependencies.now().toISOString()}] could not migrate ${account.label}: ${errorMessage(error)}\n`
+				)
+				this.#store.saveAccount({
+					...account,
+					health: 'reauthenticationRequired',
+					updatedAt: this.#dependencies.now().toISOString()
+				})
+			}
+		}
 	}
 
 	public async stop(): Promise<void> {
@@ -432,8 +460,6 @@ export class AccountManager {
 		switch (error.code) {
 			case 'USAGE_RATE_LIMITED':
 				return 5 * 60_000
-			// Each retry spawns `claude auth login`; hammering a dead refresh
-			// token every probe risks burning the whole token family.
 			case 'REAUTHENTICATION_REQUIRED':
 				return 15 * 60_000
 			default:

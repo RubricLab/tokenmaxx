@@ -1,15 +1,15 @@
 import type { Account, ProviderId } from './domain.ts'
 import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
 import type { FetchImplementation } from './http.ts'
-import { defaultClaudeCredentialReader, refreshClaudeProfile } from './providers/claude/auth.ts'
+import { readClaudeCredential, refreshClaudeCredential } from './providers/claude/auth.ts'
 import {
 	type CodexAuth,
-	type CredentialVault,
 	codexIdentity,
 	readCodexCredential,
 	refreshCodexCredential
 } from './providers/codex/auth.ts'
 import { type ProxyCredentialSource, type UpstreamInjection, upstreamFor } from './proxy.ts'
+import type { CredentialVault } from './vault.ts'
 
 export interface RuntimeSourceStore {
 	activeAccount(provider: ProviderId): Account | null
@@ -66,17 +66,17 @@ export function createRuntimeCredentialSource(
 		account: Account,
 		forceRefresh: boolean
 	): Promise<UpstreamInjection> {
-		if (account.profilePath === null) {
-			throw new ApplicationError('CREDENTIAL_MISSING', `${account.label} has no stored profile`)
+		if (account.secretReference === null) {
+			throw new ApplicationError('CREDENTIAL_MISSING', `${account.label} has no stored credential`)
 		}
-		const reader = defaultClaudeCredentialReader()
-		let credential = await reader.read(account.profilePath)
+		let credential = await readClaudeCredential(dependencies.vault, account.secretReference)
 		const stale = credential.expiresAt - now() <= refreshMarginMilliseconds
 		if (forceRefresh || stale) {
-			credential = await refreshClaudeProfile({
-				credentialReader: reader,
-				profilePath: account.profilePath,
-				staleAccessToken: credential.accessToken
+			credential = await refreshClaudeCredential({
+				fetchImplementation,
+				reference: account.secretReference,
+				staleAccessToken: credential.accessToken,
+				vault: dependencies.vault
 			})
 		}
 		return {

@@ -320,7 +320,7 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 						route.provider,
 						502,
 						'credential-refresh-unreachable',
-						`tokenmaxx proxy: could not refresh ${route.provider} credentials — ${errorMessage(error)}. This is a local network/DNS/VPN problem, not an ${providerLabel} API error.`
+						`tokenmaxx proxy: could not refresh ${route.provider} credentials — ${errorMessage(error)}. The refresh token is still valid; retry shortly.`
 					)
 				}
 				return proxyErrorResponse(

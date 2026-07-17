@@ -1,3 +1,4 @@
+- [2026-07-17] [claude refresh in process](https://github.com/RubricLab/tokenmaxx/commit/f9ae2f1e88c607c533f57255077441211e9c2f41)
 - [2026-07-17] [the readme is the landing page: real captures only](https://github.com/RubricLab/tokenmaxx/commit/0db404df5a3d7ac4fa7fadcc8c4d7d1a74139ae4)
 - [2026-07-17] [drop the asset factory: fixture renders, remotion, brand generator](https://github.com/RubricLab/tokenmaxx/commit/3de71c1a13402ff8abb24bb111cdca42a25d5267)
 - [2026-07-17] [routing becomes a plain tokenmaxx on/off in settings

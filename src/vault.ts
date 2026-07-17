@@ -1,5 +1,34 @@
-import { ApplicationError } from '../../errors.ts'
-import type { CredentialVault } from './auth.ts'
+import { ApplicationError } from './errors.ts'
+
+export interface CredentialVault {
+	read(reference: string): Promise<string | null>
+	write(reference: string, value: string): Promise<void>
+	remove(reference: string): Promise<void>
+}
+
+const credentialLocks = new Map<string, Promise<void>>()
+
+export async function exclusive<Result>(
+	reference: string,
+	operation: () => Promise<Result>
+): Promise<Result> {
+	const previous = credentialLocks.get(reference) ?? Promise.resolve()
+	let release: (() => void) | undefined
+	const current = new Promise<void>(resolve => {
+		release = resolve
+	})
+	const queued = previous.then(() => current)
+	credentialLocks.set(reference, queued)
+	await previous
+	try {
+		return await operation()
+	} finally {
+		release?.()
+		if (credentialLocks.get(reference) === queued) {
+			credentialLocks.delete(reference)
+		}
+	}
+}
 
 const defaultService = 'com.rubriclabs.tokmax'
 

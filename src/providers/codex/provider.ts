@@ -1,13 +1,9 @@
 import { type Account, AccountEmailSchema } from '../../domain.ts'
 import { ApplicationError } from '../../errors.ts'
 import type { FetchImplementation } from '../../http.ts'
+import type { CredentialVault } from '../../vault.ts'
 import { type ProviderAdapter, type ProviderProbeResult, requireProvider } from '../provider.ts'
-import {
-	type CredentialVault,
-	codexIdentity,
-	readCodexCredential,
-	refreshCodexCredential
-} from './auth.ts'
+import { codexIdentity, readCodexCredential, refreshCodexCredential } from './auth.ts'
 import { fetchCodexUsage } from './usage.ts'
 
 export interface OpenAiProviderDependencies {

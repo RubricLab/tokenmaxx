@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { type Account, AccountEmailSchema } from '../../domain.ts'
 import { ApplicationError } from '../../errors.ts'
 import type { FetchImplementation } from '../../http.ts'
+import { type CredentialVault, exclusive } from '../../vault.ts'
 
 const openAiClientId = 'app_EMoamEEZ73f0CkXaXp7hrann'
 const refreshEndpoint = 'https://auth.openai.com/oauth/token'
@@ -63,20 +64,12 @@ export interface CodexIdentity {
 	accessExpiresAt: string | null
 }
 
-export interface CredentialVault {
-	read(reference: string): Promise<string | null>
-	write(reference: string, value: string): Promise<void>
-	remove(reference: string): Promise<void>
-}
-
 export interface CodexLoginDependencies {
 	run(command: readonly string[], environment: Record<string, string | undefined>): Promise<number>
 	createTemporaryDirectory(prefix: string): Promise<string>
 	read(path: string): Promise<string>
 	remove(path: string): Promise<void>
 }
-
-const refreshLocks = new Map<string, Promise<void>>()
 
 function base64UrlJson(segment: string): unknown {
 	try {
@@ -190,28 +183,6 @@ export async function registerCodexAccount(input: {
 		}
 	} finally {
 		await dependencies.remove(temporaryHome)
-	}
-}
-
-async function exclusive<Result>(
-	reference: string,
-	operation: () => Promise<Result>
-): Promise<Result> {
-	const previous = refreshLocks.get(reference) ?? Promise.resolve()
-	let release: (() => void) | undefined
-	const current = new Promise<void>(resolve => {
-		release = resolve
-	})
-	const queued = previous.then(() => current)
-	refreshLocks.set(reference, queued)
-	await previous
-	try {
-		return await operation()
-	} finally {
-		release?.()
-		if (refreshLocks.get(reference) === queued) {
-			refreshLocks.delete(reference)
-		}
 	}
 }
 
