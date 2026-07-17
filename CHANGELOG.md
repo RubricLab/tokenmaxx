@@ -1,3 +1,10 @@
+- [2026-07-17] [blitz meters burn only while active; switches fire exactly at the 90% threshold
+
+Codex is now a strict threshold relay: one account holds the baton, its 7-day
+meter climbs, and the handoff happens at exactly 90% — idle meters never move.
+Claude's Fable weekly likewise accrues only during its account's active shifts.
+Handoff times stay mid-way between the other provider's, so the two never flash
+'switched' together.](https://github.com/RubricLab/tokenmaxx/commit/8333a3987b2e37b3bc2a058a9440ad546a810537)
 - [2026-07-17] [drop the accounts view toggle — settings now controls window visibility](https://github.com/RubricLab/tokenmaxx/commit/61e65d6b10088b15aa535222e6117ec8d0c66fdf)
 - [2026-07-17] [align the per-class cost row under its columns](https://github.com/RubricLab/tokenmaxx/commit/54e4756b5000d74a1fe99d1ea6f30ec07f0d0c6e)
 - [2026-07-17] [auto-enable routing when the first account is added](https://github.com/RubricLab/tokenmaxx/commit/c296237cdff57d09a3616a5438e3d50d5b97980e)

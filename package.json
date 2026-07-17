@@ -46,9 +46,10 @@
 		"url": "https://github.com/RubricLab/tokenmaxx.git"
 	},
 	"scripts": {
-		"assets": "bun run assets:screens && bun run assets:flagship",
+		"assets": "bun run assets:screens && bun run assets:flagship && bun run assets:site",
 		"assets:flagship": "bun run assets/flagship.ts",
 		"assets:screens": "bun run assets/render.ts",
+		"assets:site": "mkdir -p site/img && cp assets/brand/wordmark-dark.png assets/brand/rubric-mark.svg assets/generated/flagship-dark.png assets/generated/accounts-dark.png assets/generated/analytics-dark.png assets/generated/metrics-dark.png assets/generated/settings-dark.png assets/generated/switch-dark.gif site/img/",
 		"bleed": "bun x npm-check-updates -u",
 		"build": "bun run clean && bun build ./src/index.ts --target bun --outdir dist --external '@opentui/*' && cp bin/launcher.cjs dist/launcher.cjs && chmod 755 dist/index.js dist/launcher.cjs",
 		"check": "bun run typecheck && bun x biome check . && bun test",
@@ -62,5 +63,5 @@
 		"post-commit": "bun x @rubriclab/package post-commit"
 	},
 	"type": "module",
-	"version": "0.0.28"
+	"version": "0.0.29"
 }

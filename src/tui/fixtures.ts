@@ -41,9 +41,11 @@ function buildTokens(scale: number): TokenAnalytics {
 		const models = modelMix
 			.map(entry => {
 				const tokens = Math.round(totalTokens * entry.share)
-				const input = Math.round(tokens * 0.24)
-				const output = Math.round(tokens * 0.12)
-				const cacheCreation = Math.round(tokens * 0.04)
+				// Cache-read dominated, like real harness traffic: live captures price
+				// out near $0.5/M blended (478M ≈ $254), which needs ~94% cache reads.
+				const input = Math.round(tokens * 0.03)
+				const output = Math.round(tokens * 0.012)
+				const cacheCreation = Math.round(tokens * 0.02)
 				const cached = tokens - input - output - cacheCreation
 				return {
 					cacheCreation,
@@ -559,78 +561,81 @@ const blitz: ScenarioBuilder = now => {
 		n: number
 		provider: ProviderId
 		email: string
+		// Weekly budget already used when the day starts, and how many minutes of
+		// ACTIVE burning it takes to go from there to the 90% threshold. Meters are
+		// functions of active time, never of wall-clock time.
 		sevenStart: number
-		sevenDeadHour: number
+		burnMinutes: number
 	}
-	// Codex vs Claude deplete on distinct clocks so the day feels natural: the 5
-	// Claude accounts burn faster and run out one after another through the day,
-	// while the 3 Codex accounts drain slowly at wide, offset intervals — fewer
-	// seats, more spread. No two providers hit 100% at the same hour.
 	const runners: Runner[] = [
-		{ email: 'dexter@rubriclabs.com', n: 1, provider: 'openai', sevenDeadHour: 15, sevenStart: 34 },
-		{ email: 'ship@rubriclabs.com', n: 2, provider: 'openai', sevenDeadHour: 19.5, sevenStart: 22 },
-		{ email: 'ops@rubriclabs.com', n: 6, provider: 'openai', sevenDeadHour: 23.5, sevenStart: 11 },
+		{ burnMinutes: 380, email: 'dexter@rubriclabs.com', n: 1, provider: 'openai', sevenStart: 34 },
+		{ burnMinutes: 380, email: 'ship@rubriclabs.com', n: 2, provider: 'openai', sevenStart: 22 },
+		{ burnMinutes: 600, email: 'ops@rubriclabs.com', n: 6, provider: 'openai', sevenStart: 11 },
+		{ burnMinutes: 700, email: 'dexter@rubriclabs.com', n: 3, provider: 'anthropic', sevenStart: 44 },
 		{
-			email: 'dexter@rubriclabs.com',
-			n: 3,
-			provider: 'anthropic',
-			sevenDeadHour: 13,
-			sevenStart: 44
-		},
-		{
+			burnMinutes: 750,
 			email: 'research@rubriclabs.com',
 			n: 4,
 			provider: 'anthropic',
-			sevenDeadHour: 16.5,
 			sevenStart: 34
 		},
+		{ burnMinutes: 700, email: 'zero@rubriclabs.com', n: 5, provider: 'anthropic', sevenStart: 25 },
 		{
-			email: 'zero@rubriclabs.com',
-			n: 5,
-			provider: 'anthropic',
-			sevenDeadHour: 18.5,
-			sevenStart: 25
-		},
-		{
+			burnMinutes: 850,
 			email: 'design@rubriclabs.com',
 			n: 7,
 			provider: 'anthropic',
-			sevenDeadHour: 21.5,
 			sevenStart: 15
 		},
 		{
+			burnMinutes: 900,
 			email: 'agents@rubriclabs.com',
 			n: 8,
 			provider: 'anthropic',
-			sevenDeadHour: 24,
 			sevenStart: 6
 		}
 	]
-	const seven = (runner: Runner, atMinutes: number) =>
-		clamp(runner.sevenStart + ((100 - runner.sevenStart) / (runner.sevenDeadHour * 60)) * atMinutes)
-	const aliveAt = (provider: ProviderId, atMinutes: number) =>
-		runners.filter(r => r.provider === provider && seven(r, atMinutes) < 100)
-	// Deterministic shift schedule per provider, each on its own phase so the two
-	// providers never hand off on the same minute: Codex runs on the round clock,
-	// Claude is offset by half a shift. One relay switches, then later the other.
-	const shiftPhase: Record<ProviderId, number> = {
-		anthropic: Math.round(shiftLength / 2),
-		openai: 0
+	const burnRate = (runner: Runner) => (90 - runner.sevenStart) / runner.burnMinutes
+	// ——— Codex: a strict threshold relay. One account holds the baton and burns
+	// its 7-day budget; the baton passes at exactly 90%, and idle meters never
+	// move. Boundaries fall mid-way between Claude's handoffs so the two
+	// providers never flash "switched" together.
+	const codexRunners = runners.filter(runner => runner.provider === 'openai')
+	const codexBoundaries: number[] = []
+	{
+		let at = 0
+		for (const runner of codexRunners.slice(0, -1)) {
+			at += runner.burnMinutes
+			codexBoundaries.push(at)
+		}
 	}
-	const shiftIndexAt = (provider: ProviderId, atMinutes: number): number =>
-		Math.floor((atMinutes - shiftPhase[provider]) / shiftLength)
-	const shiftStartOf = (provider: ProviderId, k: number): number =>
-		k * shiftLength + shiftPhase[provider]
-	const activeInShift = (provider: ProviderId, k: number): Runner | undefined => {
-		const alive = aliveAt(provider, Math.max(0, shiftStartOf(provider, k)))
-		const roster = alive.length > 0 ? alive : runners.filter(r => r.provider === provider)
-		return roster[((k % roster.length) + roster.length) % roster.length]
+	const codexLeg = (m: number) =>
+		Math.min(codexBoundaries.filter(boundary => boundary <= m).length, codexRunners.length - 1)
+	const codexWeekly = (runner: Runner, m: number): number => {
+		const index = codexRunners.indexOf(runner)
+		const legStart = index === 0 ? 0 : (codexBoundaries[index - 1] ?? Number.POSITIVE_INFINITY)
+		if (m <= legStart) {
+			return clamp(runner.sevenStart)
+		}
+		const activeMinutes = Math.min(m - legStart, runner.burnMinutes)
+		return clamp(runner.sevenStart + burnRate(runner) * activeMinutes)
 	}
+	// ——— Claude: five accounts rotate the 5h session round-robin on a shift
+	// clock offset half a shift from nothing-in-particular — what matters is its
+	// handoffs sit far from the Codex boundaries. The active session ramps to
+	// ~92% by the end of its shift, so a switch always shows a maxed meter. The
+	// Fable weekly climbs only while its account holds the baton.
+	const claudeRunners = runners.filter(runner => runner.provider === 'anthropic')
+	const claudePhase = Math.round(shiftLength / 2)
+	const claudeShiftIndex = (m: number) => Math.floor((m - claudePhase) / shiftLength)
+	const claudeShiftStart = (k: number) => k * shiftLength + claudePhase
+	const claudeActive = (k: number): Runner | undefined =>
+		claudeRunners[((k % claudeRunners.length) + claudeRunners.length) % claudeRunners.length]
 	const lastShiftStart = (runner: Runner): number | null => {
-		const kNow = shiftIndexAt(runner.provider, minutes)
-		for (let k = kNow; k >= kNow - runners.length; k -= 1) {
-			if (activeInShift(runner.provider, k)?.n === runner.n) {
-				return shiftStartOf(runner.provider, k)
+		const kNow = claudeShiftIndex(minutes)
+		for (let k = kNow; k >= kNow - claudeRunners.length; k -= 1) {
+			if (claudeActive(k)?.n === runner.n) {
+				return claudeShiftStart(k)
 			}
 		}
 		return null
@@ -647,14 +652,28 @@ const blitz: ScenarioBuilder = now => {
 		// The window stays hot for the rest of its five hours, then refreshes.
 		return sinceStart < 300 ? 92 : clamp(2 + Math.abs(noise(runner.n * 13)) * 4)
 	}
+	const claudeActiveMinutes = (runner: Runner, m: number): number => {
+		let total = 0
+		for (let k = -1, kNow = claudeShiftIndex(m); k <= kNow; k += 1) {
+			if (claudeActive(k)?.n !== runner.n) {
+				continue
+			}
+			const start = Math.max(0, claudeShiftStart(k))
+			const end = Math.min(m, claudeShiftStart(k) + shiftLength)
+			total += Math.max(0, end - start)
+		}
+		return total
+	}
+	const fableWeekly = (runner: Runner, m: number): number =>
+		clamp(runner.sevenStart + burnRate(runner) * claudeActiveMinutes(runner, m))
 	const seeds: AccountSeed[] = runners.map(runner => ({
 		email: runner.email,
 		n: runner.n,
 		plan: runner.provider === 'openai' ? 'pro' : 'claude_max_20x',
 		provider: runner.provider,
-		// Codex shows just its weekly window (baked partial, slow climb); Claude
-		// shows the 5-hour session cycling plus the Fable scoped weekly — a calm,
-		// legible story, not every window maxing at once.
+		// Codex shows just its weekly window; Claude shows the 5-hour session
+		// cycling plus the Fable scoped weekly — a calm, legible story where a
+		// meter only moves while its account is doing the work.
 		windows:
 			runner.provider === 'openai'
 				? [
@@ -663,7 +682,7 @@ const blitz: ScenarioBuilder = now => {
 							id: 'weekly',
 							label: '7 day · all models',
 							nowFrac: 0.5,
-							peak: seven(runner, minutes),
+							peak: codexWeekly(runner, minutes),
 							period: 7 * DAY,
 							seed: runner.n + 20,
 							wobble: 0
@@ -685,7 +704,7 @@ const blitz: ScenarioBuilder = now => {
 							id: 'weekly_scoped:fable',
 							label: '7 day · Fable',
 							nowFrac: 0.5,
-							peak: clamp(seven(runner, minutes) * 0.9),
+							peak: fableWeekly(runner, minutes),
 							period: 7 * DAY,
 							seed: runner.n + 40,
 							wobble: 0
@@ -693,19 +712,35 @@ const blitz: ScenarioBuilder = now => {
 					]
 	}))
 	const providerSeed = (provider: ProviderId): ProviderSeed => {
-		const k = shiftIndexAt(provider, minutes)
-		const active = activeInShift(provider, k)
+		if (provider === 'openai') {
+			const leg = codexLeg(minutes)
+			const lastBoundary = codexBoundaries[leg - 1]
+			return {
+				activeN: codexRunners[leg]?.n ?? null,
+				auto: true,
+				dwellMs: 300_000,
+				generation: leg + 2,
+				provider,
+				// Before the first threshold crossing nothing has switched today.
+				switchedMinutesAgo: lastBoundary === undefined ? null : Math.max(0.2, minutes - lastBoundary),
+				threshold: 90
+			}
+		}
+		const k = claudeShiftIndex(minutes)
 		return {
-			activeN: active?.n ?? null,
+			activeN: claudeActive(k)?.n ?? null,
 			auto: true,
 			dwellMs: 300_000,
 			generation: k + 2,
 			provider,
-			switchedMinutesAgo: Math.max(0.2, minutes - shiftStartOf(provider, k)),
+			switchedMinutesAgo: Math.max(0.2, minutes - claudeShiftStart(k)),
 			threshold: 90
 		}
 	}
-	return assemble(now, seeds, [providerSeed('openai'), providerSeed('anthropic')], 2.2)
+	// Scale the throughput to what a real 8-account fleet burns: live captures
+	// show ~478M tokens over a 5h window, so target that magnitude (not a toy
+	// number that undersells the value story).
+	return assemble(now, seeds, [providerSeed('openai'), providerSeed('anthropic')], 1250)
 }
 
 // The cruising accounts with visibly different per-provider policies, for the
