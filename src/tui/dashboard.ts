@@ -46,7 +46,6 @@ function rgb(hex: string): RGBA {
 	return value
 }
 
-const labelWidth = 26
 const providerTitles: Record<ProviderId, string> = {
 	anthropic: 'Anthropic · Claude Code',
 	openai: 'OpenAI · Codex'
@@ -61,9 +60,33 @@ interface Row {
 	accountId: string
 }
 
+type ViewMode = 'all' | '5h' | '7d'
+const VIEW_MODES: readonly ViewMode[] = ['all', '5h', '7d']
+
 interface Ctx {
 	theme: Theme
 	now: number
+	columns: number
+	view: ViewMode
+	// How long a completed switch stays flagged. Long in fixture timelapses
+	// (simulated minutes pass per paint), short in live mode.
+	switchFlagMs: number
+}
+
+function labelWidth(ctx: Ctx): number {
+	return ctx.columns < 100 ? 18 : 26
+}
+
+function isFiveHour(window: UsageWindow): boolean {
+	return /5 ?h/i.test(window.label) || window.id === 'session' || window.id === 'five-hour'
+}
+
+function recentSwitch(ctx: Ctx, state: ProviderState | undefined): boolean {
+	if (state?.switchedAt == null) {
+		return false
+	}
+	const elapsed = ctx.now - Date.parse(state.switchedAt)
+	return Number.isFinite(elapsed) && elapsed >= 0 && elapsed < ctx.switchFlagMs
 }
 
 function pad(value: string, width: number): string {
@@ -98,31 +121,94 @@ function accountLine(
 	account: Account,
 	windows: readonly UsageWindow[],
 	isActive: boolean,
-	isSelected: boolean
+	isSelected: boolean,
+	justSwitchedTo: boolean
 ) {
 	const badge = healthBadge(ctx.theme, account)
-	const marker = isActive ? '●' : isSelected ? '▸' : '○'
-	const markerColor = isActive ? ctx.theme.good : isSelected ? ctx.theme.accent : ctx.theme.faint
+	const labels = labelWidth(ctx)
+	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
+	const markerColor =
+		justSwitchedTo && isActive
+			? ctx.theme.warn
+			: isActive
+				? ctx.theme.good
+				: isSelected
+					? ctx.theme.accent
+					: ctx.theme.faint
 	const children = [
 		Text({ content: ` ${marker} `, fg: rgb(markerColor) }),
 		Text({
 			attributes: isActive ? 1 : 0,
-			content: pad(account.label, labelWidth - 2),
-			fg: rgb(isActive || isSelected ? ctx.theme.fg : ctx.theme.dim)
+			content: pad(account.label, labels - 2),
+			fg: rgb(
+				justSwitchedTo && isActive
+					? ctx.theme.warn
+					: isActive || isSelected
+						? ctx.theme.fg
+						: ctx.theme.dim
+			)
 		}),
 		Text({ content: badge === null ? '  ' : ' *', fg: rgb(badge?.color ?? ctx.theme.dim) })
 	]
 	if (windows.length === 0) {
 		children.push(Text({ content: account.health === 'ready' ? ' …' : ' —', fg: rgb(ctx.theme.dim) }))
-	}
-	for (const window of hardWindows(windows).slice(0, 3)) {
-		children.push(
-			Text({ content: ` ${shortWindow(window.label)} `, fg: rgb(ctx.theme.dim) }),
-			Text({
-				content: `${meter(window.usedPercent, 6)} ${percentLabel(window.usedPercent)}`,
-				fg: rgb(pressureColor(ctx.theme, window.usedPercent))
-			})
+		return Box(
+			{
+				backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
+				flexDirection: 'row',
+				width: '100%'
+			},
+			...children
 		)
+	}
+	const hard = hardWindows(windows)
+	const focused =
+		ctx.view === '5h'
+			? hard.filter(isFiveHour)
+			: ctx.view === '7d'
+				? hard.filter(window => !isFiveHour(window))
+				: hard
+	if (ctx.view === 'all') {
+		// Fit as many windows as the terminal width allows; meters grow when
+		// there is room to spare so pressure reads at a glance.
+		const available = ctx.columns - labels - 7
+		const budget = Math.max(1, Math.floor(available / 21))
+		const shown = focused.slice(0, Math.min(3, budget))
+		const meterWidth = shown.length > 0 && available / shown.length >= 30 ? 10 : 6
+		for (const window of shown) {
+			children.push(
+				Text({ content: ` ${shortWindow(window.label)} `, fg: rgb(ctx.theme.dim) }),
+				Text({
+					content: `${meter(window.usedPercent, meterWidth)} ${percentLabel(window.usedPercent)}`,
+					fg: rgb(pressureColor(ctx.theme, window.usedPercent))
+				})
+			)
+		}
+	} else {
+		// Focused view: one wide bar — the binding window, so a scoped limit
+		// (7 day · Fable) that fills first is the one on display.
+		const window = focused.reduce(
+			(worst, candidate) =>
+				worst === undefined || candidate.usedPercent > worst.usedPercent ? candidate : worst,
+			undefined as UsageWindow | undefined
+		)
+		if (window === undefined) {
+			children.push(Text({ content: ' —', fg: rgb(ctx.theme.dim) }))
+		} else {
+			const reset = resetCountdown(window.resetAt, ctx.now)
+			const tag = focused.length > 1 ? `${shortWindow(window.label)} ` : ''
+			const barWidth = Math.max(10, ctx.columns - labels - 22 - tag.length)
+			children.push(
+				Text({
+					content: `${meter(window.usedPercent, barWidth)} ${percentLabel(window.usedPercent)}`,
+					fg: rgb(pressureColor(ctx.theme, window.usedPercent))
+				}),
+				Text({
+					content: reset === null ? `  ${tag}`.trimEnd() : `  ${tag}↻ ${reset}`,
+					fg: rgb(ctx.theme.faint)
+				})
+			)
+		}
 	}
 	return Box(
 		{
@@ -197,6 +283,7 @@ function providerPanel(
 	expanded: boolean
 ) {
 	const state: ProviderState | undefined = snapshot.providers.find(s => s.provider === provider)
+	const switched = recentSwitch(ctx, state)
 	const providerRows = rows
 		.map((row, index) => ({ index, row }))
 		.filter(entry => entry.row.provider === provider)
@@ -223,20 +310,27 @@ function providerPanel(
 						account,
 						windows ?? [],
 						state?.activeAccountId === entry.row.accountId,
-						isSelected
+						isSelected,
+						switched
 					)
 					return isSelected && expanded ? [line, ...accountDetail(ctx, account, windows ?? [])] : [line]
 				})
 	const auto = state?.policy.enabled ? `⟳ auto ${state.policy.thresholdPercent}%` : 'auto off'
+	const activeLabel = snapshot.accounts.find(a => a.id === state?.activeAccountId)?.label
+	const title = switched
+		? ` ${providerTitles[provider]}   ⟳ switched → ${activeLabel ?? '?'} `
+		: ` ${providerTitles[provider]}   ${auto} `
 	return Box(
 		{
 			border: true,
-			borderColor: rgb(ctx.theme.border),
+			borderColor: rgb(switched ? ctx.theme.warn : ctx.theme.border),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
 			flexShrink: 0,
-			title: ` ${providerTitles[provider]}   ${auto} `,
-			titleColor: rgb(state?.policy.enabled ? ctx.theme.good : ctx.theme.dim),
+			title,
+			titleColor: rgb(
+				switched ? ctx.theme.warn : state?.policy.enabled ? ctx.theme.good : ctx.theme.dim
+			),
 			width: '100%'
 		},
 		...lines
@@ -304,6 +398,10 @@ function stat(ctx: Ctx, label: string, value: string, valueColor?: string) {
 
 function blankRow(ctx: Ctx) {
 	return Box({ flexDirection: 'row' }, Text({ content: ' ', fg: rgb(ctx.theme.bg) }))
+}
+
+function centered(...children: ReturnType<typeof Text>[]) {
+	return Box({ flexDirection: 'row', justifyContent: 'center', width: '100%' }, ...children)
 }
 
 function throughputChart(
@@ -374,25 +472,23 @@ function analyticsBody(ctx: Ctx, analytics: AnalyticsSnapshot, timeframe: Timefr
 			tokens.totalTokens > 0
 				? Math.round(((tokens.totalCached + tokens.totalCacheCreation) / tokens.totalTokens) * 100)
 				: 0
-		// The hero numbers: what you used, what it is worth, how fast right now.
+		// The hero numbers, centered: what you used, what it is worth, how fast.
 		body.push(blankRow(ctx))
 		body.push(
-			Box(
-				{ flexDirection: 'row', paddingLeft: 2 },
+			centered(
 				...stat(ctx, 'Σ', `${compactNumber(tokens.totalTokens)} tokens`),
 				...stat(ctx, '≈', `${compactUsd(tokens.costUsd)} API value`, ctx.theme.good),
-				...stat(
-					ctx,
-					'now',
-					`${compactNumber(nowPerHour)}/h`,
-					nowPerHour > 0 ? ctx.theme.accent : ctx.theme.faint
-				)
+				Text({ content: 'now ', fg: rgb(ctx.theme.dim) }),
+				Text({
+					attributes: 1,
+					content: `${compactNumber(nowPerHour)}/h`,
+					fg: rgb(nowPerHour > 0 ? ctx.theme.accent : ctx.theme.faint)
+				})
 			)
 		)
 		// One quiet line of rates, one quieter line of composition.
 		body.push(
-			Box(
-				{ flexDirection: 'row', paddingLeft: 2 },
+			centered(
 				Text({
 					content: `peak ${compactNumber(tokens.peakPerHour)}/h    avg ${compactNumber(averagePerHour)}/h    ${cachedShare}% cached`,
 					fg: rgb(ctx.theme.dim)
@@ -400,32 +496,36 @@ function analyticsBody(ctx: Ctx, analytics: AnalyticsSnapshot, timeframe: Timefr
 			)
 		)
 		body.push(
-			Box(
-				{ flexDirection: 'row', paddingLeft: 2 },
+			centered(
 				Text({
 					content: `in ${compactNumber(tokens.totalInput)} · out ${compactNumber(tokens.totalOutput)} · cache read ${compactNumber(tokens.totalCached)} · cache write ${compactNumber(tokens.totalCacheCreation)}`,
 					fg: rgb(ctx.theme.faint)
 				})
 			)
 		)
-		// Where it went: aligned columns, numbers flush right.
+		// Where it went: a centered table, headers faint, numbers flush right.
 		if (tokens.topModels.length > 0) {
 			body.push(blankRow(ctx))
+			body.push(
+				centered(
+					Text({ content: pad('model', 24), fg: rgb(ctx.theme.faint) }),
+					Text({ content: pad('via', 8), fg: rgb(ctx.theme.faint) }),
+					Text({ content: 'tokens'.padStart(8), fg: rgb(ctx.theme.faint) }),
+					Text({ content: '≈ value'.padStart(10), fg: rgb(ctx.theme.faint) })
+				)
+			)
 			for (const model of tokens.topModels) {
 				body.push(
-					Box(
-						{ flexDirection: 'row', paddingLeft: 2 },
+					centered(
 						Text({ content: pad(model.model, 24), fg: rgb(ctx.theme.fg) }),
-						Text({
-							content: pad(providerCli[model.provider], 8),
-							fg: rgb(ctx.theme.faint)
-						}),
+						Text({ content: pad(providerCli[model.provider], 8), fg: rgb(ctx.theme.faint) }),
 						Text({ content: compactNumber(model.tokens).padStart(8), fg: rgb(ctx.theme.dim) }),
 						Text({ content: compactUsd(model.costUsd).padStart(10), fg: rgb(ctx.theme.dim) })
 					)
 				)
 			}
 		}
+		body.push(blankRow(ctx))
 	}
 	const card = Box(
 		{
@@ -568,7 +668,13 @@ interface ViewState {
 	installed: boolean
 	note: string
 	updateAvailable: string | null
+	updateDismissed: boolean
+	view: ViewMode
 }
+
+export type DashboardAction =
+	| { kind: 'relogin'; provider: ProviderId }
+	| { kind: 'update'; version: string }
 
 function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewState) {
 	const clock = new Date(ctx.now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -580,7 +686,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const footer =
 		state.tab === 'accounts'
-			? '↑↓ select · space details · ⏎ switch · a auto · tab next · r refresh'
+			? '↑↓ select · ⏎ switch/login · v view · space details · a auto · tab next'
 			: state.tab === 'analytics'
 				? '←→ range · tab next · r refresh'
 				: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
@@ -588,15 +694,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 		{ flexDirection: 'row' },
 		Text({ attributes: 1, content: 'tokenmaxx', fg: rgb(ctx.theme.accent) }),
 		Text({ content: `  ${clock}`, fg: rgb(ctx.theme.dim) }),
-		Text({ content: `   ↻ ${refreshed}  ·  live per request + probes`, fg: rgb(ctx.theme.faint) }),
-		...(state.updateAvailable === null
-			? []
-			: [
-					Text({
-						content: `   ⬆ v${state.updateAvailable} — bun add -g tokenmaxx`,
-						fg: rgb(ctx.theme.warn)
-					})
-				]),
+		Text({ content: `   ↻ ${refreshed}`, fg: rgb(ctx.theme.faint) }),
 		...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })])
 	)
 	const children: Array<ReturnType<typeof Box> | ReturnType<typeof Text>> = [header]
@@ -614,6 +712,23 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 		)
 	}
 	children.push(tabBar(ctx, state.tab))
+	if (state.updateAvailable !== null && !state.updateDismissed) {
+		children.push(
+			Box(
+				{ flexDirection: 'row', gap: 1 },
+				Text({
+					attributes: 1,
+					bg: rgb(ctx.theme.accent),
+					content: ` ⬆ v${state.updateAvailable} is ready `,
+					fg: rgb(ctx.theme.bg)
+				}),
+				Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' u ', fg: rgb(ctx.theme.fg) }),
+				Text({ content: 'update now', fg: rgb(ctx.theme.dim) }),
+				Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' x ', fg: rgb(ctx.theme.fg) }),
+				Text({ content: 'later', fg: rgb(ctx.theme.dim) })
+			)
+		)
+	}
 	children.push(
 		...(state.tab === 'accounts'
 			? accountsBody(ctx, analytics.snapshot, rows, state.selected, state.expanded)
@@ -646,7 +761,7 @@ export interface FixtureOptions {
 export async function runTuiDashboard(
 	socketPath: string,
 	options: { installed: boolean; fixture?: FixtureOptions }
-): Promise<void> {
+): Promise<DashboardAction | undefined> {
 	const fixture = options.fixture
 	const live = fixture === undefined
 	const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
@@ -667,7 +782,9 @@ export async function runTuiDashboard(
 		settingsSelected: 0,
 		tab: 'accounts',
 		timeframeIndex: 2,
-		updateAvailable: null
+		updateAvailable: null,
+		updateDismissed: false,
+		view: 'all'
 	}
 	if (live) {
 		void availableUpdate().then(version => {
@@ -688,7 +805,13 @@ export async function runTuiDashboard(
 		let next: ReturnType<typeof Box>
 		try {
 			next = view(
-				{ now: live ? Date.now() : simulatedNow, theme: currentTheme() },
+				{
+					columns: process.stdout.columns ?? 80,
+					now: live ? Date.now() : simulatedNow,
+					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 40 * 60_000 : 120_000,
+					theme: currentTheme(),
+					view: state.view
+				},
 				analytics,
 				rows,
 				state
@@ -731,9 +854,22 @@ export async function runTuiDashboard(
 			clampSelection()
 		})
 
+	const needsLogin = (accountId: string): boolean => {
+		const account = analytics.snapshot.accounts.find(a => a.id === accountId)
+		return (
+			account?.health === 'reauthenticationRequired' ||
+			account?.health === 'loginExpiring' ||
+			account?.health === 'scopeMissing'
+		)
+	}
+
 	const switchToSelected = () => {
 		const row = rows[state.selected]
 		if (row === undefined) {
+			return
+		}
+		if (needsLogin(row.accountId)) {
+			finish({ kind: 'relogin', provider: row.provider })
 			return
 		}
 		void withBusy('switching…', async () => {
@@ -802,6 +938,8 @@ export async function runTuiDashboard(
 		applyPolicy(row.provider, { minimumDwellMilliseconds: next }, `dwell ${dwellLabel(next)}…`)
 	}
 
+	let action: DashboardAction | undefined
+	let finish: (result?: DashboardAction) => void = () => {}
 	await new Promise<void>(resolve => {
 		const tick = 250
 		const interval = live
@@ -815,11 +953,12 @@ export async function runTuiDashboard(
 					}, tick)
 				: null
 		let finished = false
-		const finish = () => {
+		finish = (result?: DashboardAction) => {
 			if (finished) {
 				return
 			}
 			finished = true
+			action = result
 			if (interval !== null) {
 				clearInterval(interval)
 			}
@@ -836,6 +975,19 @@ export async function runTuiDashboard(
 			try {
 				if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
 					finish()
+				} else if (
+					key.name === 'u' &&
+					state.updateAvailable !== null &&
+					!state.updateDismissed &&
+					live
+				) {
+					finish({ kind: 'update', version: state.updateAvailable })
+				} else if (key.name === 'x' && state.updateAvailable !== null && !state.updateDismissed) {
+					state.updateDismissed = true
+					paint()
+				} else if (key.name === 'v' && state.tab === 'accounts') {
+					state.view = VIEW_MODES[(VIEW_MODES.indexOf(state.view) + 1) % VIEW_MODES.length] as ViewMode
+					paint()
 				} else if (key.name === 'tab') {
 					state.tab = TABS[(TABS.indexOf(state.tab) + 1) % TABS.length] as Tab
 					paint()
@@ -890,4 +1042,5 @@ export async function runTuiDashboard(
 		paint()
 		renderer.start()
 	})
+	return action
 }

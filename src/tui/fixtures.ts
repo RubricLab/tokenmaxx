@@ -144,8 +144,9 @@ function account(seed: AccountSeed, now: number): Account {
 		createdAt: new Date(now - 34 * DAY).toISOString(),
 		enabled: true,
 		externalAccountId:
-			['b31c07d2', '9f4ae815', 'c8d2f6a1', '4e7b93c5', 'a25d18f4', '7c91e0b6'][seed.n - 1] ??
-			'e0d94c72',
+			['b31c07d2', '9f4ae815', 'c8d2f6a1', '4e7b93c5', 'a25d18f4', '7c91e0b6', 'd48f2a91', '61e7c3b0'][
+				seed.n - 1
+			] ?? 'e0d94c72',
 		health: seed.health ?? 'ready',
 		id: uuid(seed.n),
 		identity: seed.email,
@@ -548,17 +549,31 @@ const blitz: ScenarioBuilder = now => {
 			email: 'dexter@rubriclabs.com',
 			n: 3,
 			provider: 'anthropic',
-			sevenDeadHour: 17,
-			sevenStart: 44
+			sevenDeadHour: 15.5,
+			sevenStart: 46
 		},
 		{
 			email: 'research@rubriclabs.com',
 			n: 4,
 			provider: 'anthropic',
-			sevenDeadHour: 20.5,
-			sevenStart: 32
+			sevenDeadHour: 18.5,
+			sevenStart: 36
 		},
-		{ email: 'zero@rubriclabs.com', n: 5, provider: 'anthropic', sevenDeadHour: 23.8, sevenStart: 15 }
+		{ email: 'zero@rubriclabs.com', n: 5, provider: 'anthropic', sevenDeadHour: 21, sevenStart: 27 },
+		{
+			email: 'design@rubriclabs.com',
+			n: 7,
+			provider: 'anthropic',
+			sevenDeadHour: 23,
+			sevenStart: 18
+		},
+		{
+			email: 'agents@rubriclabs.com',
+			n: 8,
+			provider: 'anthropic',
+			sevenDeadHour: 23.9,
+			sevenStart: 9
+		}
 	]
 	const seven = (runner: Runner, atMinutes: number) =>
 		clamp(runner.sevenStart + ((100 - runner.sevenStart) / (runner.sevenDeadHour * 60)) * atMinutes)
@@ -617,7 +632,22 @@ const blitz: ScenarioBuilder = now => {
 				period: 7 * DAY,
 				seed: runner.n + 20,
 				wobble: 0
-			}
+			},
+			// Fable burns ahead of the all-models window on Anthropic plans.
+			...(runner.provider === 'anthropic'
+				? [
+						{
+							fillFrac: 0.5,
+							id: 'seven_day_fable',
+							label: '7 day · Fable',
+							nowFrac: 0.5,
+							peak: clamp(seven(runner, minutes) * 1.12),
+							period: 7 * DAY,
+							seed: runner.n + 40,
+							wobble: 0
+						}
+					]
+				: [])
 		]
 	}))
 	const providerSeed = (provider: ProviderId): ProviderSeed => {

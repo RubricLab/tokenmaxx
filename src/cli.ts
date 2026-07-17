@@ -562,7 +562,34 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				await ensureDaemon(context)
 				if (process.stdout.isTTY) {
 					const { runTuiDashboard } = await import('./tui/dashboard.ts')
-					await runTuiDashboard(context.paths.managerSocket, { installed: await isInstalled() })
+					for (;;) {
+						const action = await runTuiDashboard(context.paths.managerSocket, {
+							installed: await isInstalled()
+						})
+						if (action === undefined) {
+							break
+						}
+						if (action.kind === 'relogin') {
+							await login(context, action.provider === 'openai' ? 'codex' : 'claude').catch(error => {
+								process.stdout.write(`${errorMessage(error)}\n`)
+							})
+							continue
+						}
+						if (action.kind === 'update') {
+							process.stdout.write(`Updating tokenmaxx to v${action.version}…\n`)
+							const bun = Bun.which('bun') ?? 'bun'
+							const result = Bun.spawnSync([bun, 'add', '-g', `tokenmaxx@${action.version}`], {
+								stderr: 'inherit',
+								stdout: 'inherit'
+							})
+							process.stdout.write(
+								result.exitCode === 0
+									? `Updated. Run tokenmaxx again to use v${action.version}.\n`
+									: 'Update failed — run: bun add -g tokenmaxx\n'
+							)
+							break
+						}
+					}
 					context.store.close()
 					process.exit(0)
 				}

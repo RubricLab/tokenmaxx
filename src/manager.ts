@@ -320,6 +320,19 @@ export class AccountManager {
 		})
 	}
 
+	// True while the proxy's per-response rate-limit headers are keeping this
+	// account's usage fresh. While that holds, polling the usage endpoint adds
+	// nothing — it only burns the shared rate limit that causes probe 429s on
+	// exactly the account that is busiest.
+	private headerFresh(accountId: string): boolean {
+		const snapshot = this.#store.findUsage(accountId)
+		if (snapshot === null || snapshot.source !== 'proxyResponseHeaders') {
+			return false
+		}
+		const age = this.#dependencies.now().getTime() - Date.parse(snapshot.observedAt)
+		return Number.isFinite(age) && age < 120_000
+	}
+
 	private async performRefreshAll(): Promise<void> {
 		for (const account of this.#store.listAccounts()) {
 			if (this.#stopping) {
@@ -333,7 +346,9 @@ export class AccountManager {
 				continue
 			}
 			const isActive = this.#store.findProviderState(account.provider).activeAccountId === account.id
-			const probeInterval = isActive ? 0 : 5 * 60_000
+			// Headers cover the unified windows in real time; a slow full probe
+			// still refreshes the scoped windows headers do not carry.
+			const probeInterval = this.headerFresh(account.id) ? 10 * 60_000 : isActive ? 0 : 5 * 60_000
 			const lastStartedAt = this.#lastProbeStartedAt.get(account.id) ?? 0
 			if (this.#dependencies.now().getTime() - lastStartedAt < probeInterval) {
 				continue
@@ -351,9 +366,16 @@ export class AccountManager {
 					if (cooldown !== null) {
 						this.#probeCooldownUntil.set(account.id, this.#dependencies.now().getTime() + cooldown)
 					}
+					const health = healthForError(error)
+					// A rate-limited probe is not a rate-limited account: while live
+					// header data flows the account is demonstrably fine, so don't
+					// flag it "limited" in the dashboard.
+					if (health === 'usageRateLimited' && this.headerFresh(account.id)) {
+						return
+					}
 					this.#store.saveAccount({
 						...account,
-						health: healthForError(error),
+						health,
 						updatedAt: this.#dependencies.now().toISOString()
 					})
 				}
