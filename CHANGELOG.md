@@ -1,3 +1,4 @@
+- [2026-07-17] [stagger blitz depletion so codex and claude run out on distinct clocks](https://github.com/RubricLab/tokenmaxx/commit/707f259b426ad37f2ea1fb9f48cda9df388df61d)
 - [2026-07-17] [breathing room in the metrics columns](https://github.com/RubricLab/tokenmaxx/commit/a41e12b13137569356160cda6d9f35e035b2522b)
 - [2026-07-17] [exact dollar values in the metrics table](https://github.com/RubricLab/tokenmaxx/commit/2d0e789c1bc8ddf9cb36308e9d2e03f50bee370f)
 - [2026-07-17] [responsive centered dashboard: inline resets, pricing metrics, in-ui onboarding](https://github.com/RubricLab/tokenmaxx/commit/1d3feadc7be6021425131ed123c257bce83b580b)

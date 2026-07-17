@@ -562,38 +562,42 @@ const blitz: ScenarioBuilder = now => {
 		sevenStart: number
 		sevenDeadHour: number
 	}
+	// Codex vs Claude deplete on distinct clocks so the day feels natural: the 5
+	// Claude accounts burn faster and run out one after another through the day,
+	// while the 3 Codex accounts drain slowly at wide, offset intervals — fewer
+	// seats, more spread. No two providers hit 100% at the same hour.
 	const runners: Runner[] = [
-		{ email: 'dexter@rubriclabs.com', n: 1, provider: 'openai', sevenDeadHour: 18, sevenStart: 41 },
-		{ email: 'ship@rubriclabs.com', n: 2, provider: 'openai', sevenDeadHour: 21, sevenStart: 30 },
-		{ email: 'ops@rubriclabs.com', n: 6, provider: 'openai', sevenDeadHour: 23.4, sevenStart: 17 },
+		{ email: 'dexter@rubriclabs.com', n: 1, provider: 'openai', sevenDeadHour: 15, sevenStart: 34 },
+		{ email: 'ship@rubriclabs.com', n: 2, provider: 'openai', sevenDeadHour: 19.5, sevenStart: 22 },
+		{ email: 'ops@rubriclabs.com', n: 6, provider: 'openai', sevenDeadHour: 23.5, sevenStart: 11 },
 		{
 			email: 'dexter@rubriclabs.com',
 			n: 3,
 			provider: 'anthropic',
-			sevenDeadHour: 15.5,
-			sevenStart: 46
+			sevenDeadHour: 13,
+			sevenStart: 44
 		},
 		{
 			email: 'research@rubriclabs.com',
 			n: 4,
 			provider: 'anthropic',
-			sevenDeadHour: 18.5,
-			sevenStart: 36
+			sevenDeadHour: 16.5,
+			sevenStart: 34
 		},
-		{ email: 'zero@rubriclabs.com', n: 5, provider: 'anthropic', sevenDeadHour: 21, sevenStart: 27 },
+		{ email: 'zero@rubriclabs.com', n: 5, provider: 'anthropic', sevenDeadHour: 18.5, sevenStart: 25 },
 		{
 			email: 'design@rubriclabs.com',
 			n: 7,
 			provider: 'anthropic',
-			sevenDeadHour: 23,
-			sevenStart: 18
+			sevenDeadHour: 21.5,
+			sevenStart: 15
 		},
 		{
 			email: 'agents@rubriclabs.com',
 			n: 8,
 			provider: 'anthropic',
-			sevenDeadHour: 23.9,
-			sevenStart: 9
+			sevenDeadHour: 24,
+			sevenStart: 6
 		}
 	]
 	const seven = (runner: Runner, atMinutes: number) =>
