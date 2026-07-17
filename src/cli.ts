@@ -7,6 +7,7 @@ import { z } from 'zod'
 import {
 	installClaudeConfig,
 	installCodexConfig,
+	installStatus,
 	isInstalled,
 	uninstallClaudeConfig,
 	uninstallCodexConfig
@@ -95,7 +96,7 @@ function help(): string {
 		row(
 			'auto <codex|claude|both> <on|off>',
 			'rotate before you hit a limit',
-			'optional: --threshold N  (default 95)'
+			'optional: --threshold N  (default 90)'
 		),
 		'',
 		head('Details'),
@@ -106,10 +107,12 @@ function help(): string {
 		'',
 		head('Auto-rotation'),
 		dim("  The threshold is measured against the active account's fullest rate-limit"),
-		dim('  window — its 5-hour or weekly window, whichever is highest. When that'),
-		dim('  reaches the threshold (default 95%) or the account gets limited, tokenmaxx'),
-		dim('  switches to the healthy account with the most headroom and holds it for'),
-		dim('  at least 5 minutes. Turning auto on is what authorizes the switching.'),
+		dim('  window — its 5-hour or weekly window, whichever is highest. The proxy reads'),
+		dim('  live rate-limit headers off every response, so crossing the threshold'),
+		dim('  (default 90%) or getting limited rotates immediately — a 429 is even'),
+		dim('  retried on the next account before your client sees it. Threshold switches'),
+		dim('  hold for 5 minutes to avoid flapping; hard limits ignore the hold.'),
+		dim('  Turning auto on is what authorizes the switching.'),
 		'',
 		dim('Once installed, use codex and claude normally — a local proxy injects the'),
 		dim("active account's credential per request, so a switch takes effect on the"),
@@ -401,7 +404,7 @@ async function configureAutomation(
 		throw new ApplicationError('USAGE', '--threshold takes a percentage from 1 to 100')
 	}
 	await ensureDaemon(context)
-	let effectiveThreshold = thresholdPercent ?? 95
+	let effectiveThreshold = thresholdPercent ?? 90
 	for (const provider of providers) {
 		const state = await managerRequest({
 			method: 'policy/set',
@@ -475,9 +478,22 @@ async function doctor(context: ApplicationContext): Promise<void> {
 			`${port === null ? 'warning  ' : 'ok     '}  proxy    ${port === null ? 'not listening' : `127.0.0.1:${port}`}\n`
 		)
 	}
-	const installed = await isInstalled()
+	const routing = await installStatus()
 	process.stdout.write(
-		`${installed ? 'ok     ' : 'note   '}  config   ${installed ? 'native codex & claude route through tokenmaxx' : 'run tokenmaxx install to route native codex & claude'}\n`
+		`${routing.codexRouted ? 'ok     ' : 'note   '}  codex    ${
+			routing.codexRouted
+				? 'config.toml selects the tokenmaxx provider'
+				: routing.codexStale
+					? 'a tokenmaxx block exists but codex ignores it (top-level key was swallowed by a [table]) — run tokenmaxx install to repair'
+					: 'not routed — run tokenmaxx install'
+		}\n`
+	)
+	process.stdout.write(
+		`${routing.claudeRouted ? 'ok     ' : 'note   '}  claude   ${
+			routing.claudeRouted
+				? 'settings.json routes ANTHROPIC_BASE_URL through tokenmaxx'
+				: 'not routed — run tokenmaxx install'
+		}\n`
 	)
 	process.stdout.write(`state     ${context.paths.database}\n`)
 	const legacyDirectories = [join(context.paths.root, 'codex'), join(context.paths.root, 'claude')]
@@ -505,15 +521,19 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 			case 'dashboard': {
 				const fixtureName = process.env.TOKENMAXX_FIXTURE ?? option(arguments_, '--fixture')
 				if (fixtureName !== undefined && process.stdout.isTTY) {
-					const [{ buildScenario, FIXTURE_NOW }, { runTuiDashboard }] = await Promise.all([
+					const [{ FIXTURE_NOW }, { runTuiDashboard }] = await Promise.all([
 						import('./tui/fixtures.ts'),
 						import('./tui/dashboard.ts')
 					])
 					const now = process.env.TOKENMAXX_NOW ? Number(process.env.TOKENMAXX_NOW) : FIXTURE_NOW
+					const timewarp = Number(process.env.TOKENMAXX_TIMEWARP ?? 0)
 					await runTuiDashboard(context.paths.managerSocket, {
-						fixture: buildScenario(fixtureName, now),
-						installed: process.env.TOKENMAXX_INSTALLED !== 'false',
-						now
+						fixture: {
+							name: fixtureName,
+							now,
+							timewarp: Number.isFinite(timewarp) && timewarp > 0 ? timewarp : 0
+						},
+						installed: process.env.TOKENMAXX_INSTALLED !== 'false'
 					})
 					context.store.close()
 					process.exit(0)

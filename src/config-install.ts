@@ -4,11 +4,22 @@ import { dirname, join } from 'node:path'
 import type { ApplicationPaths } from './paths.ts'
 import { proxyBaseUrl } from './paths.ts'
 
-const codexBeginMarker = '# >>> tokenmaxx managed (do not edit) >>>'
-const codexEndMarker = '# <<< tokenmaxx managed <<<'
+// The codex config is TOML, and TOML scopes bare keys to the most recent
+// [table] header. A managed block appended to the bottom of a config that
+// ends in a table (say [notice]) silently becomes notice.model_provider —
+// codex keeps its built-in provider and every request bypasses the proxy.
+// So the managed config is written in two parts: the top-level
+// model_provider key is PREPENDED (before any table header can capture it)
+// and the [model_providers.tokenmaxx] table is APPENDED (where it can't
+// capture the user's own bare keys).
+const providerName = 'tokenmaxx'
+const topBeginMarker = '# >>> tokenmaxx managed (do not edit) >>>'
+const topEndMarker = '# <<< tokenmaxx managed <<<'
+const tableBeginMarker = '# >>> tokenmaxx provider (do not edit) >>>'
+const tableEndMarker = '# <<< tokenmaxx provider <<<'
 const dummyAuthToken = 'managed-by-tokenmaxx'
-const legacyBeginMarkers = [codexBeginMarker, '# >>> tokmax managed (do not edit) >>>']
-const legacyEndMarkers = [codexEndMarker, '# <<< tokmax managed <<<']
+const legacyBeginMarkers = [topBeginMarker, '# >>> tokmax managed (do not edit) >>>']
+const legacyEndMarkers = [topEndMarker, '# <<< tokmax managed <<<']
 const legacyDummyTokens = [dummyAuthToken, 'managed-by-tokmax']
 const disabledPrefix = /^#\s*(?:tokenmaxx|tokmax)-disabled:\s*/
 
@@ -24,16 +35,19 @@ async function readFileOrEmpty(path: string): Promise<string> {
 	return readFile(path, 'utf8').catch(() => '')
 }
 
-function stripCodexManagedBlock(content: string): string {
-	let base = content
+function stripMarkedBlock(content: string, beginMarker: string, endMarker: string): string {
+	const begin = content.indexOf(beginMarker)
+	const end = content.indexOf(endMarker)
+	if (begin === -1 || end === -1 || end <= begin) {
+		return content
+	}
+	return `${content.slice(0, begin)}${content.slice(end + endMarker.length)}`
+}
+
+function stripCodexManagedBlocks(content: string): string {
+	let base = stripMarkedBlock(content, tableBeginMarker, tableEndMarker)
 	for (let index = 0; index < legacyBeginMarkers.length; index += 1) {
-		const beginMarker = legacyBeginMarkers[index] ?? ''
-		const endMarker = legacyEndMarkers[index] ?? ''
-		const begin = base.indexOf(beginMarker)
-		const end = base.indexOf(endMarker)
-		if (begin !== -1 && end !== -1 && end > begin) {
-			base = `${base.slice(0, begin)}${base.slice(end + endMarker.length)}`
-		}
+		base = stripMarkedBlock(base, legacyBeginMarkers[index] ?? '', legacyEndMarkers[index] ?? '')
 	}
 	return base
 		.split('\n')
@@ -42,11 +56,11 @@ function stripCodexManagedBlock(content: string): string {
 		)
 		.join('\n')
 		.replace(/\n{3,}/g, '\n\n')
-		.trimEnd()
+		.trim()
 }
 
 function restoreCodexContent(content: string): string {
-	const stripped = stripCodexManagedBlock(content)
+	const stripped = stripCodexManagedBlocks(content)
 	return `${stripped
 		.split('\n')
 		.map(line => line.replace(disabledPrefix, ''))
@@ -54,35 +68,38 @@ function restoreCodexContent(content: string): string {
 		.trimEnd()}\n`
 }
 
-export function buildCodexManagedBlock(paths: ApplicationPaths): string {
-	const baseUrl = proxyBaseUrl(paths, 'openai')
-	return [
-		codexBeginMarker,
-		`model_provider = "tokenmaxx"`,
-		'',
-		'[model_providers.tokenmaxx]',
-		`name = "tokenmaxx"`,
-		`base_url = "${baseUrl}"`,
-		`wire_api = "responses"`,
-		codexEndMarker
-	].join('\n')
+export function buildCodexManagedConfig(paths: ApplicationPaths): { top: string; table: string } {
+	return {
+		table: [
+			tableBeginMarker,
+			`[model_providers.${providerName}]`,
+			`name = "${providerName}"`,
+			`base_url = "${proxyBaseUrl(paths, 'openai')}"`,
+			'wire_api = "responses"',
+			'requires_openai_auth = true',
+			tableEndMarker
+		].join('\n'),
+		top: [topBeginMarker, `model_provider = "${providerName}"`, topEndMarker].join('\n')
+	}
 }
 
 export async function installCodexConfig(paths: ApplicationPaths): Promise<string> {
 	const path = codexConfigPath()
-	const existing = await readFileOrEmpty(path)
-	const base = stripCodexManagedBlock(existing)
+	const base = stripCodexManagedBlocks(await readFileOrEmpty(path))
+	const managed = buildCodexManagedConfig(paths)
 	const body = base.length === 0 ? '' : `${base}\n\n`
-	const next = `${body}${buildCodexManagedBlock(paths)}\n`
 	await mkdir(dirname(path), { recursive: true })
-	await writeFile(path, next, { mode: 0o600 })
+	await writeFile(path, `${managed.top}\n\n${body}${managed.table}\n`, { mode: 0o600 })
 	return path
 }
 
 export async function uninstallCodexConfig(): Promise<string | null> {
 	const path = codexConfigPath()
 	const existing = await readFile(path, 'utf8').catch(() => null)
-	if (existing === null || !legacyBeginMarkers.some(marker => existing.includes(marker))) {
+	if (
+		existing === null ||
+		![...legacyBeginMarkers, tableBeginMarker].some(marker => existing.includes(marker))
+	) {
 		return null
 	}
 	await writeFile(path, restoreCodexContent(existing), { mode: 0o600 })
@@ -149,9 +166,45 @@ export async function uninstallClaudeConfig(): Promise<string | null> {
 	return path
 }
 
+export interface InstallStatus {
+	// True only when the parsed TOML actually selects a proxy-backed provider —
+	// a managed block swallowed into another table reads as NOT routed.
+	codexRouted: boolean
+	claudeRouted: boolean
+	// A tokenmaxx/tokmax marker exists but routing is ineffective; the fix is
+	// re-running `tokenmaxx install`.
+	codexStale: boolean
+}
+
+export async function installStatus(): Promise<InstallStatus> {
+	const codexRaw = await readFileOrEmpty(codexConfigPath())
+	let codexRouted = false
+	try {
+		const parsed = Bun.TOML.parse(codexRaw) as {
+			model_provider?: unknown
+			model_providers?: Record<string, { base_url?: unknown }>
+		}
+		const selected = typeof parsed.model_provider === 'string' ? parsed.model_provider : null
+		const baseUrl = selected === null ? undefined : parsed.model_providers?.[selected]?.base_url
+		codexRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
+	} catch {
+		codexRouted = false
+	}
+	const codexStale =
+		!codexRouted &&
+		[...legacyBeginMarkers, tableBeginMarker].some(marker => codexRaw.includes(marker))
+
+	let claudeRouted = false
+	try {
+		const settings = JSON.parse(await readFileOrEmpty(claudeSettingsPath())) as ClaudeSettings
+		claudeRouted = settings.env?.ANTHROPIC_BASE_URL?.includes('127.0.0.1') ?? false
+	} catch {
+		claudeRouted = false
+	}
+	return { claudeRouted, codexRouted, codexStale }
+}
+
 export async function isInstalled(): Promise<boolean> {
-	return readFileOrEmpty(codexConfigPath()).then(
-		content =>
-			content.includes('model_providers.tokenmaxx') || content.includes('model_providers.tokmax')
-	)
+	const status = await installStatus()
+	return status.codexRouted && status.claudeRouted
 }

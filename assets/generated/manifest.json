@@ -20,6 +20,10 @@
     "name": "analytics-week"
   },
   {
+    "caption": "Auto-rotation, threshold, and dwell — tuned per provider, applied live.",
+    "name": "settings"
+  },
+  {
     "caption": "A fresh install: sign in, then route native codex & claude.",
     "name": "onboarding"
   }

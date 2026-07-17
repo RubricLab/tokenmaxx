@@ -7,8 +7,6 @@ import {
 	type ProviderState,
 	TIMEFRAMES,
 	type TokenAnalytics,
-	type UsageHistory,
-	type UsageHistoryPoint,
 	type UsageSnapshot,
 	type UsageWindow
 } from '../domain.ts'
@@ -31,20 +29,21 @@ function buildTokens(scale: number): TokenAnalytics {
 		const target = Math.round(150_000 * hours * 0.5 * scale)
 		const buckets = raw.map(value => Math.round((value / rawSum) * target))
 		const totalTokens = buckets.reduce((sum, value) => sum + value, 0)
-		const totalCached = Math.round(totalTokens * 0.62)
-		const totalInput = Math.round(totalTokens * 0.28)
+		const totalCached = Math.round(totalTokens * 0.58)
+		const totalCacheCreation = Math.round(totalTokens * 0.04)
+		const totalInput = Math.round(totalTokens * 0.26)
 		const codexTokens = Math.round(totalTokens * 0.55)
 		const claudeTokens = totalTokens - codexTokens
-		const codexCost = costUsd(
-			'gpt-5.6-sol',
-			Math.round(codexTokens * 0.7),
-			Math.round(codexTokens * 0.3)
-		)
-		const claudeCost = costUsd(
-			'claude-opus-4-8',
-			Math.round(claudeTokens * 0.7),
-			Math.round(claudeTokens * 0.3)
-		)
+		const split = (tokens: number, model: string) =>
+			costUsd(
+				model,
+				Math.round(tokens * 0.24),
+				Math.round(tokens * 0.12),
+				Math.round(tokens * 0.6),
+				Math.round(tokens * 0.04)
+			)
+		const codexCost = split(codexTokens, 'gpt-5.6-sol')
+		const claudeCost = split(claudeTokens, 'claude-opus-4-8')
 		const bucketMs = timeframe.ms / 120
 		const peakBucket = buckets.reduce((max, value) => Math.max(max, value), 0)
 		return {
@@ -57,14 +56,28 @@ function buildTokens(scale: number): TokenAnalytics {
 			costUsd: codexCost + claudeCost,
 			key: timeframe.key,
 			peakPerHour: Math.round(peakBucket * (3_600_000 / bucketMs)),
-			topModel: totalTokens === 0 ? null : 'claude-opus-4-8',
+			topModels:
+				totalTokens === 0
+					? []
+					: [
+							{ costUsd: codexCost, model: 'gpt-5.6-sol', tokens: codexTokens },
+							{ costUsd: claudeCost, model: 'claude-opus-4-8', tokens: claudeTokens }
+						].sort((left, right) => right.tokens - left.tokens),
+			totalCacheCreation,
 			totalCached,
 			totalInput,
-			totalOutput: totalTokens - totalInput - totalCached,
+			totalOutput: totalTokens - totalInput - totalCached - totalCacheCreation,
 			totalTokens
 		}
 	})
-	return { timeframes }
+	const hourly = timeframes[0]
+	return {
+		nowPerHour:
+			hourly === undefined
+				? 0
+				: Math.round(Math.max(...hourly.buckets.slice(-6), 0) * (HOUR / hourly.bucketMs) * 0.85),
+		timeframes
+	}
 }
 
 const MINUTE = 60_000
@@ -111,19 +124,6 @@ function toWindow(spec: WindowSpec, now: number): UsageWindow {
 	}
 }
 
-function toHistory(spec: WindowSpec, now: number): UsageHistory {
-	const points: UsageHistoryPoint[] = []
-	const start = now - 31 * DAY
-	const fine = now - DAY
-	for (let at = start; at < fine; at += HOUR) {
-		points.push({ at, usedPercent: Math.round(valueAt(spec, at, now)) })
-	}
-	for (let at = fine; at <= now; at += 10 * MINUTE) {
-		points.push({ at, usedPercent: Math.round(valueAt(spec, at, now)) })
-	}
-	return { label: spec.label, points, windowId: spec.id }
-}
-
 interface AccountSeed {
 	n: number
 	provider: ProviderId
@@ -143,7 +143,7 @@ function account(seed: AccountSeed, now: number): Account {
 		identity: seed.email,
 		label: seed.email,
 		plan: seed.plan,
-		updatedAt: new Date(now - 40 * MINUTE).toISOString()
+		updatedAt: new Date(now - 2 * MINUTE).toISOString()
 	} as const
 	return seed.provider === 'openai'
 		? {
@@ -164,10 +164,12 @@ function account(seed: AccountSeed, now: number): Account {
 
 function usage(seed: AccountSeed, now: number): UsageSnapshot {
 	const windows = (seed.windows ?? []).map(spec => toWindow(spec, now))
+	// Usage is read off response headers as traffic flows, so a live system is
+	// always seconds fresh.
 	const base = {
 		accountId: uuid(seed.n),
 		hardLimitReached: windows.some(window => window.usedPercent >= 100),
-		observedAt: new Date(now - 40 * MINUTE).toISOString(),
+		observedAt: new Date(now - 12_000).toISOString(),
 		windows
 	} as const
 	return seed.provider === 'openai'
@@ -175,12 +177,12 @@ function usage(seed: AccountSeed, now: number): UsageSnapshot {
 		: { ...base, provider: 'anthropic', source: 'claudeUsageEndpoint' }
 }
 
-function policy(provider: ProviderId, enabled: boolean, thresholdPercent = 95): AutomationPolicy {
+function policy(provider: ProviderId, enabled: boolean, thresholdPercent = 90): AutomationPolicy {
 	return {
 		authorization: enabled ? 'confirmed' : 'notConfirmed',
 		enabled,
 		hysteresisPercent: 5,
-		maximumSnapshotAgeMilliseconds: 120_000,
+		maximumSnapshotAgeMilliseconds: 420_000,
 		minimumDwellMilliseconds: 300_000,
 		provider,
 		thresholdPercent
@@ -216,14 +218,10 @@ function assemble(
 	tokenScale = 1
 ): AnalyticsSnapshot {
 	return AnalyticsSnapshotSchema.parse({
-		history: accounts.map(seed => ({
-			accountId: uuid(seed.n),
-			windows: (seed.windows ?? []).map(spec => toHistory(spec, now))
-		})),
 		snapshot: {
 			accounts: accounts.map(seed => account(seed, now)),
 			providers: providers.map(seed => providerState(seed, now)),
-			sampledAt: new Date(now - 40 * MINUTE).toISOString(),
+			sampledAt: new Date(now - 12_000).toISOString(),
 			usage: accounts.map(seed => usage(seed, now))
 		},
 		tokens: buildTokens(tokenScale)
@@ -401,7 +399,115 @@ const onboarding: ScenarioBuilder = now =>
 		0
 	)
 
-const scenarios: Record<string, ScenarioBuilder> = { cruising, onboarding, oneHot, rotated }
+// The demo screenplay: a relay race across accounts, written as a pure
+// function of the clock. Each account's 5h window climbs a linear ramp; the
+// active account is whichever hasn't crossed the 90% threshold yet, so playing
+// this scenario with an accelerated clock (TOKENMAXX_TIMEWARP) shows meters
+// filling and the active dot hopping — the product's whole story in one take.
+const relay: ScenarioBuilder = now => {
+	const t0 = Date.parse('2026-07-15T13:30:00.000Z')
+	const elapsedMinutes = Math.max(0, (now - t0) / MINUTE)
+	const ramp = (start: number, perMinute: number) =>
+		clamp(start + perMinute * elapsedMinutes + noise(Math.floor(now / (5 * MINUTE))) * 1.5)
+	const crossing = (start: number, perMinute: number) => (90 - start) / perMinute
+
+	// Claude: A starts hot and crosses 90% quickly; B carries the middle; C is fresh.
+	const claudeRamps = [
+		{ n: 3, rate: 0.75, start: 62 },
+		{ n: 4, rate: 0.55, start: 24 },
+		{ n: 5, rate: 0.3, start: 6 }
+	]
+	const codexRamps = [
+		{ n: 1, rate: 0.62, start: 55 },
+		{ n: 2, rate: 0.42, start: 14 },
+		{ n: 6, rate: 0.24, start: 5 }
+	]
+	const activeIndex = (ramps: { start: number; rate: number }[]) => {
+		for (let index = 0; index < ramps.length; index += 1) {
+			const spec = ramps[index]
+			if (spec !== undefined && ramp(spec.start, spec.rate) < 90) {
+				return index
+			}
+		}
+		return ramps.length - 1
+	}
+	const claudeActive = activeIndex(claudeRamps)
+	const codexActive = activeIndex(codexRamps)
+	const switchedMinutesAgo = (ramps: { start: number; rate: number }[], active: number) => {
+		if (active === 0) {
+			return 480
+		}
+		const previous = ramps[active - 1]
+		return previous === undefined
+			? 480
+			: Math.max(0.2, elapsedMinutes - crossing(previous.start, previous.rate))
+	}
+	// fillFrac === nowFrac makes valueAt(now) return the peak exactly, so the
+	// meter reads the ramp value with no cyclical scaling.
+	const sessionWindow = (spec: { start: number; rate: number }, id: string, label: string) => ({
+		fillFrac: 0.5,
+		id,
+		label,
+		nowFrac: 0.5,
+		peak: ramp(spec.start, spec.rate),
+		period: 5 * HOUR,
+		seed: spec.start,
+		wobble: 0
+	})
+	const emails = {
+		1: 'dexter@rubriclabs.com',
+		2: 'ship@rubriclabs.com',
+		3: 'dexter@rubriclabs.com',
+		4: 'research@rubriclabs.com',
+		5: 'zero@rubriclabs.com',
+		6: 'ops@rubriclabs.com'
+	} as const
+	return assemble(
+		now,
+		[
+			...codexRamps.map((spec, index) => ({
+				email: emails[spec.n as keyof typeof emails],
+				n: spec.n,
+				plan: 'pro',
+				provider: 'openai' as const,
+				windows: [
+					sessionWindow(spec, 'five-hour', '5 hour'),
+					weekly(30 + index * 9 + elapsedMinutes * 0.04, 0.6, 20 + spec.n)
+				]
+			})),
+			...claudeRamps.map((spec, index) => ({
+				email: emails[spec.n as keyof typeof emails],
+				n: spec.n,
+				plan: 'claude_max_20x',
+				provider: 'anthropic' as const,
+				windows: [
+					sessionWindow(spec, 'session', '5h session'),
+					weekly(26 + index * 7 + elapsedMinutes * 0.05, 0.55, 40 + spec.n)
+				]
+			}))
+		],
+		[
+			{
+				activeN: codexRamps[codexActive]?.n ?? 1,
+				auto: true,
+				generation: 5 + codexActive,
+				provider: 'openai',
+				switchedMinutesAgo: switchedMinutesAgo(codexRamps, codexActive),
+				threshold: 90
+			},
+			{
+				activeN: claudeRamps[claudeActive]?.n ?? 3,
+				auto: true,
+				generation: 2 + claudeActive,
+				provider: 'anthropic',
+				switchedMinutesAgo: switchedMinutesAgo(claudeRamps, claudeActive),
+				threshold: 90
+			}
+		]
+	)
+}
+
+const scenarios: Record<string, ScenarioBuilder> = { cruising, onboarding, oneHot, relay, rotated }
 
 export const SCENARIO_NAMES = Object.keys(scenarios)
 

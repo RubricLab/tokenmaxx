@@ -15,8 +15,6 @@ import {
 	SwitchRecordSchema,
 	type TokenEvent,
 	TokenEventSchema,
-	type UsageHistory,
-	UsageHistoryPointSchema,
 	type UsageSnapshot,
 	UsageSnapshotSchema
 } from './domain.ts'
@@ -24,7 +22,6 @@ import { ApplicationError } from './errors.ts'
 
 type PersistedSchema<Type> = { parse(value: unknown): Type }
 
-const maxHistoryPoints = 2880
 const maxTokenEventAgeMs = 31 * 24 * 60 * 60 * 1000
 const tokenBucketCount = 120
 
@@ -32,7 +29,14 @@ export interface TokenTimeframeAggregate {
 	key: string
 	bucketMs: number
 	buckets: number[]
-	byModel: { model: string; provider: string; input: number; output: number; cached: number }[]
+	byModel: {
+		model: string
+		provider: string
+		input: number
+		output: number
+		cached: number
+		cacheCreation: number
+	}[]
 }
 
 export interface StateStore {
@@ -51,13 +55,13 @@ export interface StateStore {
 	listSwitchRecords(limit?: number): SwitchRecord[]
 	saveSwitchRecord(record: SwitchRecord): void
 	commitSwitch(record: SwitchRecord, state: ProviderState): void
-	usageHistory(accountId: string): UsageHistory[]
 	dashboard(): DashboardSnapshot
 	recordTokenEvent(event: TokenEvent): void
 	tokenAnalytics(
 		nowMillis: number,
 		timeframes: readonly { key: string; ms: number }[]
 	): TokenTimeframeAggregate[]
+	tokensBetween(startMillis: number, endMillis: number): number
 }
 
 interface JsonRow {
@@ -106,14 +110,43 @@ function initialProviderState(provider: ProviderId): ProviderState {
 			authorization: 'notConfirmed',
 			enabled: false,
 			hysteresisPercent: 5,
-			maximumSnapshotAgeMilliseconds: 120_000,
+			maximumSnapshotAgeMilliseconds: 420_000,
 			minimumDwellMilliseconds: 300_000,
 			provider,
-			thresholdPercent: 95
+			thresholdPercent: 90
 		},
 		provider,
 		switchedAt: null
 	})
+}
+
+// Policies saved by earlier releases carry the old defaults. 120s snapshot
+// staleness is shorter than the 5-minute candidate probe interval, so idle
+// accounts flickered in and out of rotation eligibility; 95% left too little
+// headroom under parallel-agent burst. Only values still at the old default
+// are rewritten — anything user-tuned is left alone.
+function migratePolicyDefaults(database: Database): void {
+	const rows = database.query<JsonRow & { provider: string }, []>(
+		'SELECT provider, payload FROM provider_states'
+	)
+	for (const row of rows.all()) {
+		const state = parseRequiredPayload(row, ProviderStateSchema)
+		const policy = { ...state.policy }
+		if (policy.maximumSnapshotAgeMilliseconds === 120_000) {
+			policy.maximumSnapshotAgeMilliseconds = 420_000
+		}
+		if (policy.thresholdPercent === 95) {
+			policy.thresholdPercent = 90
+		}
+		if (
+			policy.maximumSnapshotAgeMilliseconds !== state.policy.maximumSnapshotAgeMilliseconds ||
+			policy.thresholdPercent !== state.policy.thresholdPercent
+		) {
+			database
+				.query('UPDATE provider_states SET payload = ? WHERE provider = ?')
+				.run(serialize({ ...state, policy }), row.provider)
+		}
+	}
 }
 
 function migrate(database: Database): void {
@@ -151,14 +184,6 @@ function migrate(database: Database): void {
     CREATE INDEX IF NOT EXISTS switch_records_provider_created
       ON switch_records(provider, created_at DESC);
 
-    CREATE TABLE IF NOT EXISTS usage_history (
-      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      window_id TEXT NOT NULL,
-      label TEXT NOT NULL,
-      points TEXT NOT NULL,
-      PRIMARY KEY (account_id, window_id)
-    );
-
     CREATE TABLE IF NOT EXISTS token_events (
       at INTEGER NOT NULL,
       provider TEXT NOT NULL,
@@ -171,6 +196,7 @@ function migrate(database: Database): void {
     CREATE INDEX IF NOT EXISTS token_events_at ON token_events(at);
 
     DROP TABLE IF EXISTS runtime_sessions;
+    DROP TABLE IF EXISTS usage_history;
   `)
 
 	const accountColumns = new Set(
@@ -188,6 +214,11 @@ function migrate(database: Database): void {
 	if (!tokenColumns.has('cache_read_tokens')) {
 		database.exec('ALTER TABLE token_events ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0')
 		database.exec('DELETE FROM token_events')
+	}
+	if (!tokenColumns.has('cache_creation_tokens')) {
+		database.exec(
+			'ALTER TABLE token_events ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0'
+		)
 	}
 	const requiresLabelMigration = !accountColumns.has('label')
 	const requiresExternalAccountIdMigration = !accountColumns.has('external_account_id')
@@ -250,6 +281,7 @@ function migrate(database: Database): void {
 	for (const provider of ProviderIdSchema.options) {
 		insertState.run(provider, serialize(initialProviderState(provider)))
 	}
+	migratePolicyDefaults(database)
 }
 
 export function createStateStore(databasePath: string): StateStore {
@@ -377,56 +409,11 @@ export function createStateStore(databasePath: string): StateStore {
 				`Usage provider ${parsed.provider} does not match account provider ${account.provider}`
 			)
 		}
-		const observedAtMillis = Date.parse(parsed.observedAt)
-		database
-			.transaction(() => {
-				database
-					.query(
-						'INSERT INTO usage_snapshots(account_id, observed_at, payload) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET observed_at = excluded.observed_at, payload = excluded.payload'
-					)
-					.run(parsed.accountId, parsed.observedAt, serialize(parsed))
-				for (const window of parsed.windows) {
-					appendUsagePoint(parsed.accountId, window.id, window.label, {
-						at: observedAtMillis,
-						usedPercent: Math.max(0, Math.min(100, window.usedPercent))
-					})
-				}
-			})
-			.immediate()
-	}
-
-	function appendUsagePoint(
-		accountId: string,
-		windowId: string,
-		label: string,
-		point: { at: number; usedPercent: number }
-	): void {
-		const existing = database
-			.query<{ points: string }, [string, string]>(
-				'SELECT points FROM usage_history WHERE account_id = ? AND window_id = ?'
-			)
-			.get(accountId, windowId)
-		const points =
-			existing === null ? [] : UsageHistoryPointSchema.array().parse(JSON.parse(existing.points))
-		points.push(point)
 		database
 			.query(
-				'INSERT INTO usage_history(account_id, window_id, label, points) VALUES (?, ?, ?, ?) ON CONFLICT(account_id, window_id) DO UPDATE SET label = excluded.label, points = excluded.points'
+				'INSERT INTO usage_snapshots(account_id, observed_at, payload) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET observed_at = excluded.observed_at, payload = excluded.payload'
 			)
-			.run(accountId, windowId, label, JSON.stringify(points.slice(-maxHistoryPoints)))
-	}
-
-	function usageHistory(accountId: string): UsageHistory[] {
-		return database
-			.query<{ window_id: string; label: string; points: string }, [string]>(
-				'SELECT window_id, label, points FROM usage_history WHERE account_id = ? ORDER BY window_id'
-			)
-			.all(accountId)
-			.map(row => ({
-				label: row.label,
-				points: UsageHistoryPointSchema.array().parse(JSON.parse(row.points)),
-				windowId: row.window_id
-			}))
+			.run(parsed.accountId, parsed.observedAt, serialize(parsed))
 	}
 
 	function listProviderStates(): ProviderState[] {
@@ -524,7 +511,7 @@ export function createStateStore(databasePath: string): StateStore {
 		const parsed = TokenEventSchema.parse(event)
 		database
 			.query(
-				'INSERT INTO token_events (at, provider, account_id, model, input_tokens, output_tokens, cache_read_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)'
+				'INSERT INTO token_events (at, provider, account_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
 			)
 			.run(
 				parsed.at,
@@ -533,7 +520,8 @@ export function createStateStore(databasePath: string): StateStore {
 				parsed.model,
 				parsed.inputTokens,
 				parsed.outputTokens,
-				parsed.cacheReadTokens
+				parsed.cacheReadTokens,
+				parsed.cacheCreationTokens
 			)
 		database.query('DELETE FROM token_events WHERE at < ?').run(parsed.at - maxTokenEventAgeMs)
 	}
@@ -546,13 +534,20 @@ export function createStateStore(databasePath: string): StateStore {
 			{ b: number; tokens: number },
 			[number, number, number, number]
 		>(
-			'SELECT CAST((at - ?) / ? AS INTEGER) AS b, SUM(input_tokens + output_tokens + cache_read_tokens) AS tokens FROM token_events WHERE at >= ? AND at <= ? GROUP BY b'
+			'SELECT CAST((at - ?) / ? AS INTEGER) AS b, SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) AS tokens FROM token_events WHERE at >= ? AND at <= ? GROUP BY b'
 		)
 		const modelQuery = database.query<
-			{ model: string | null; provider: string; input: number; output: number; cached: number },
+			{
+				model: string | null
+				provider: string
+				input: number
+				output: number
+				cached: number
+				cacheCreation: number
+			},
 			[number, number]
 		>(
-			'SELECT model, provider, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached FROM token_events WHERE at >= ? AND at <= ? GROUP BY model, provider'
+			'SELECT model, provider, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached, SUM(cache_creation_tokens) AS cacheCreation FROM token_events WHERE at >= ? AND at <= ? GROUP BY model, provider'
 		)
 		return timeframes.map(({ key, ms }) => {
 			const start = nowMillis - ms
@@ -563,6 +558,7 @@ export function createStateStore(databasePath: string): StateStore {
 				buckets[index] = (buckets[index] ?? 0) + row.tokens
 			}
 			const byModel = modelQuery.all(start, nowMillis).map(row => ({
+				cacheCreation: row.cacheCreation,
 				cached: row.cached,
 				input: row.input,
 				model: row.model ?? 'unknown',
@@ -571,6 +567,15 @@ export function createStateStore(databasePath: string): StateStore {
 			}))
 			return { bucketMs, buckets, byModel, key }
 		})
+	}
+
+	function tokensBetween(startMillis: number, endMillis: number): number {
+		const row = database
+			.query<{ tokens: number | null }, [number, number]>(
+				'SELECT SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) AS tokens FROM token_events WHERE at >= ? AND at <= ?'
+			)
+			.get(startMillis, endMillis)
+		return row?.tokens ?? 0
 	}
 
 	return {
@@ -592,6 +597,6 @@ export function createStateStore(databasePath: string): StateStore {
 		saveSwitchRecord,
 		saveUsage,
 		tokenAnalytics,
-		usageHistory
+		tokensBetween
 	}
 }

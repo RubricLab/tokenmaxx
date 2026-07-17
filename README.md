@@ -45,31 +45,42 @@ that reads the **active account per request** and injects its credential — so 
 effect on the very next request, even mid-turn, with the clients running unmodified.
 Credentials stay in the macOS Keychain; nothing but opaque references touches disk.
 
+Both providers report live rate-limit state on every response, and the proxy reads it as
+traffic streams by — so tokenmaxx always knows exactly how full the active account is, with
+zero extra requests. Anything speaking the Anthropic or OpenAI Responses API can point at
+`http://127.0.0.1:8459/anthropic` or `/openai` and get the same juggling — the proxy doesn't
+care which harness is on the other end.
+
 ## Dashboard
 
 Run `tokenmaxx` for a live dashboard. **Accounts** shows every account and its rate-limit
-windows, colored by pressure; press space to expand one. **Tab** switches to **Analytics** —
-a combined token-throughput view (tokens/time across every account and both providers) with
-total tokens, peak tok/hr, and the **≈ API-list-price value** you're extracting from your flat
-subscriptions. Tokens are metered by the proxy as responses stream by; it never buffers or
-delays them.
+windows, colored by pressure; press space to expand one. **Analytics** is a combined
+token-throughput view (tokens/time across every account and both providers) with total
+tokens, the **≈ API-list-price value** you're extracting from your flat subscriptions, a
+per-model breakdown, and the input / output / cache-read / cache-write split. Tokens are
+metered by the proxy as responses stream by — every number is cross-checkable against the
+clients' own session logs — and it never buffers or delays them. **Settings** tunes
+auto-rotation, the switch threshold, and dwell per provider, applied live.
 
 <div align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/generated/timelapse-dark.gif">
-  <source media="(prefers-color-scheme: light)" srcset="assets/generated/timelapse-light.gif">
-  <img alt="token throughput charting live" src="assets/generated/timelapse-dark.gif" width="820">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/generated/analytics-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/generated/analytics-light.png">
+  <img alt="token throughput, API value, and the per-model split" src="assets/generated/analytics-dark.png" width="820">
 </picture>
 </div>
 
 ## Auto-rotation
 
 Turn it on and tokenmaxx moves off an account the moment its fullest window crosses your
-threshold, onto the one with the most headroom — mid-turn, on the next request. It's off by
-default; enabling it is your confirmation that your provider permits this use.
+threshold, onto the one with the most headroom — mid-turn, on the next request. Pressure is
+read off every response, so a burst from a fleet of parallel agents can't outrun the switch;
+if an account still hits its hard limit mid-flight, the proxy rotates and retries that request
+on the next account before your client ever sees the 429. It's off by default; enabling it is
+your confirmation that your provider permits this use.
 
 ```bash
-tokenmaxx auto both on --threshold 95    # or: codex | claude … off
+tokenmaxx auto both on --threshold 90    # or: codex | claude … off
 ```
 
 <div align="center">

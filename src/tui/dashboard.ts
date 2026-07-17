@@ -9,6 +9,7 @@ import type {
 	UsageWindow
 } from '../domain.ts'
 import { readAnalytics, refreshUsage, requestPolicy, requestSwitch } from '../ipc.ts'
+import { buildScenario } from './fixtures.ts'
 import {
 	brailleArea,
 	compactNumber,
@@ -30,7 +31,8 @@ import {
 	throughputColumns
 } from './format.ts'
 
-type Tab = 'accounts' | 'analytics'
+type Tab = 'accounts' | 'analytics' | 'settings'
+const TABS: readonly Tab[] = ['accounts', 'analytics', 'settings']
 
 const colorCache = new Map<string, RGBA>()
 function rgb(hex: string): RGBA {
@@ -272,7 +274,8 @@ function tabBar(ctx: Ctx, tab: Tab) {
 	return Box(
 		{ flexDirection: 'row', gap: 1 },
 		pill(ctx, 'Accounts', tab === 'accounts'),
-		pill(ctx, 'Analytics', tab === 'analytics')
+		pill(ctx, 'Analytics', tab === 'analytics'),
+		pill(ctx, 'Settings', tab === 'settings')
 	)
 }
 
@@ -288,13 +291,60 @@ function timeframeBar(ctx: Ctx, timeframe: Timeframe) {
 	)
 }
 
-function throughputCard(
+// One stat: dim label, bright value. Text identity lives in the label — the
+// theme's single accent stays reserved for the chart marks.
+function stat(ctx: Ctx, label: string, value: string, valueColor?: string) {
+	return [
+		Text({ content: `${label} `, fg: rgb(ctx.theme.dim) }),
+		Text({ attributes: 1, content: value, fg: rgb(valueColor ?? ctx.theme.fg) }),
+		Text({ content: '   ', fg: rgb(ctx.theme.bg) })
+	]
+}
+
+function throughputChart(
 	ctx: Ctx,
-	tokens: TokenTimeframe | undefined,
+	tokens: TokenTimeframe,
 	timeframe: Timeframe,
 	height: number,
 	width: number
 ) {
+	const body: ReturnType<typeof Box>[] = []
+	const axisTop = `${compactNumber(tokens.peakPerHour)}/h`
+	const gutter = Math.max(6, axisTop.length)
+	const chartWidth = Math.max(16, width - gutter - 1)
+	const columns = throughputColumns(tokens.buckets, chartWidth * 2)
+	const peak = Math.max(...columns, 1)
+	const chart = brailleArea(columns, chartWidth, height, peak)
+	chart.forEach((line, index) => {
+		const label = index === 0 ? axisTop : index === chart.length - 1 ? '0' : ''
+		body.push(
+			Box(
+				{ flexDirection: 'row' },
+				Text({ content: `${label.padStart(gutter)} `, fg: rgb(ctx.theme.faint) }),
+				Text({ content: line, fg: rgb(ctx.theme.accent) })
+			)
+		)
+	})
+	body.push(
+		Box(
+			{ flexDirection: 'row' },
+			Text({ content: ' '.repeat(gutter + 1), fg: rgb(ctx.theme.bg) }),
+			Text({
+				content: `${timeframe.label} ago`.padEnd(Math.max(0, chartWidth - 3)),
+				fg: rgb(ctx.theme.faint)
+			}),
+			Text({ content: 'now', fg: rgb(ctx.theme.faint) })
+		)
+	)
+	return body
+}
+
+function analyticsBody(ctx: Ctx, analytics: AnalyticsSnapshot, timeframe: Timeframe) {
+	const cols = process.stdout.columns ?? 80
+	const rows = process.stdout.rows ?? 24
+	const width = Math.max(24, Math.min(160, cols - 12))
+	const height = Math.max(4, Math.min(9, rows - 20))
+	const tokens = analytics.tokens?.timeframes.find(entry => entry.key === timeframe.key)
 	const body: ReturnType<typeof Box>[] = []
 	if (tokens === undefined || tokens.totalTokens === 0) {
 		for (let index = 0; index < Math.max(1, Math.floor(height / 2)); index += 1) {
@@ -311,53 +361,40 @@ function throughputCard(
 			)
 		)
 	} else {
-		const axisTop = `${compactNumber(tokens.peakPerHour)}/h`
-		const gutter = Math.max(6, axisTop.length)
-		const chartWidth = Math.max(16, width - gutter - 1)
-		const columns = throughputColumns(tokens.buckets, chartWidth * 2)
-		const peak = Math.max(...columns, 1)
-		const chart = brailleArea(columns, chartWidth, height, peak)
-		chart.forEach((line, index) => {
-			const label = index === 0 ? axisTop : index === chart.length - 1 ? '0' : ''
-			body.push(
-				Box(
-					{ flexDirection: 'row' },
-					Text({ content: `${label.padStart(gutter)} `, fg: rgb(ctx.theme.faint) }),
-					Text({ content: line, fg: rgb(ctx.theme.accent) })
-				)
-			)
-		})
-		body.push(
-			Box(
-				{ flexDirection: 'row' },
-				Text({ content: ' '.repeat(gutter + 1), fg: rgb(ctx.theme.bg) }),
-				Text({
-					content: `${timeframe.label} ago`.padEnd(Math.max(0, chartWidth - 3)),
-					fg: rgb(ctx.theme.faint)
-				}),
-				Text({ content: 'now', fg: rgb(ctx.theme.faint) })
-			)
-		)
+		body.push(...throughputChart(ctx, tokens, timeframe, height, width))
 		const spanHours = (tokens.bucketMs * tokens.buckets.length) / 3_600_000
 		const averagePerHour = spanHours > 0 ? tokens.totalTokens / spanHours : 0
-		const recent = tokens.buckets.slice(-2)
-		const nowPerHour = Math.max(...recent, 0) * (3_600_000 / tokens.bucketMs)
+		const nowPerHour = analytics.tokens?.nowPerHour ?? 0
 		const cachedShare =
-			tokens.totalTokens > 0 ? Math.round((tokens.totalCached / tokens.totalTokens) * 100) : 0
+			tokens.totalTokens > 0
+				? Math.round(((tokens.totalCached + tokens.totalCacheCreation) / tokens.totalTokens) * 100)
+				: 0
 		body.push(
 			Box(
 				{ flexDirection: 'row', paddingLeft: 1 },
-				Text({ content: 'Σ ', fg: rgb(ctx.theme.dim) }),
+				...stat(ctx, 'Σ', `${compactNumber(tokens.totalTokens)} tokens`),
+				...stat(ctx, '≈', `${compactUsd(tokens.costUsd)} API value`, ctx.theme.good),
+				...stat(ctx, 'cache', `${cachedShare}%`)
+			)
+		)
+		body.push(
+			Box(
+				{ flexDirection: 'row', paddingLeft: 1 },
+				...stat(
+					ctx,
+					'now',
+					`${compactNumber(nowPerHour)}/h`,
+					nowPerHour > 0 ? ctx.theme.accent : ctx.theme.faint
+				),
+				...stat(ctx, 'peak', `${compactNumber(tokens.peakPerHour)}/h`),
+				...stat(ctx, 'avg', `${compactNumber(averagePerHour)}/h`)
+			)
+		)
+		body.push(
+			Box(
+				{ flexDirection: 'row', paddingLeft: 1 },
 				Text({
-					attributes: 1,
-					content: `${compactNumber(tokens.totalTokens)} tokens`,
-					fg: rgb(ctx.theme.fg)
-				}),
-				Text({ content: '   ≈ ', fg: rgb(ctx.theme.dim) }),
-				Text({ attributes: 1, content: compactUsd(tokens.costUsd), fg: rgb(ctx.theme.good) }),
-				Text({ content: ' API value', fg: rgb(ctx.theme.dim) }),
-				Text({
-					content: cachedShare > 0 ? `   ${cachedShare}% cached` : '',
+					content: `in ${compactNumber(tokens.totalInput)} · out ${compactNumber(tokens.totalOutput)} · cache read ${compactNumber(tokens.totalCached)} · cache write ${compactNumber(tokens.totalCacheCreation)}`,
 					fg: rgb(ctx.theme.dim)
 				})
 			)
@@ -365,65 +402,143 @@ function throughputCard(
 		body.push(
 			Box(
 				{ flexDirection: 'row', paddingLeft: 1 },
-				Text({ content: 'now ', fg: rgb(ctx.theme.dim) }),
-				Text({
-					attributes: 1,
-					content: `${compactNumber(nowPerHour)}/h`,
-					fg: rgb(nowPerHour > 0 ? ctx.theme.accent : ctx.theme.faint)
-				}),
-				Text({ content: '   peak ', fg: rgb(ctx.theme.dim) }),
-				Text({ content: `${compactNumber(tokens.peakPerHour)}/h`, fg: rgb(ctx.theme.fg) }),
-				Text({ content: '   avg ', fg: rgb(ctx.theme.dim) }),
-				Text({ content: `${compactNumber(averagePerHour)}/h`, fg: rgb(ctx.theme.fg) }),
-				Text({
-					content: tokens.topModel === null ? '' : `   top ${tokens.topModel}`,
-					fg: rgb(ctx.theme.faint)
-				})
+				...stat(
+					ctx,
+					'codex',
+					`${compactNumber(tokens.byProvider.openai.tokens)} · ${compactUsd(tokens.byProvider.openai.costUsd)}`
+				),
+				...stat(
+					ctx,
+					'claude',
+					`${compactNumber(tokens.byProvider.anthropic.tokens)} · ${compactUsd(tokens.byProvider.anthropic.costUsd)}`
+				)
 			)
 		)
-		body.push(
-			Box(
-				{ flexDirection: 'row', paddingLeft: 1 },
-				Text({ content: 'codex ', fg: rgb(ctx.theme.dim) }),
-				Text({ content: compactNumber(tokens.byProvider.openai.tokens), fg: rgb(ctx.theme.fg) }),
-				Text({
-					content: ` · ${compactUsd(tokens.byProvider.openai.costUsd)}`,
-					fg: rgb(ctx.theme.faint)
-				}),
-				Text({ content: '      claude ', fg: rgb(ctx.theme.dim) }),
-				Text({
-					content: compactNumber(tokens.byProvider.anthropic.tokens),
-					fg: rgb(ctx.theme.fg)
-				}),
-				Text({
-					content: ` · ${compactUsd(tokens.byProvider.anthropic.costUsd)}`,
-					fg: rgb(ctx.theme.faint)
-				})
+		for (const model of tokens.topModels) {
+			body.push(
+				Box(
+					{ flexDirection: 'row', paddingLeft: 1 },
+					Text({ content: `  ${pad(model.model, 26)}`, fg: rgb(ctx.theme.faint) }),
+					Text({ content: `${compactNumber(model.tokens).padStart(7)}  `, fg: rgb(ctx.theme.dim) }),
+					Text({ content: compactUsd(model.costUsd).padStart(8), fg: rgb(ctx.theme.dim) })
+				)
 			)
-		)
+		}
 	}
-	return Box(
+	const card = Box(
 		{
 			border: true,
 			borderColor: rgb(ctx.theme.border),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
 			flexGrow: 1,
-			title: ' Token throughput · all accounts · both providers ',
+			title: ' Token throughput · all accounts · both providers · metered by the proxy ',
 			titleColor: rgb(ctx.theme.dim),
 			width: '100%'
 		},
 		...body
 	)
+	return [timeframeBar(ctx, timeframe), card]
 }
 
-function analyticsBody(ctx: Ctx, analytics: AnalyticsSnapshot, timeframe: Timeframe) {
-	const cols = process.stdout.columns ?? 80
-	const rows = process.stdout.rows ?? 24
-	const width = Math.max(24, Math.min(160, cols - 12))
-	const height = Math.max(4, Math.min(10, rows - 17))
-	const tokens = analytics.tokens?.timeframes.find(entry => entry.key === timeframe.key)
-	return [timeframeBar(ctx, timeframe), throughputCard(ctx, tokens, timeframe, height, width)]
+// Settings rows are a flat list across both providers so ↑↓ walks everything.
+interface SettingRow {
+	provider: ProviderId
+	key: 'auto' | 'threshold' | 'dwell'
+}
+
+const SETTING_ROWS: readonly SettingRow[] = providerOrder.flatMap(provider => [
+	{ key: 'auto' as const, provider },
+	{ key: 'threshold' as const, provider },
+	{ key: 'dwell' as const, provider }
+])
+
+function dwellLabel(milliseconds: number): string {
+	const minutes = Math.round(milliseconds / 60_000)
+	return minutes === 0 ? 'off' : `${minutes}m`
+}
+
+function settingsPanel(
+	ctx: Ctx,
+	snapshot: DashboardSnapshot,
+	provider: ProviderId,
+	selected: number
+) {
+	const state = snapshot.providers.find(s => s.provider === provider)
+	const policy = state?.policy
+	const rows = SETTING_ROWS.map((row, index) => ({ index, row })).filter(
+		entry => entry.row.provider === provider
+	)
+	const lines = rows.map(entry => {
+		const isSelected = entry.index === selected
+		const marker = isSelected ? ' ▸ ' : '   '
+		const value =
+			entry.row.key === 'auto'
+				? policy?.enabled
+					? 'on'
+					: 'off'
+				: entry.row.key === 'threshold'
+					? `${policy?.thresholdPercent ?? 90}%`
+					: dwellLabel(policy?.minimumDwellMilliseconds ?? 300_000)
+		const hint =
+			entry.row.key === 'auto'
+				? 'rotate off an account before it runs out'
+				: entry.row.key === 'threshold'
+					? 'switch when the fullest rate-limit window reaches this'
+					: 'hold a threshold switch this long (hard limits ignore it)'
+		const label =
+			entry.row.key === 'auto'
+				? 'auto-rotate'
+				: entry.row.key === 'threshold'
+					? 'switch threshold'
+					: 'minimum dwell'
+		const valueColor =
+			entry.row.key === 'auto' ? (policy?.enabled ? ctx.theme.good : ctx.theme.dim) : ctx.theme.fg
+		return Box(
+			{
+				backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
+				flexDirection: 'row',
+				width: '100%'
+			},
+			Text({ content: marker, fg: rgb(ctx.theme.accent) }),
+			Text({
+				content: pad(label, 18),
+				fg: rgb(isSelected ? ctx.theme.fg : ctx.theme.dim)
+			}),
+			Text({ attributes: 1, content: pad(value, 6), fg: rgb(valueColor) }),
+			Text({ content: hint, fg: rgb(ctx.theme.faint) })
+		)
+	})
+	const auto = policy?.enabled ? `⟳ auto ${policy.thresholdPercent}%` : 'auto off'
+	return Box(
+		{
+			border: true,
+			borderColor: rgb(ctx.theme.border),
+			borderStyle: 'rounded',
+			flexDirection: 'column',
+			flexShrink: 0,
+			title: ` ${providerTitles[provider]}   ${auto} `,
+			titleColor: rgb(policy?.enabled ? ctx.theme.good : ctx.theme.dim),
+			width: '100%'
+		},
+		...lines
+	)
+}
+
+function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, selected: number) {
+	return [
+		settingsPanel(ctx, snapshot, 'openai', selected),
+		settingsPanel(ctx, snapshot, 'anthropic', selected),
+		Box(
+			{ flexDirection: 'row', paddingLeft: 1 },
+			Text({
+				content:
+					'switches land on the next request — no restart. auto on = you confirm your provider permits it.',
+				fg: rgb(ctx.theme.faint)
+			})
+		),
+		Box({ flexGrow: 1, width: '100%' })
+	]
 }
 
 function accountsBody(
@@ -445,6 +560,7 @@ function accountsBody(
 interface ViewState {
 	tab: Tab
 	selected: number
+	settingsSelected: number
 	expanded: boolean
 	timeframeIndex: number
 	installed: boolean
@@ -461,13 +577,15 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const footer =
 		state.tab === 'accounts'
-			? '↑↓ select · space details · ⏎ switch · a auto · tab analytics · r refresh'
-			: '←→ range · tab accounts · r refresh'
+			? '↑↓ select · space details · ⏎ switch · a auto · tab next · r refresh'
+			: state.tab === 'analytics'
+				? '←→ range · tab next · r refresh'
+				: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
 	const header = Box(
 		{ flexDirection: 'row' },
 		Text({ attributes: 1, content: 'tokenmaxx', fg: rgb(ctx.theme.accent) }),
 		Text({ content: `  ${clock}`, fg: rgb(ctx.theme.dim) }),
-		Text({ content: `   ↻ ${refreshed}  ·  active 60s / idle 5m`, fg: rgb(ctx.theme.faint) }),
+		Text({ content: `   ↻ ${refreshed}  ·  live per request + probes`, fg: rgb(ctx.theme.faint) }),
 		...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })])
 	)
 	const children: Array<ReturnType<typeof Box> | ReturnType<typeof Text>> = [header]
@@ -488,7 +606,9 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	children.push(
 		...(state.tab === 'accounts'
 			? accountsBody(ctx, analytics.snapshot, rows, state.selected, state.expanded)
-			: analyticsBody(ctx, analytics, timeframe))
+			: state.tab === 'analytics'
+				? analyticsBody(ctx, analytics, timeframe)
+				: settingsBody(ctx, analytics.snapshot, state.settingsSelected))
 	)
 	children.push(Text({ content: footer, fg: rgb(ctx.theme.dim) }))
 	return Box(
@@ -504,22 +624,36 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	)
 }
 
+export interface FixtureOptions {
+	name: string
+	now: number
+	// Simulated milliseconds that pass per real millisecond. Zero freezes the
+	// clock (stills); anything above plays the scenario as a timelapse.
+	timewarp: number
+}
+
 export async function runTuiDashboard(
 	socketPath: string,
-	options: { installed: boolean; fixture?: AnalyticsSnapshot; now?: number }
+	options: { installed: boolean; fixture?: FixtureOptions }
 ): Promise<void> {
-	const live = options.fixture === undefined
+	const fixture = options.fixture
+	const live = fixture === undefined
 	const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
 	await renderer.waitForThemeMode(400).catch(() => null)
 	const envFallback: ThemeName = detectThemeName(process.env)
 	const currentTheme = (): Theme => themes[live ? (renderer.themeMode ?? envFallback) : envFallback]
-	let analytics = options.fixture ?? (await readAnalytics(socketPath))
+	let simulatedNow = fixture?.now ?? Date.now()
+	let analytics =
+		fixture === undefined
+			? await readAnalytics(socketPath)
+			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
 	const state: ViewState = {
 		expanded: false,
 		installed: options.installed,
 		note: '',
 		selected: 0,
+		settingsSelected: 0,
 		tab: 'accounts',
 		timeframeIndex: 2
 	}
@@ -533,7 +667,12 @@ export async function runTuiDashboard(
 		clampSelection()
 		let next: ReturnType<typeof Box>
 		try {
-			next = view({ now: options.now ?? Date.now(), theme: currentTheme() }, analytics, rows, state)
+			next = view(
+				{ now: live ? Date.now() : simulatedNow, theme: currentTheme() },
+				analytics,
+				rows,
+				state
+			)
 		} catch {
 			return
 		}
@@ -588,26 +727,73 @@ export async function runTuiDashboard(
 		})
 	}
 
-	const toggleAuto = () => {
-		const row = rows[state.selected]
-		if (row === undefined) {
-			return
-		}
-		const providerState = analytics.snapshot.providers.find(s => s.provider === row.provider)
-		const enable = !(providerState?.policy.enabled ?? false)
-		void withBusy(`auto-rotate ${providerCli[row.provider]} ${enable ? 'on' : 'off'}…`, async () => {
+	const currentPolicy = (provider: ProviderId) =>
+		analytics.snapshot.providers.find(s => s.provider === provider)?.policy
+
+	const applyPolicy = (
+		provider: ProviderId,
+		change: {
+			enabled?: boolean
+			thresholdPercent?: number
+			minimumDwellMilliseconds?: number
+		},
+		message: string
+	) => {
+		const policy = currentPolicy(provider)
+		const enable = change.enabled ?? policy?.enabled ?? false
+		void withBusy(message, async () => {
 			await requestPolicy(socketPath, {
-				authorizationConfirmed: enable,
+				authorizationConfirmed: enable ? true : undefined,
 				enabled: enable,
-				provider: row.provider,
-				thresholdPercent: 95
+				minimumDwellMilliseconds: change.minimumDwellMilliseconds,
+				provider,
+				thresholdPercent: change.thresholdPercent
 			})
 			analytics = await readAnalytics(socketPath)
 		})
 	}
 
+	const toggleAuto = (provider: ProviderId) => {
+		const enable = !(currentPolicy(provider)?.enabled ?? false)
+		applyPolicy(
+			provider,
+			{ enabled: enable },
+			`auto-rotate ${providerCli[provider]} ${enable ? 'on' : 'off'}…`
+		)
+	}
+
+	const adjustSetting = (delta: number) => {
+		const row = SETTING_ROWS[state.settingsSelected]
+		if (row === undefined) {
+			return
+		}
+		const policy = currentPolicy(row.provider)
+		if (row.key === 'auto') {
+			toggleAuto(row.provider)
+			return
+		}
+		if (row.key === 'threshold') {
+			const next = Math.max(10, Math.min(100, (policy?.thresholdPercent ?? 90) + delta * 5))
+			applyPolicy(row.provider, { thresholdPercent: next }, `threshold ${next}%…`)
+			return
+		}
+		const currentDwell = policy?.minimumDwellMilliseconds ?? 300_000
+		const next = Math.max(0, Math.min(3_600_000, currentDwell + delta * 60_000))
+		applyPolicy(row.provider, { minimumDwellMilliseconds: next }, `dwell ${dwellLabel(next)}…`)
+	}
+
 	await new Promise<void>(resolve => {
-		const interval = live ? setInterval(() => void reload(false).catch(() => undefined), 2_000) : null
+		const tick = 250
+		const interval = live
+			? setInterval(() => void reload(false).catch(() => undefined), 2_000)
+			: fixture.timewarp > 0
+				? setInterval(() => {
+						simulatedNow += tick * fixture.timewarp
+						analytics = buildScenario(fixture.name, simulatedNow)
+						rows = orderedRows(analytics.snapshot)
+						paint()
+					}, tick)
+				: null
 		let finished = false
 		const finish = () => {
 			if (finished) {
@@ -631,7 +817,7 @@ export async function runTuiDashboard(
 				if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
 					finish()
 				} else if (key.name === 'tab') {
-					state.tab = state.tab === 'accounts' ? 'analytics' : 'accounts'
+					state.tab = TABS[(TABS.indexOf(state.tab) + 1) % TABS.length] as Tab
 					paint()
 				} else if (key.name === 'r' && live) {
 					void reload(true)
@@ -640,6 +826,27 @@ export async function runTuiDashboard(
 						changeTimeframe(-1)
 					} else if (key.name === 'right' || key.name === 'down' || key.name === 'j') {
 						changeTimeframe(1)
+					}
+				} else if (state.tab === 'settings') {
+					if (key.name === 'up' || key.name === 'k') {
+						state.settingsSelected = Math.max(0, state.settingsSelected - 1)
+						paint()
+					} else if (key.name === 'down' || key.name === 'j') {
+						state.settingsSelected = Math.min(SETTING_ROWS.length - 1, state.settingsSelected + 1)
+						paint()
+					} else if (key.name === 'left' && live) {
+						adjustSetting(-1)
+					} else if (key.name === 'right' && live) {
+						adjustSetting(1)
+					} else if ((key.name === 'return' || key.name === 'space') && live) {
+						const row = SETTING_ROWS[state.settingsSelected]
+						if (row !== undefined) {
+							if (row.key === 'auto') {
+								toggleAuto(row.provider)
+							} else {
+								adjustSetting(1)
+							}
+						}
 					}
 				} else if (key.name === 'up' || key.name === 'k') {
 					state.selected = Math.max(0, state.selected - 1)
@@ -653,7 +860,10 @@ export async function runTuiDashboard(
 				} else if (key.name === 'return' && live) {
 					switchToSelected()
 				} else if (key.name === 'a' && live) {
-					toggleAuto()
+					const row = rows[state.selected]
+					if (row !== undefined) {
+						toggleAuto(row.provider)
+					}
 				}
 			} catch {}
 		})

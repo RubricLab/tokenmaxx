@@ -53,6 +53,7 @@ export function createRuntimeCredentialSource(
 			})
 		}
 		return {
+			accountId: account.id,
 			baseUrl: upstreamFor('openai'),
 			headers: {
 				authorization: `Bearer ${auth.tokens.access_token}`,
@@ -79,6 +80,7 @@ export function createRuntimeCredentialSource(
 			})
 		}
 		return {
+			accountId: account.id,
 			appendHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
 			baseUrl: upstreamFor('anthropic'),
 			headers: { authorization: `Bearer ${credential.accessToken}` },

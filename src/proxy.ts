@@ -1,8 +1,10 @@
 import type { ProviderId } from './domain.ts'
 import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
 import type { FetchImplementation } from './http.ts'
+import { observeRateLimitHeaders, type RateLimitObservation } from './ratelimit.ts'
 
 export interface UpstreamInjection {
+	accountId: string
 	baseUrl: string
 	headers: Record<string, string>
 	appendHeaders?: Record<string, string>
@@ -17,16 +19,29 @@ export interface ProxyCredentialSource {
 export interface ProxyUsageEvent {
 	at: number
 	provider: ProviderId
+	accountId: string
 	model: string | null
 	inputTokens: number
 	outputTokens: number
 	cacheReadTokens: number
+	cacheCreationTokens: number
+}
+
+export interface ProxyLimitEvent {
+	at: number
+	provider: ProviderId
+	accountId: string
+	observation: RateLimitObservation
 }
 
 export interface ProxyOptions {
 	source: ProxyCredentialSource
 	fetchImplementation?: FetchImplementation
 	record?: (event: ProxyUsageEvent) => void
+	// Called with the rate-limit state each upstream response reports. Awaited
+	// on 429 so a rotation can land before the one-shot retry below; otherwise
+	// fire-and-forget.
+	observeLimits?: (event: ProxyLimitEvent) => Promise<void> | void
 }
 
 interface SseUsage {
@@ -47,26 +62,31 @@ interface SseEvent {
 	response?: { model?: string; usage?: SseUsage }
 }
 
-function createUsageObserver(
+// Reads usage out of the response body without trusting content-type: the
+// ChatGPT backend streams SSE with no content-type header at all. Any line
+// starting with "data:" is treated as an SSE event; if none ever appears the
+// whole body is parsed as one JSON document.
+export function createUsageObserver(
 	provider: ProviderId,
-	contentType: string,
 	onUsage: (usage: {
 		model: string | null
 		inputTokens: number
 		outputTokens: number
 		cacheReadTokens: number
+		cacheCreationTokens: number
 	}) => void
 ) {
 	const decoder = new TextDecoder()
-	const isSse = contentType.includes('text/event-stream')
+	const maxBuffered = 4_000_000
 	let lineBuffer = ''
-	let jsonBuffer = ''
+	let raw = ''
+	let sawSseData = false
 	let model: string | null = null
 	let input = 0
 	let output = 0
 	let cacheRead = 0
+	let cacheCreation = 0
 	let saw = false
-	const maxJson = 4_000_000
 
 	const consume = (text: string): void => {
 		let event: SseEvent
@@ -79,11 +99,20 @@ function createUsageObserver(
 			if (event.type === 'message_start' && event.message) {
 				model = event.message.model ?? model
 				const usage = event.message.usage ?? {}
-				input += (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
+				input += usage.input_tokens ?? 0
+				cacheCreation += usage.cache_creation_input_tokens ?? 0
 				cacheRead += usage.cache_read_input_tokens ?? 0
 				saw = true
 			} else if (event.type === 'message_delta' && event.usage) {
 				output = event.usage.output_tokens ?? output
+				saw = true
+			} else if (event.type === 'message' && event.usage) {
+				// Non-streaming Messages response: usage sits at the top level.
+				model = event.model ?? model
+				input += event.usage.input_tokens ?? 0
+				cacheCreation += event.usage.cache_creation_input_tokens ?? 0
+				cacheRead += event.usage.cache_read_input_tokens ?? 0
+				output += event.usage.output_tokens ?? 0
 				saw = true
 			}
 			return
@@ -99,13 +128,26 @@ function createUsageObserver(
 		}
 	}
 
+	const consumeLine = (line: string): void => {
+		if (!line.startsWith('data:')) {
+			return
+		}
+		sawSseData = true
+		const payload = line.slice(5).trim()
+		if (payload.length > 0 && payload !== '[DONE]') {
+			consume(payload)
+		}
+	}
+
 	return {
 		finish(): void {
-			if (!isSse && jsonBuffer.length > 0) {
-				consume(jsonBuffer)
+			consumeLine(lineBuffer.trim())
+			if (!saw && !sawSseData && raw.trim().length > 0) {
+				consume(raw.trim())
 			}
-			if (saw && input + output + cacheRead > 0) {
+			if (saw && input + output + cacheRead + cacheCreation > 0) {
 				onUsage({
+					cacheCreationTokens: cacheCreation,
 					cacheReadTokens: cacheRead,
 					inputTokens: input,
 					model: model && model.length > 0 ? model : null,
@@ -115,22 +157,18 @@ function createUsageObserver(
 		},
 		push(chunk: Uint8Array): void {
 			const text = decoder.decode(chunk, { stream: true })
-			if (isSse) {
-				lineBuffer += text
-				let newline = lineBuffer.indexOf('\n')
-				while (newline >= 0) {
-					const line = lineBuffer.slice(0, newline).trim()
-					lineBuffer = lineBuffer.slice(newline + 1)
-					if (line.startsWith('data:')) {
-						const payload = line.slice(5).trim()
-						if (payload.length > 0 && payload !== '[DONE]') {
-							consume(payload)
-						}
-					}
-					newline = lineBuffer.indexOf('\n')
-				}
-			} else if (jsonBuffer.length < maxJson) {
-				jsonBuffer += text
+			if (raw.length < maxBuffered) {
+				raw += text
+			}
+			lineBuffer += text
+			let newline = lineBuffer.indexOf('\n')
+			while (newline >= 0) {
+				consumeLine(lineBuffer.slice(0, newline).trim())
+				lineBuffer = lineBuffer.slice(newline + 1)
+				newline = lineBuffer.indexOf('\n')
+			}
+			if (lineBuffer.length > maxBuffered) {
+				lineBuffer = ''
 			}
 		}
 	}
@@ -251,6 +289,26 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 					redirect: 'manual',
 					signal: request.signal
 				})
+			const reportLimits = (
+				accountId: string,
+				response: Response
+			): { observation: RateLimitObservation; deliver: () => Promise<void> } | null => {
+				const observation = observeRateLimitHeaders(route.provider, response.headers, response.status)
+				if (observation === null || options.observeLimits === undefined) {
+					return null
+				}
+				const deliver = async () => {
+					try {
+						await options.observeLimits?.({
+							accountId,
+							at: Date.now(),
+							observation,
+							provider: route.provider
+						})
+					} catch {}
+				}
+				return { deliver, observation }
+			}
 
 			const providerLabel = route.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'
 			let injection: UpstreamInjection | null
@@ -281,15 +339,16 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 				)
 			}
 
+			let served = injection
 			let response: Response
 			try {
-				response = await send(injection)
+				response = await send(served)
 			} catch (error) {
 				return proxyErrorResponse(
 					route.provider,
 					502,
 					'upstream-unreachable',
-					`tokenmaxx proxy: could not reach ${injection.baseUrl} — ${errorMessage(error)}. The request never left this machine (local network/DNS/VPN problem), so this is not an ${providerLabel} API error.`
+					`tokenmaxx proxy: could not reach ${served.baseUrl} — ${errorMessage(error)}. The request never left this machine (local network/DNS/VPN problem), so this is not an ${providerLabel} API error.`
 				)
 			}
 			if (response.status === 401) {
@@ -303,6 +362,7 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 					const refreshed = await options.source.resolve(route.provider)
 					if (refreshed !== null) {
 						retried = await send(refreshed)
+						served = refreshed
 					}
 				} catch {}
 				response =
@@ -313,20 +373,53 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 						statusText: originalStatusText
 					})
 			}
+
+			// The account hit its limit mid-flight. Tell the manager right away —
+			// that flips the account to hard-limited and lets auto-rotation commit a
+			// new active account synchronously — then retry this request once on
+			// whichever account is active now, so the client never sees the 429.
+			let reported = false
+			if (response.status === 429) {
+				const limitReport = reportLimits(served.accountId, response)
+				if (limitReport !== null) {
+					await limitReport.deliver()
+					reported = true
+					let next: UpstreamInjection | null = null
+					try {
+						next = await options.source.resolve(route.provider)
+					} catch {}
+					if (next !== null && next.accountId !== served.accountId) {
+						try {
+							const retried = await send(next)
+							void response.body?.cancel().catch(() => undefined)
+							served = next
+							response = retried
+							reported = false
+						} catch {}
+					}
+				}
+			}
+			if (!reported) {
+				const finalReport = reportLimits(served.accountId, response)
+				if (finalReport !== null) {
+					void finalReport.deliver()
+				}
+			}
+
 			const forwarded = passThrough(response)
 			if (options.record !== undefined && response.ok && forwarded.body !== null) {
-				const observer = createUsageObserver(
-					route.provider,
-					response.headers.get('content-type') ?? '',
-					usage =>
-						options.record?.({
-							at: Date.now(),
-							cacheReadTokens: usage.cacheReadTokens,
-							inputTokens: usage.inputTokens,
-							model: usage.model,
-							outputTokens: usage.outputTokens,
-							provider: route.provider
-						})
+				const servedAccountId = served.accountId
+				const observer = createUsageObserver(route.provider, usage =>
+					options.record?.({
+						accountId: servedAccountId,
+						at: Date.now(),
+						cacheCreationTokens: usage.cacheCreationTokens,
+						cacheReadTokens: usage.cacheReadTokens,
+						inputTokens: usage.inputTokens,
+						model: usage.model,
+						outputTokens: usage.outputTokens,
+						provider: route.provider
+					})
 				)
 				return new Response(observeStream(forwarded.body, observer), {
 					headers: forwarded.headers,

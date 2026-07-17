@@ -73,11 +73,11 @@ const UsageSnapshotFieldsSchema = z.object({
 export const UsageSnapshotSchema = z.discriminatedUnion('provider', [
 	UsageSnapshotFieldsSchema.extend({
 		provider: z.literal('openai'),
-		source: z.literal('codexUsageEndpoint')
+		source: z.enum(['codexUsageEndpoint', 'proxyResponseHeaders'])
 	}).strict(),
 	UsageSnapshotFieldsSchema.extend({
 		provider: z.literal('anthropic'),
-		source: z.literal('claudeUsageEndpoint')
+		source: z.enum(['claudeUsageEndpoint', 'proxyResponseHeaders'])
 	}).strict()
 ])
 export type UsageSnapshot = z.infer<typeof UsageSnapshotSchema>
@@ -89,10 +89,10 @@ export const AutomationPolicySchema = z
 		authorization: AuthorizationStateSchema.default('notConfirmed'),
 		enabled: z.boolean(),
 		hysteresisPercent: z.number().min(0).max(25).default(5),
-		maximumSnapshotAgeMilliseconds: z.number().int().positive().default(120_000),
+		maximumSnapshotAgeMilliseconds: z.number().int().positive().default(420_000),
 		minimumDwellMilliseconds: z.number().int().min(0).default(300_000),
 		provider: ProviderIdSchema,
-		thresholdPercent: z.number().min(1).max(100).default(95)
+		thresholdPercent: z.number().min(1).max(100).default(90)
 	})
 	.strict()
 	.refine(policy => policy.hysteresisPercent < policy.thresholdPercent, {
@@ -154,20 +154,6 @@ export const DashboardSnapshotSchema = z
 	.strict()
 export type DashboardSnapshot = z.infer<typeof DashboardSnapshotSchema>
 
-export const UsageHistoryPointSchema = z
-	.object({ at: z.number().int().nonnegative(), usedPercent: z.number().min(0).max(100) })
-	.strict()
-export type UsageHistoryPoint = z.infer<typeof UsageHistoryPointSchema>
-
-export const UsageHistorySchema = z
-	.object({
-		label: z.string().min(1),
-		points: z.array(UsageHistoryPointSchema),
-		windowId: z.string().min(1)
-	})
-	.strict()
-export type UsageHistory = z.infer<typeof UsageHistorySchema>
-
 export interface Timeframe {
 	key: string
 	label: string
@@ -185,6 +171,7 @@ export const TokenEventSchema = z
 	.object({
 		accountId: z.uuid().nullable(),
 		at: z.number().int().nonnegative(),
+		cacheCreationTokens: z.number().int().nonnegative(),
 		cacheReadTokens: z.number().int().nonnegative(),
 		inputTokens: z.number().int().nonnegative(),
 		model: z.string().min(1).nullable(),
@@ -208,7 +195,16 @@ export const TokenTimeframeSchema = z
 		costUsd: z.number().nonnegative(),
 		key: z.string(),
 		peakPerHour: z.number().nonnegative(),
-		topModel: z.string().nullable(),
+		topModels: z.array(
+			z
+				.object({
+					costUsd: z.number().nonnegative(),
+					model: z.string(),
+					tokens: z.number().nonnegative()
+				})
+				.strict()
+		),
+		totalCacheCreation: z.number().nonnegative(),
 		totalCached: z.number().nonnegative(),
 		totalInput: z.number().nonnegative(),
 		totalOutput: z.number().nonnegative(),
@@ -217,14 +213,18 @@ export const TokenTimeframeSchema = z
 	.strict()
 export type TokenTimeframe = z.infer<typeof TokenTimeframeSchema>
 
-export const TokenAnalyticsSchema = z.object({ timeframes: z.array(TokenTimeframeSchema) }).strict()
+export const TokenAnalyticsSchema = z
+	.object({
+		// Trailing five-minute throughput in tokens/hour — timeframe-independent, so
+		// the "now" figure never depends on a partially-filled chart bucket.
+		nowPerHour: z.number().nonnegative(),
+		timeframes: z.array(TokenTimeframeSchema)
+	})
+	.strict()
 export type TokenAnalytics = z.infer<typeof TokenAnalyticsSchema>
 
 export const AnalyticsSnapshotSchema = z
 	.object({
-		history: z.array(
-			z.object({ accountId: z.uuid(), windows: z.array(UsageHistorySchema) }).strict()
-		),
 		snapshot: DashboardSnapshotSchema,
 		tokens: TokenAnalyticsSchema.nullish()
 	})

@@ -1,3 +1,38 @@
+- [2026-07-16] [feat: reactive rate-limit switching, verified metering, and a settings tab
+
+- read live rate-limit state off every proxied response (anthropic
+  unified headers, x-codex-*) so the active account's pressure is
+  per-request fresh; threshold crossings rotate immediately instead of
+  waiting for the 60s poll, and a 429 rotates then retries the failed
+  request on the next account before the client sees it
+- hard limits bypass the minimum-dwell hold, candidate staleness now
+  admits the 5-minute probe cadence, and the default threshold drops to
+  90% (stored default policies migrate)
+- fix codex routing: the managed model_provider key is written at the
+  top of config.toml so TOML keeps it top-level (a block appended after
+  a [table] was silently swallowed and codex bypassed the proxy);
+  provider gains requires_openai_auth, and isInstalled/doctor verify
+  routing semantically instead of string-matching
+- fix codex metering: detect SSE by content (the ChatGPT backend sends
+  no content-type), parse non-streaming bodies as fallback, track cache
+  creation separately from input, and attribute events to the account
+  that actually served each response
+- correct API list prices (fable 10/50, opus 4.5+ 5/25, haiku 1/5,
+  dated opus 4.0/4.1 kept at 15/75) and price cache writes at 1.25x;
+  metering verified token-for-token against codex rollout files and
+  claude transcripts
+- analytics: trailing-5-minute now rate, per-model token/cost table,
+  input/output/cache-read/cache-write split, honest freshness header
+- new settings tab: per-provider auto-rotate, switch threshold, and
+  dwell, applied live over the existing policy IPC
+- drop the 3x consensus probe sampling (headers made it redundant) and
+  the reader-less usage-history subsystem
+- fixture screenplay support: scenarios as functions of an accelerated
+  clock (TOKENMAXX_TIMEWARP) for deterministic demos
+- test suite for the usage observer, rate-limit headers, rotation
+  selection, pricing, and the TOML install path
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>](https://github.com/RubricLab/tokenmaxx/commit/2ad9215d0e3a0cb349906c492ff25169c9defbb0)
 - [2026-07-16] [fix: honest proxy errors, serialized claude refresh, network-aware health
 
 - pass upstream API errors through untouched; proxy-generated failures now

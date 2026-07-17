@@ -5,7 +5,9 @@ import {
 	type ProviderState,
 	SwitchRecordSchema,
 	TIMEFRAMES,
-	type TokenTimeframe
+	type TokenTimeframe,
+	UsageSnapshotSchema,
+	type UsageWindow
 } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
 import type { FetchImplementation } from './http.ts'
@@ -16,7 +18,7 @@ import { AnthropicProviderAdapter } from './providers/claude/provider.ts'
 import type { CredentialVault } from './providers/codex/auth.ts'
 import { OpenAiProviderAdapter } from './providers/codex/provider.ts'
 import type { ProviderAdapter } from './providers/provider.ts'
-import { type RunningProxy, startProxy } from './proxy.ts'
+import { type ProxyLimitEvent, type RunningProxy, startProxy } from './proxy.ts'
 import { createRuntimeCredentialSource } from './runtime-source.ts'
 import { selectRotation } from './selection.ts'
 import type { StateStore, TokenTimeframeAggregate } from './storage.ts'
@@ -25,25 +27,31 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 	let totalInput = 0
 	let totalOutput = 0
 	let totalCached = 0
+	let totalCacheCreation = 0
 	let costTotal = 0
 	const byProvider = {
 		anthropic: { costUsd: 0, tokens: 0 },
 		openai: { costUsd: 0, tokens: 0 }
 	}
-	let top: { model: string; tokens: number } | null = null
+	const models: { costUsd: number; model: string; tokens: number }[] = []
 	for (const entry of aggregate.byModel) {
-		const entryCost = costUsd(entry.model, entry.input, entry.output, entry.cached)
-		const entryTokens = entry.input + entry.output + entry.cached
+		const entryCost = costUsd(
+			entry.model,
+			entry.input,
+			entry.output,
+			entry.cached,
+			entry.cacheCreation
+		)
+		const entryTokens = entry.input + entry.output + entry.cached + entry.cacheCreation
 		totalInput += entry.input
 		totalOutput += entry.output
 		totalCached += entry.cached
+		totalCacheCreation += entry.cacheCreation
 		costTotal += entryCost
 		const bucket = entry.provider === 'anthropic' ? byProvider.anthropic : byProvider.openai
 		bucket.tokens += entryTokens
 		bucket.costUsd += entryCost
-		if (top === null || entryTokens > top.tokens) {
-			top = { model: entry.model, tokens: entryTokens }
-		}
+		models.push({ costUsd: entryCost, model: entry.model, tokens: entryTokens })
 	}
 	const peakBucket = aggregate.buckets.reduce((max, value) => Math.max(max, value), 0)
 	return {
@@ -53,11 +61,12 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 		costUsd: costTotal,
 		key: aggregate.key,
 		peakPerHour: peakBucket * (3_600_000 / aggregate.bucketMs),
-		topModel: top?.model ?? null,
+		topModels: models.sort((left, right) => right.tokens - left.tokens).slice(0, 3),
+		totalCacheCreation,
 		totalCached,
 		totalInput,
 		totalOutput,
-		totalTokens: totalInput + totalOutput + totalCached
+		totalTokens: totalInput + totalOutput + totalCached + totalCacheCreation
 	}
 }
 
@@ -104,6 +113,8 @@ export class AccountManager {
 	readonly #providerOperationTails = new Map<ProviderId, Promise<void>>()
 	readonly #probeCooldownUntil = new Map<string, number>()
 	readonly #lastProbeStartedAt = new Map<string, number>()
+	readonly #observationSavedAt = new Map<string, number>()
+	readonly #observationEvaluatedAt = new Map<ProviderId, number>()
 	#proxy: RunningProxy | null = null
 	#monitor: ReturnType<typeof setInterval> | null = null
 	#refreshOperation: Promise<void> | null = null
@@ -152,13 +163,11 @@ export class AccountManager {
 			vault: this.#vault
 		})
 		this.#proxy = startProxy({
+			observeLimits: event => this.noteRateLimitObservation(event),
 			port: this.#paths.proxyPort,
 			record: event => {
 				try {
-					this.#store.recordTokenEvent({
-						...event,
-						accountId: this.activeAccount(event.provider)?.id ?? null
-					})
+					this.#store.recordTokenEvent(event)
 				} catch {}
 			},
 			source
@@ -195,13 +204,13 @@ export class AccountManager {
 	public analytics() {
 		const snapshot = this.#store.dashboard()
 		const nowMillis = this.#dependencies.now().getTime()
+		const trailingWindowMs = 5 * 60_000
 		return {
-			history: snapshot.accounts.map(account => ({
-				accountId: account.id,
-				windows: this.#store.usageHistory(account.id)
-			})),
 			snapshot,
 			tokens: {
+				nowPerHour:
+					this.#store.tokensBetween(nowMillis - trailingWindowMs, nowMillis) *
+					(3_600_000 / trailingWindowMs),
 				timeframes: this.#store.tokenAnalytics(nowMillis, TIMEFRAMES).map(priceTokenTimeframe)
 			}
 		}
@@ -243,12 +252,16 @@ export class AccountManager {
 		enabled: boolean
 		thresholdPercent?: number
 		authorizationConfirmed?: boolean
+		minimumDwellMilliseconds?: number
+		hysteresisPercent?: number
 	}) {
 		const current = this.#store.findProviderState(input.provider).policy
 		const policy = AutomationPolicySchema.parse({
 			...current,
 			authorization: input.authorizationConfirmed ? 'confirmed' : current.authorization,
 			enabled: input.enabled,
+			hysteresisPercent: input.hysteresisPercent ?? current.hysteresisPercent,
+			minimumDwellMilliseconds: input.minimumDwellMilliseconds ?? current.minimumDwellMilliseconds,
 			thresholdPercent: input.thresholdPercent ?? current.thresholdPercent
 		})
 		if (policy.enabled && policy.authorization !== 'confirmed') {
@@ -373,6 +386,59 @@ export class AccountManager {
 				return 15 * 60_000
 			default:
 				return null
+		}
+	}
+
+	// The proxy reports the rate-limit state each upstream response carries.
+	// This keeps the active account's usage fresh for free while traffic flows —
+	// exactly when the 60s poll loop is too slow and the usage endpoints start
+	// rate-limiting probes — and lets a 429 trigger rotation immediately (the
+	// proxy awaits this, then retries the failed request on the new account).
+	public async noteRateLimitObservation(event: ProxyLimitEvent): Promise<void> {
+		const account = this.#store.findAccount(event.accountId)
+		if (account === null || account.provider !== event.provider) {
+			return
+		}
+		const lastSaved = this.#observationSavedAt.get(event.accountId) ?? 0
+		if (!event.observation.limited && event.at - lastSaved < 15_000) {
+			return
+		}
+		this.#observationSavedAt.set(event.accountId, event.at)
+		const existing = this.#store.findUsage(event.accountId)
+		// Headers only cover the unified windows; keep probe-only windows (like
+		// per-model weekly limits) so rotation never loses sight of them.
+		const windows = new Map<string, UsageWindow>(
+			(existing?.windows ?? []).map(window => [window.id, window])
+		)
+		for (const window of event.observation.windows) {
+			windows.set(window.id, window)
+		}
+		const merged = [...windows.values()]
+		try {
+			this.#store.saveUsage(
+				UsageSnapshotSchema.parse({
+					accountId: event.accountId,
+					hardLimitReached:
+						event.observation.limited ||
+						merged.some(window => window.kind === 'hard' && window.usedPercent >= 100),
+					observedAt: new Date(event.at).toISOString(),
+					provider: event.provider,
+					source: 'proxyResponseHeaders',
+					windows: merged
+				})
+			)
+		} catch {
+			return
+		}
+		const lastEvaluated = this.#observationEvaluatedAt.get(event.provider) ?? 0
+		if (event.observation.limited) {
+			this.#observationEvaluatedAt.set(event.provider, event.at)
+			await this.withProviderOperation(event.provider, () => this.evaluateAutomation(event.provider))
+		} else if (event.at - lastEvaluated >= 5_000) {
+			this.#observationEvaluatedAt.set(event.provider, event.at)
+			void this.withProviderOperation(event.provider, () =>
+				this.evaluateAutomation(event.provider)
+			).catch(() => undefined)
 		}
 	}
 

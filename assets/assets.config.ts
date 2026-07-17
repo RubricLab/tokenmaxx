@@ -77,6 +77,13 @@ export const SHOTS: readonly Shot[] = [
 		scenario: 'oneHot'
 	},
 	{
+		caption: 'Auto-rotation, threshold, and dwell — tuned per provider, applied live.',
+		height: 560,
+		keys: ['Tab', 'Tab'],
+		name: 'settings',
+		scenario: 'cruising'
+	},
+	{
 		caption: 'A fresh install: sign in, then route native codex & claude.',
 		height: 470,
 		installed: false,

@@ -42,6 +42,8 @@ const PolicyParamsSchema = z
 	.object({
 		authorizationConfirmed: z.boolean().optional(),
 		enabled: z.boolean(),
+		hysteresisPercent: z.number().min(0).max(25).optional(),
+		minimumDwellMilliseconds: z.number().int().min(0).optional(),
 		provider: ProviderIdSchema,
 		thresholdPercent: z.number().min(1).max(100).optional()
 	})
@@ -293,6 +295,8 @@ export function requestPolicy(
 		enabled: boolean
 		thresholdPercent?: number
 		authorizationConfirmed?: boolean
+		minimumDwellMilliseconds?: number
+		hysteresisPercent?: number
 	}
 ): Promise<void> {
 	return managerRequest({

@@ -93,7 +93,10 @@ export function selectRotation(input: RotationInput): RotationDecision {
 	if (!activeSnapshot.hardLimitReached && activePressure < policy.thresholdPercent) {
 		return { reason: 'belowThreshold', rotate: false }
 	}
-	if (input.state.switchedAt !== null) {
+	// Dwell prevents threshold-driven flapping. A hard-limited account is
+	// unusable right now — every request on it fails — so dwell must not pin
+	// traffic to it.
+	if (!activeSnapshot.hardLimitReached && input.state.switchedAt !== null) {
 		const dwell = input.now.getTime() - Date.parse(input.state.switchedAt)
 		if (dwell < policy.minimumDwellMilliseconds) {
 			return { reason: 'minimumDwell', rotate: false }
