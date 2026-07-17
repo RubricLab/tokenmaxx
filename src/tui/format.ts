@@ -46,7 +46,7 @@ export type ThemeName = 'dark' | 'light'
 export const themes: Record<ThemeName, Theme> = { dark: darkTheme, light: lightTheme }
 
 export function detectThemeName(environment: NodeJS.ProcessEnv): ThemeName {
-	const override = (environment.TOKENMAXX_THEME ?? environment.TOKMAX_THEME)?.toLowerCase()
+	const override = environment.TOKENMAXX_THEME?.toLowerCase()
 	if (override === 'light' || override === 'dark') {
 		return override
 	}

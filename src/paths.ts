@@ -17,16 +17,9 @@ export type ApplicationPaths = z.infer<typeof ApplicationPathsSchema>
 const defaultProxyPort = 8459
 
 export function applicationPaths(environment: NodeJS.ProcessEnv = process.env): ApplicationPaths {
-	const root = resolve(
-		environment.TOKENMAXX_HOME ??
-			environment.TOKMAX_HOME ??
-			environment.CODEX_AUTH_HOME ??
-			join(homedir(), '.codex-auth')
-	)
+	const root = resolve(environment.TOKENMAXX_HOME ?? join(homedir(), '.tokenmaxx'))
 	const runtime = join(root, 'runtime')
-	const proxyPort = Number(
-		environment.TOKENMAXX_PROXY_PORT ?? environment.TOKMAX_PROXY_PORT ?? defaultProxyPort
-	)
+	const proxyPort = Number(environment.TOKENMAXX_PROXY_PORT ?? defaultProxyPort)
 
 	return ApplicationPathsSchema.parse({
 		claudeProfiles: join(root, 'profiles', 'claude'),
