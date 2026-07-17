@@ -494,7 +494,7 @@ function metricRow(
 ) {
 	return centered(
 		Text({ attributes: name.bold ? 1 : 0, content: pad(name.text, nameWidth), fg: rgb(name.color) }),
-		...cells.map(cell => Text({ content: cell.text.padStart(9), fg: rgb(cell.color) }))
+		...cells.map(cell => Text({ content: cell.text.padStart(10), fg: rgb(cell.color) }))
 	)
 }
 
