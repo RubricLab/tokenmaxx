@@ -49,10 +49,6 @@ function buildTokens(scale: number): TokenAnalytics {
 		return {
 			bucketMs,
 			buckets,
-			byProvider: {
-				anthropic: { costUsd: claudeCost, tokens: claudeTokens },
-				openai: { costUsd: codexCost, tokens: codexTokens }
-			},
 			costUsd: codexCost + claudeCost,
 			key: timeframe.key,
 			peakPerHour: Math.round(peakBucket * (3_600_000 / bucketMs)),
@@ -60,8 +56,18 @@ function buildTokens(scale: number): TokenAnalytics {
 				totalTokens === 0
 					? []
 					: [
-							{ costUsd: codexCost, model: 'gpt-5.6-sol', tokens: codexTokens },
-							{ costUsd: claudeCost, model: 'claude-opus-4-8', tokens: claudeTokens }
+							{
+								costUsd: codexCost,
+								model: 'gpt-5.6-sol',
+								provider: 'openai' as const,
+								tokens: codexTokens
+							},
+							{
+								costUsd: claudeCost,
+								model: 'claude-opus-4-8',
+								provider: 'anthropic' as const,
+								tokens: claudeTokens
+							}
 						].sort((left, right) => right.tokens - left.tokens),
 			totalCacheCreation,
 			totalCached,

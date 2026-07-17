@@ -1,3 +1,12 @@
+- [2026-07-16] [style: give the analytics metrics hierarchy and alignment
+
+The block under the chart was five ragged rows fighting for attention.
+Now it reads in layers: a hero row (total tokens, API value, live rate),
+one dim line of rates, one faint line of composition, then an aligned
+per-model table with provider tags and right-flushed numbers. The
+redundant provider-totals row is gone; the model table carries it.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>](https://github.com/RubricLab/tokenmaxx/commit/9d96f1669f312ec27bc91411aab88bc0320c4d62)
 - [2026-07-16] [feat: reactive rate-limit switching, verified metering, and a settings tab
 
 - read live rate-limit state off every proxied response (anthropic

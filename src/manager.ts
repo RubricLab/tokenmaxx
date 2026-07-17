@@ -29,11 +29,7 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 	let totalCached = 0
 	let totalCacheCreation = 0
 	let costTotal = 0
-	const byProvider = {
-		anthropic: { costUsd: 0, tokens: 0 },
-		openai: { costUsd: 0, tokens: 0 }
-	}
-	const models: { costUsd: number; model: string; tokens: number }[] = []
+	const models: { costUsd: number; model: string; provider: ProviderId; tokens: number }[] = []
 	for (const entry of aggregate.byModel) {
 		const entryCost = costUsd(
 			entry.model,
@@ -48,20 +44,21 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 		totalCached += entry.cached
 		totalCacheCreation += entry.cacheCreation
 		costTotal += entryCost
-		const bucket = entry.provider === 'anthropic' ? byProvider.anthropic : byProvider.openai
-		bucket.tokens += entryTokens
-		bucket.costUsd += entryCost
-		models.push({ costUsd: entryCost, model: entry.model, tokens: entryTokens })
+		models.push({
+			costUsd: entryCost,
+			model: entry.model,
+			provider: entry.provider === 'anthropic' ? 'anthropic' : 'openai',
+			tokens: entryTokens
+		})
 	}
 	const peakBucket = aggregate.buckets.reduce((max, value) => Math.max(max, value), 0)
 	return {
 		bucketMs: aggregate.bucketMs,
 		buckets: aggregate.buckets,
-		byProvider,
 		costUsd: costTotal,
 		key: aggregate.key,
 		peakPerHour: peakBucket * (3_600_000 / aggregate.bucketMs),
-		topModels: models.sort((left, right) => right.tokens - left.tokens).slice(0, 3),
+		topModels: models.sort((left, right) => right.tokens - left.tokens).slice(0, 5),
 		totalCacheCreation,
 		totalCached,
 		totalInput,

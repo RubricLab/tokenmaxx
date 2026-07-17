@@ -181,17 +181,10 @@ export const TokenEventSchema = z
 	.strict()
 export type TokenEvent = z.infer<typeof TokenEventSchema>
 
-const TokenProviderTotalSchema = z
-	.object({ costUsd: z.number().nonnegative(), tokens: z.number().nonnegative() })
-	.strict()
-
 export const TokenTimeframeSchema = z
 	.object({
 		bucketMs: z.number().positive(),
 		buckets: z.array(z.number().nonnegative()),
-		byProvider: z
-			.object({ anthropic: TokenProviderTotalSchema, openai: TokenProviderTotalSchema })
-			.strict(),
 		costUsd: z.number().nonnegative(),
 		key: z.string(),
 		peakPerHour: z.number().nonnegative(),
@@ -200,6 +193,7 @@ export const TokenTimeframeSchema = z
 				.object({
 					costUsd: z.number().nonnegative(),
 					model: z.string(),
+					provider: ProviderIdSchema,
 					tokens: z.number().nonnegative()
 				})
 				.strict()

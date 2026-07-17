@@ -291,14 +291,18 @@ function timeframeBar(ctx: Ctx, timeframe: Timeframe) {
 	)
 }
 
-// One stat: dim label, bright value. Text identity lives in the label — the
-// theme's single accent stays reserved for the chart marks.
+// One stat: dim label, bright bold value, a wide fixed gutter. The metrics
+// read as three calm columns instead of a run-on line.
 function stat(ctx: Ctx, label: string, value: string, valueColor?: string) {
 	return [
 		Text({ content: `${label} `, fg: rgb(ctx.theme.dim) }),
 		Text({ attributes: 1, content: value, fg: rgb(valueColor ?? ctx.theme.fg) }),
-		Text({ content: '   ', fg: rgb(ctx.theme.bg) })
+		Text({ content: '      ', fg: rgb(ctx.theme.bg) })
 	]
+}
+
+function blankRow(ctx: Ctx) {
+	return Box({ flexDirection: 'row' }, Text({ content: ' ', fg: rgb(ctx.theme.bg) }))
 }
 
 function throughputChart(
@@ -369,60 +373,57 @@ function analyticsBody(ctx: Ctx, analytics: AnalyticsSnapshot, timeframe: Timefr
 			tokens.totalTokens > 0
 				? Math.round(((tokens.totalCached + tokens.totalCacheCreation) / tokens.totalTokens) * 100)
 				: 0
+		// The hero numbers: what you used, what it is worth, how fast right now.
+		body.push(blankRow(ctx))
 		body.push(
 			Box(
-				{ flexDirection: 'row', paddingLeft: 1 },
+				{ flexDirection: 'row', paddingLeft: 2 },
 				...stat(ctx, 'Σ', `${compactNumber(tokens.totalTokens)} tokens`),
 				...stat(ctx, '≈', `${compactUsd(tokens.costUsd)} API value`, ctx.theme.good),
-				...stat(ctx, 'cache', `${cachedShare}%`)
-			)
-		)
-		body.push(
-			Box(
-				{ flexDirection: 'row', paddingLeft: 1 },
 				...stat(
 					ctx,
 					'now',
 					`${compactNumber(nowPerHour)}/h`,
 					nowPerHour > 0 ? ctx.theme.accent : ctx.theme.faint
-				),
-				...stat(ctx, 'peak', `${compactNumber(tokens.peakPerHour)}/h`),
-				...stat(ctx, 'avg', `${compactNumber(averagePerHour)}/h`)
+				)
 			)
 		)
+		// One quiet line of rates, one quieter line of composition.
 		body.push(
 			Box(
-				{ flexDirection: 'row', paddingLeft: 1 },
+				{ flexDirection: 'row', paddingLeft: 2 },
 				Text({
-					content: `in ${compactNumber(tokens.totalInput)} · out ${compactNumber(tokens.totalOutput)} · cache read ${compactNumber(tokens.totalCached)} · cache write ${compactNumber(tokens.totalCacheCreation)}`,
+					content: `peak ${compactNumber(tokens.peakPerHour)}/h    avg ${compactNumber(averagePerHour)}/h    ${cachedShare}% cached`,
 					fg: rgb(ctx.theme.dim)
 				})
 			)
 		)
 		body.push(
 			Box(
-				{ flexDirection: 'row', paddingLeft: 1 },
-				...stat(
-					ctx,
-					'codex',
-					`${compactNumber(tokens.byProvider.openai.tokens)} · ${compactUsd(tokens.byProvider.openai.costUsd)}`
-				),
-				...stat(
-					ctx,
-					'claude',
-					`${compactNumber(tokens.byProvider.anthropic.tokens)} · ${compactUsd(tokens.byProvider.anthropic.costUsd)}`
-				)
+				{ flexDirection: 'row', paddingLeft: 2 },
+				Text({
+					content: `in ${compactNumber(tokens.totalInput)} · out ${compactNumber(tokens.totalOutput)} · cache read ${compactNumber(tokens.totalCached)} · cache write ${compactNumber(tokens.totalCacheCreation)}`,
+					fg: rgb(ctx.theme.faint)
+				})
 			)
 		)
-		for (const model of tokens.topModels) {
-			body.push(
-				Box(
-					{ flexDirection: 'row', paddingLeft: 1 },
-					Text({ content: `  ${pad(model.model, 26)}`, fg: rgb(ctx.theme.faint) }),
-					Text({ content: `${compactNumber(model.tokens).padStart(7)}  `, fg: rgb(ctx.theme.dim) }),
-					Text({ content: compactUsd(model.costUsd).padStart(8), fg: rgb(ctx.theme.dim) })
+		// Where it went: aligned columns, numbers flush right.
+		if (tokens.topModels.length > 0) {
+			body.push(blankRow(ctx))
+			for (const model of tokens.topModels) {
+				body.push(
+					Box(
+						{ flexDirection: 'row', paddingLeft: 2 },
+						Text({ content: pad(model.model, 24), fg: rgb(ctx.theme.fg) }),
+						Text({
+							content: pad(providerCli[model.provider], 8),
+							fg: rgb(ctx.theme.faint)
+						}),
+						Text({ content: compactNumber(model.tokens).padStart(8), fg: rgb(ctx.theme.dim) }),
+						Text({ content: compactUsd(model.costUsd).padStart(10), fg: rgb(ctx.theme.dim) })
+					)
 				)
-			)
+			}
 		}
 	}
 	const card = Box(
