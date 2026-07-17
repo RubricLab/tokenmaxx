@@ -782,7 +782,7 @@ export async function runTuiDashboard(
 		settingsSelected: 0,
 		tab: 'accounts',
 		timeframeIndex: 2,
-		updateAvailable: null,
+		updateAvailable: live ? null : (process.env.TOKENMAXX_FAKE_UPDATE ?? null),
 		updateDismissed: false,
 		view: 'all'
 	}
