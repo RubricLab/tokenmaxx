@@ -111,7 +111,7 @@ export function createRuntimeCredentialSource(
 			const cli = provider === 'openai' ? 'codex' : 'claude'
 			throw new ApplicationError(
 				'ACTIVE_CREDENTIAL_UNUSABLE',
-				`${account.label} needs re-login — run: tokenmaxx ${cli} relogin ${account.label}`,
+				`${account.label} needs re-login — run: tokenmaxx login ${cli}`,
 				{ cause: error instanceof Error ? error : undefined }
 			)
 		}

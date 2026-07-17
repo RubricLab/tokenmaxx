@@ -133,7 +133,7 @@ function sampleAge(observedAt: string, now: Date): string | null {
 }
 
 function healthNote(account: Account): { note: string; severity: AnsiCode } | null {
-	const relogin = `tokenmaxx ${providerCliName(account.provider)} relogin ${truncate(account.label, 40)}`
+	const relogin = `tokenmaxx login ${providerCliName(account.provider)}`
 	switch (account.health) {
 		case 'ready':
 		case 'unchecked':
