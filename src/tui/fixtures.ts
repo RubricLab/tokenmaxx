@@ -637,43 +637,45 @@ const blitz: ScenarioBuilder = now => {
 		n: runner.n,
 		plan: runner.provider === 'openai' ? 'pro' : 'claude_max_20x',
 		provider: runner.provider,
-		windows: [
-			{
-				fillFrac: 0.5,
-				id: runner.provider === 'openai' ? 'five-hour' : 'session',
-				label: runner.provider === 'openai' ? '5 hour' : '5h session',
-				nowFrac: 0.5,
-				peak: five(runner),
-				period: 5 * HOUR,
-				seed: runner.n,
-				wobble: 0
-			},
-			{
-				fillFrac: 0.5,
-				id: runner.provider === 'openai' ? 'weekly' : 'weekly_all',
-				label: '7 day · all models',
-				nowFrac: 0.5,
-				peak: seven(runner, minutes),
-				period: 7 * DAY,
-				seed: runner.n + 20,
-				wobble: 0
-			},
-			// Fable burns ahead of the all-models window on Anthropic plans.
-			...(runner.provider === 'anthropic'
+		// Codex shows just its weekly window (baked partial, slow climb); Claude
+		// shows the 5-hour session cycling plus the Fable scoped weekly — a calm,
+		// legible story, not every window maxing at once.
+		windows:
+			runner.provider === 'openai'
 				? [
+						{
+							fillFrac: 0.5,
+							id: 'weekly',
+							label: '7 day · all models',
+							nowFrac: 0.5,
+							peak: seven(runner, minutes),
+							period: 7 * DAY,
+							seed: runner.n + 20,
+							wobble: 0
+						}
+					]
+				: [
+						{
+							fillFrac: 0.5,
+							id: 'session',
+							label: '5h session',
+							nowFrac: 0.5,
+							peak: five(runner),
+							period: 5 * HOUR,
+							seed: runner.n,
+							wobble: 0
+						},
 						{
 							fillFrac: 0.5,
 							id: 'weekly_scoped:fable',
 							label: '7 day · Fable',
 							nowFrac: 0.5,
-							peak: clamp(seven(runner, minutes) * 1.12),
+							peak: clamp(seven(runner, minutes) * 0.9),
 							period: 7 * DAY,
 							seed: runner.n + 40,
 							wobble: 0
 						}
 					]
-				: [])
-		]
 	}))
 	const providerSeed = (provider: ProviderId): ProviderSeed => {
 		const active = activeInShift(provider, currentShift)

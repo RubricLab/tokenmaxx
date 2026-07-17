@@ -112,9 +112,52 @@ function column(
 const ADD_ROW = '__add__'
 
 // The centered content column caps here, so account rows never sprawl the full
-// width of an ultra-wide terminal. Account rows must budget against this, not
-// the raw terminal width, or a wide 3-window row wraps inside the panel.
+// width of an ultra-wide terminal.
 const CONTENT_MAX = 126
+
+// Fixed meter widths per tier make each row a known width, so the panel can be
+// sized to hug its content instead of stretching to a fixed cap and leaving a
+// right gutter.
+const BAR: Record<Tier, number> = { compact: 16, regular: 11, wide: 14 }
+const FOCUSED_BAR = 28
+// A window cell is ` name ` + `bar pct` + ` ↻reset ` — its exact column width.
+function windowCellWidth(tier: Tier, window: UsageWindow): number {
+	return 2 + shortWindow(window.label).length + BAR[tier] + 5 + 6
+}
+// The panel content width: the widest account row plus its chrome, so both
+// provider panels share one width and the block centers cleanly with the widest
+// provider filling it exactly.
+function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
+	const labels = labelWidth(ctx)
+	let widest = 46 // never narrower than a provider title with its routing tag
+	for (const account of snapshot.accounts) {
+		const state = snapshot.providers.find(s => s.provider === account.provider)
+		const hidden = state?.policy.hiddenWindowIds ?? []
+		const windows = snapshot.usage.find(u => u.accountId === account.id)?.windows ?? []
+		const visible = visibleWindows(windows, hidden)
+		const focused =
+			ctx.view === '5h'
+				? visible.filter(isFiveHour)
+				: ctx.view === '7d'
+					? visible.filter(w => !isFiveHour(w))
+					: visible
+		const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
+		const base = 3 + (labels - 2) + (tag === null ? 0 : tag.length + 1) + 2
+		let body = 0
+		if (ctx.view !== 'all') {
+			body = 1 + FOCUSED_BAR + 6 + 8
+		} else if (ctx.tier === 'compact') {
+			const binding = bindingWindow(focused)
+			body = binding === undefined ? 0 : windowCellWidth('compact', binding)
+		} else {
+			body = focused
+				.slice(0, ctx.tier === 'wide' ? 3 : 2)
+				.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
+		}
+		widest = Math.max(widest, base + body)
+	}
+	return Math.min(CONTENT_MAX, ctx.columns - 2, widest)
+}
 
 function isFiveHour(window: UsageWindow): boolean {
 	return /5 ?h/i.test(window.label) || window.id === 'session' || window.id === 'five-hour'
@@ -218,15 +261,15 @@ function accountLine(
 	account: Account,
 	windows: readonly UsageWindow[],
 	hiddenIds: readonly string[],
+	width: number,
 	isActive: boolean,
 	isSelected: boolean,
 	justSwitchedTo: boolean
 ) {
 	const badge = healthBadge(ctx.theme, account)
 	const labels = labelWidth(ctx)
-	// Budget against the panel's real width, not the terminal's — the content
-	// column is capped, so a wide row must lay out within that cap.
-	const cols = Math.min(ctx.columns, CONTENT_MAX)
+	// The panel's real inner width, so a focused-view bar fills it exactly.
+	const cols = width
 	const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
 	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
 	const markerColor =
@@ -264,21 +307,16 @@ function accountLine(
 	if (focused.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
 	} else if (ctx.view === 'all' && ctx.tier === 'compact') {
-		// No room for more than the fullest window; show it with its reset. Bar
-		// stays modest — wide unicode markers eat into the true column budget.
+		// Just the fullest window, with its reset.
 		const window = bindingWindow(focused)
 		if (window !== undefined) {
-			children.push(...windowCell(ctx, window, Math.max(8, Math.min(20, cols - labels - 26)), true))
+			children.push(...windowCell(ctx, window, BAR.compact, true))
 		}
 	} else if (ctx.view === 'all') {
-		// Show 2 windows at regular, all at wide, each with its reset. Bars widen
-		// with the tier.
-		const shown = ctx.tier === 'wide' ? focused : focused.slice(0, 2)
-		const tagCols = tag === null ? 0 : tag.length + 1
-		const perWindow = Math.floor((cols - labels - tagCols - 8) / shown.length)
-		const barWidth = Math.max(6, Math.min(ctx.tier === 'wide' ? 14 : 9, perWindow - 14))
+		// 2 windows at regular, up to 3 at wide — fixed meter widths so rows line up.
+		const shown = focused.slice(0, ctx.tier === 'wide' ? 3 : 2)
 		for (const window of shown) {
-			children.push(...windowCell(ctx, window, barWidth, true))
+			children.push(...windowCell(ctx, window, BAR[ctx.tier], true))
 		}
 	} else {
 		// Focused 5h / 7d view: one wide bar for the binding window, with a
@@ -318,7 +356,8 @@ function providerPanel(
 	snapshot: DashboardSnapshot,
 	provider: ProviderId,
 	rows: Row[],
-	selected: number
+	selected: number,
+	width: number
 ) {
 	const state: ProviderState | undefined = snapshot.providers.find(s => s.provider === provider)
 	const switched = recentSwitch(ctx, state)
@@ -342,6 +381,7 @@ function providerPanel(
 			account,
 			windows ?? [],
 			hiddenIds,
+			width,
 			state?.activeAccountId === entry.row.accountId,
 			isSelected,
 			switched
@@ -813,14 +853,17 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 
 function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], selected: number) {
 	const note = legend(ctx, snapshot)
+	// Both panels share the content-fit width so the block reads as one centered
+	// unit rather than a fixed slab with a right gutter.
+	const width = accountsWidth(ctx, snapshot)
 	return column(
 		ctx,
 		[
-			providerPanel(ctx, snapshot, 'openai', rows, selected),
-			providerPanel(ctx, snapshot, 'anthropic', rows, selected),
+			providerPanel(ctx, snapshot, 'openai', rows, selected, width),
+			providerPanel(ctx, snapshot, 'anthropic', rows, selected, width),
 			...(note === null ? [] : [note])
 		],
-		CONTENT_MAX
+		width + 2
 	)
 }
 
