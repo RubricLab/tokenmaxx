@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
-import { type FileHandle, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
+import { type FileHandle, mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -216,56 +216,8 @@ function help(): string {
 	].join('\n')
 }
 
-async function migrateLegacyHome(paths: ApplicationPaths): Promise<void> {
-	if (paths.root !== join(homedir(), '.tokenmaxx')) {
-		return
-	}
-	const legacyRoot = join(homedir(), '.codex-auth')
-	const exists = (path: string) =>
-		stat(path).then(
-			() => true,
-			() => false
-		)
-	if ((await exists(paths.root)) || !(await exists(legacyRoot))) {
-		return
-	}
-	const legacySocket = join(legacyRoot, 'runtime', 'manager.sock')
-	const legacyLock = join(legacyRoot, 'runtime', 'manager.lock')
-	await managerRequest({
-		method: 'manager/stop',
-		schema: EmptyResultSchema,
-		socketPath: legacySocket,
-		timeoutMilliseconds: 1_000
-	}).catch(() => undefined)
-	const deadline = Date.now() + 8_000
-	while (Date.now() < deadline && (await managerAvailable(legacySocket))) {
-		await Bun.sleep(200)
-	}
-	const ownerPid = await readFile(legacyLock, 'utf8').then(
-		raw => {
-			try {
-				const pid = (JSON.parse(raw) as { processId?: unknown }).processId
-				return typeof pid === 'number' ? pid : null
-			} catch {
-				return null
-			}
-		},
-		() => null
-	)
-	if (ownerPid !== null) {
-		try {
-			process.kill(ownerPid, 'SIGKILL')
-		} catch {}
-		await Bun.sleep(300)
-	}
-	await rm(legacyLock, { force: true })
-	await rm(legacySocket, { force: true })
-	await rename(legacyRoot, paths.root)
-}
-
 async function createContext(): Promise<ApplicationContext> {
 	const paths = applicationPaths()
-	await migrateLegacyHome(paths)
 	await ensureApplicationPaths(paths)
 	return { paths, store: createStateStore(paths.database) }
 }
