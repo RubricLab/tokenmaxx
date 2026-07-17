@@ -164,9 +164,7 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 			// and the stale lock is reclaimed on the next start.
 			const beginShutdown = () => {
 				const watchdog = setTimeout(() => {
-					process.stderr.write(
-						`[${new Date().toISOString()}] shutdown watchdog: forcing exit\n`
-					)
+					process.stderr.write(`[${new Date().toISOString()}] shutdown watchdog: forcing exit\n`)
 					process.exit(0)
 				}, 4_000)
 				watchdog.unref()
@@ -351,14 +349,14 @@ async function login(
 	)
 	// A new account is only useful once its provider is routed. Turn routing on
 	// automatically the first time one is added, so onboarding is just "sign in"
-	// — the operator can still toggle it off later on the accounts page.
+	// — the operator can still toggle it off later in settings.
 	if (existing === undefined) {
 		const status = await installStatus()
 		const alreadyRouted = provider === 'openai' ? status.codexRouted : status.claudeRouted
 		if (!alreadyRouted) {
 			await setRouting(context, provider, true).catch(() => undefined)
 			process.stdout.write(
-				`Turned on native ${providerArgument} routing — run ${providerArgument} as usual.\n`
+				`tokenmaxx is on for ${providerArgument} — run ${providerArgument} as usual.\n`
 			)
 		}
 	}

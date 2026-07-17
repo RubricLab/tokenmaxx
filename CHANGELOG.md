@@ -1,3 +1,9 @@
+- [2026-07-17] [routing becomes a plain tokenmaxx on/off in settings
+
+The accounts title is quiet when on (just the auto policy) and shows '✗ off'
+warn with a settings pointer when not. Settings gains a master on/off row per
+provider — 'tokenmaxx · on/off · run codex through tokenmaxx' — and r is
+refresh everywhere. Copy drops the word 'routing' throughout.](https://github.com/RubricLab/tokenmaxx/commit/1579bcdf0d163207c5e4722ec4774f10daf98f39)
 - [2026-07-17] [quiet switches, clearer routing hint, staggered 5h resets
 
 A switch no longer takes over the panel title or paints the border warn — the

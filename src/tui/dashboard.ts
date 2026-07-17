@@ -321,14 +321,14 @@ function providerPanel(
 			switched
 		)
 	})
-	// Routing is the on/off switch for the whole provider, so it leads the title.
-	// Off is loud — the border and title go warn and a banner explains it, since
+	// On is quiet — the title just shows the auto policy. Off is loud — ✗, warn
+	// border, and a banner pointing at settings, since
 	// an un-routed provider silently does nothing.
 	const routed = ctx.routing[provider]
 	const auto = state?.policy.enabled ? `⟳ auto ${state.policy.thresholdPercent}%` : 'auto off'
 	const title = routed
-		? ` ${providerTitles[provider]}   ● routing on · ${auto} `
-		: ` ${providerTitles[provider]}   ◯ ROUTING OFF — press r to turn on `
+		? ` ${providerTitles[provider]}   ● ${auto} `
+		: ` ${providerTitles[provider]}   ✗ off `
 	const titleColor = !routed
 		? ctx.theme.warn
 		: state?.policy.enabled
@@ -340,7 +340,7 @@ function providerPanel(
 				Box(
 					{ flexDirection: 'row', width: '100%' },
 					Text({
-						content: ` native ${providerCli[provider]} is not routed through tokenmaxx — nothing here is active yet`,
+						content: ` tokenmaxx is off for ${providerCli[provider]} — turn it on in settings`,
 						fg: rgb(ctx.theme.warn)
 					})
 				)
@@ -655,12 +655,13 @@ function dwellLabel(milliseconds: number): string {
 }
 
 // Settings rows are a flat list across both providers so ↑↓ walks everything.
-// Routing lives on the accounts page now; settings tunes rotation and which
-// rate-limit windows show. The window rows are dynamic — one per window a
-// provider actually reports — so they come from the snapshot, not a static table.
+// The first row per provider is the master on/off (is this CLI routed through
+// tokenmaxx at all), then rotation tuning, then which rate-limit windows show.
+// The window rows are dynamic — one per window a provider actually reports —
+// so they come from the snapshot, not a static table.
 interface SettingRow {
 	provider: ProviderId
-	key: 'auto' | 'threshold' | 'dwell' | 'window'
+	key: 'routing' | 'auto' | 'threshold' | 'dwell' | 'window'
 	windowId?: string
 	windowLabel?: string
 }
@@ -682,6 +683,7 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 
 function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
 	return providerOrder.flatMap(provider => [
+		{ key: 'routing' as const, provider },
 		{ key: 'auto' as const, provider },
 		{ key: 'threshold' as const, provider },
 		{ key: 'dwell' as const, provider },
@@ -709,37 +711,57 @@ function settingsPanel(
 		const isSelected = entry.index === selected
 		const hidden =
 			row.windowId !== undefined && (policy?.hiddenWindowIds ?? []).includes(row.windowId)
+		const routed = ctx.routing[row.provider]
 		const label =
-			row.key === 'auto'
-				? 'auto-rotate'
-				: row.key === 'threshold'
-					? 'switch at'
-					: row.key === 'dwell'
-						? 'cooldown'
-						: `${shortWindow(row.windowLabel ?? '')} limit`
+			row.key === 'routing'
+				? 'tokenmaxx'
+				: row.key === 'auto'
+					? 'auto-rotate'
+					: row.key === 'threshold'
+						? 'switch at'
+						: row.key === 'dwell'
+							? 'cooldown'
+							: `${shortWindow(row.windowLabel ?? '')} limit`
 		const value =
-			row.key === 'auto'
-				? policy?.enabled
+			row.key === 'routing'
+				? routed
 					? 'on'
 					: 'off'
-				: row.key === 'threshold'
-					? `${policy?.thresholdPercent ?? 90}%`
-					: row.key === 'dwell'
-						? dwellLabel(policy?.minimumDwellMilliseconds ?? 300_000)
-						: hidden
-							? 'hidden'
-							: 'shown'
+				: row.key === 'auto'
+					? policy?.enabled
+						? 'on'
+						: 'off'
+					: row.key === 'threshold'
+						? `${policy?.thresholdPercent ?? 90}%`
+						: row.key === 'dwell'
+							? dwellLabel(policy?.minimumDwellMilliseconds ?? 300_000)
+							: hidden
+								? 'hidden'
+								: 'shown'
 		const hint =
-			row.key === 'auto'
-				? 'rotate before an account runs out'
-				: row.key === 'threshold'
-					? 'switch when the fullest window hits this'
-					: row.key === 'dwell'
-						? 'min wait between switches (anti-flap)'
-						: 'show on the accounts page'
-		const on = (row.key === 'auto' && (policy?.enabled ?? false)) || (row.key === 'window' && !hidden)
+			row.key === 'routing'
+				? `run ${providerCli[row.provider]} through tokenmaxx`
+				: row.key === 'auto'
+					? 'rotate before an account runs out'
+					: row.key === 'threshold'
+						? 'switch when the fullest window hits this'
+						: row.key === 'dwell'
+							? 'min wait between switches (anti-flap)'
+							: 'show on the accounts page'
+		const on =
+			(row.key === 'routing' && routed) ||
+			(row.key === 'auto' && (policy?.enabled ?? false)) ||
+			(row.key === 'window' && !hidden)
 		const valueColor =
-			row.key === 'auto' || row.key === 'window' ? (on ? ctx.theme.good : ctx.theme.dim) : ctx.theme.fg
+			row.key === 'routing'
+				? routed
+					? ctx.theme.good
+					: ctx.theme.warn
+				: row.key === 'auto' || row.key === 'window'
+					? on
+						? ctx.theme.good
+						: ctx.theme.dim
+					: ctx.theme.fg
 		return Box(
 			{
 				backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
@@ -752,16 +774,19 @@ function settingsPanel(
 			Text({ content: pad(hint, 40), fg: rgb(ctx.theme.faint) })
 		)
 	})
+	const routed = ctx.routing[provider]
 	const auto = policy?.enabled ? `⟳ auto ${policy.thresholdPercent}%` : 'auto off'
 	return Box(
 		{
 			border: true,
-			borderColor: rgb(ctx.theme.border),
+			borderColor: rgb(routed ? ctx.theme.border : ctx.theme.warn),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
 			flexShrink: 0,
-			title: ` ${providerTitles[provider]}   ${auto} `,
-			titleColor: rgb(policy?.enabled ? ctx.theme.good : ctx.theme.dim),
+			title: routed
+				? ` ${providerTitles[provider]}   ${auto} `
+				: ` ${providerTitles[provider]}   ✗ off `,
+			titleColor: rgb(!routed ? ctx.theme.warn : policy?.enabled ? ctx.theme.good : ctx.theme.dim),
 			width: '100%'
 		},
 		...lines
@@ -774,13 +799,7 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 		[
 			settingsPanel(ctx, snapshot, rows, 'openai', selected),
 			settingsPanel(ctx, snapshot, rows, 'anthropic', selected),
-			Box(
-				{ flexDirection: 'row' },
-				Text({
-					content: 'routing on/off lives on the accounts page · changes apply live',
-					fg: rgb(ctx.theme.faint)
-				})
-			)
+			Box({ flexDirection: 'row' }, Text({ content: 'changes apply live', fg: rgb(ctx.theme.faint) }))
 		],
 		78
 	)
@@ -832,7 +851,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const footer =
 		state.tab === 'accounts'
-			? '↑↓ select · ⏎ switch/add · r routing · a auto · tab next'
+			? '↑↓ select · ⏎ switch/add · a auto · tab next'
 			: state.tab === 'analytics'
 				? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
 				: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
@@ -1103,6 +1122,10 @@ export async function runTuiDashboard(
 			return
 		}
 		const policy = currentPolicy(row.provider)
+		if (row.key === 'routing') {
+			toggleRouting(row.provider)
+			return
+		}
 		if (row.key === 'auto') {
 			toggleAuto(row.provider)
 			return
@@ -1177,7 +1200,7 @@ export async function runTuiDashboard(
 				} else if (key.name === 'tab') {
 					state.tab = TABS[(TABS.indexOf(state.tab) + 1) % TABS.length] as Tab
 					paint()
-				} else if (key.name === 'r' && live && state.tab !== 'accounts') {
+				} else if (key.name === 'r' && live) {
 					void reload(true)
 				} else if (state.tab === 'analytics') {
 					// In the metrics table ↑↓ scroll the model list; ←→ always move
@@ -1224,11 +1247,6 @@ export async function runTuiDashboard(
 					paint()
 				} else if (key.name === 'return' && live) {
 					switchToSelected()
-				} else if (key.name === 'r' && live) {
-					const row = rows[state.selected]
-					if (row !== undefined) {
-						toggleRouting(row.provider)
-					}
 				} else if (key.name === 'a' && live) {
 					const row = rows[state.selected]
 					if (row !== undefined && row.accountId !== ADD_ROW) {
