@@ -594,12 +594,18 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 		)
 	)
 	if (ctx.tier === 'wide') {
+		// The dollar cost of each token class, aligned under its own column so it
+		// reads straight down from the token counts.
 		body.push(
-			centered(
-				Text({
-					content: `priced: input ${moneyUsd(tokens.costInput)}  ·  output ${moneyUsd(tokens.costOutput)}  ·  cache ${moneyUsd(tokens.costCached + tokens.costCacheCreation)}`,
-					fg: rgb(ctx.theme.faint)
-				})
+			metricRow(
+				{ color: ctx.theme.faint, text: '$ by class' },
+				[
+					{ color: ctx.theme.faint, text: moneyUsd(tokens.costInput) },
+					{ color: ctx.theme.faint, text: moneyUsd(tokens.costOutput) },
+					{ color: ctx.theme.faint, text: moneyUsd(tokens.costCached + tokens.costCacheCreation) },
+					{ color: ctx.theme.faint, text: moneyUsd(tokens.costUsd) }
+				],
+				nameWidth
 			)
 		)
 	}
