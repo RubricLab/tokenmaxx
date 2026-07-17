@@ -117,8 +117,12 @@ const CONTENT_MAX = 126
 
 // Fixed meter widths per tier make each row a known width, so the panel can be
 // sized to hug its content instead of stretching to a fixed cap and leaving a
-// right gutter.
-const BAR: Record<Tier, number> = { compact: 16, regular: 11, wide: 14 }
+// right gutter. Compact keeps two columns visible by using a slim bar.
+const BAR: Record<Tier, number> = { compact: 9, regular: 11, wide: 14 }
+// Windows shown per row: two even at the smallest size, three only when wide.
+function windowsShown(ctx: Ctx): number {
+	return ctx.tier === 'wide' ? 3 : 2
+}
 const FOCUSED_BAR = 28
 // A window cell is ` name ` + `bar pct` + ` ↻reset ` — its exact column width.
 function windowCellWidth(tier: Tier, window: UsageWindow): number {
@@ -143,17 +147,12 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 					: visible
 		const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
 		const base = 3 + (labels - 2) + (tag === null ? 0 : tag.length + 1) + 2
-		let body = 0
-		if (ctx.view !== 'all') {
-			body = 1 + FOCUSED_BAR + 6 + 8
-		} else if (ctx.tier === 'compact') {
-			const binding = bindingWindow(focused)
-			body = binding === undefined ? 0 : windowCellWidth('compact', binding)
-		} else {
-			body = focused
-				.slice(0, ctx.tier === 'wide' ? 3 : 2)
-				.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
-		}
+		const body =
+			ctx.view !== 'all'
+				? 1 + FOCUSED_BAR + 6 + 8
+				: focused
+						.slice(0, windowsShown(ctx))
+						.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
 		widest = Math.max(widest, base + body)
 	}
 	return Math.min(CONTENT_MAX, ctx.columns - 2, widest)
@@ -306,15 +305,10 @@ function accountLine(
 				: visible
 	if (focused.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
-	} else if (ctx.view === 'all' && ctx.tier === 'compact') {
-		// Just the fullest window, with its reset.
-		const window = bindingWindow(focused)
-		if (window !== undefined) {
-			children.push(...windowCell(ctx, window, BAR.compact, true))
-		}
 	} else if (ctx.view === 'all') {
-		// 2 windows at regular, up to 3 at wide — fixed meter widths so rows line up.
-		const shown = focused.slice(0, ctx.tier === 'wide' ? 3 : 2)
+		// Two windows even at the smallest size, three when wide — fixed meter
+		// widths so the columns line up straight down the panel.
+		const shown = focused.slice(0, windowsShown(ctx))
 		for (const window of shown) {
 			children.push(...windowCell(ctx, window, BAR[ctx.tier], true))
 		}
