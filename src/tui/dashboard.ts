@@ -325,7 +325,7 @@ function providerPanel(
 	// border, and a banner pointing at settings, since
 	// an un-routed provider silently does nothing.
 	const routed = ctx.routing[provider]
-	const auto = state?.policy.enabled ? `⟳ auto ${state.policy.thresholdPercent}%` : 'auto off'
+	const auto = state?.policy.enabled ? `auto ${state.policy.thresholdPercent}%` : 'auto off'
 	const title = routed
 		? ` ${providerTitles[provider]}   ● ${auto} `
 		: ` ${providerTitles[provider]}   ✗ off `
