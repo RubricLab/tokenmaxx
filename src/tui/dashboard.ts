@@ -808,7 +808,7 @@ export async function runTuiDashboard(
 				{
 					columns: process.stdout.columns ?? 80,
 					now: live ? Date.now() : simulatedNow,
-					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 40 * 60_000 : 120_000,
+					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 55 * 60_000 : 120_000,
 					theme: currentTheme(),
 					view: state.view
 				},
