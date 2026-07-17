@@ -1,3 +1,4 @@
+- [2026-07-17] [routing as a loud on/off on accounts; clearer metrics + settings; aligned resets](https://github.com/RubricLab/tokenmaxx/commit/28539c21d8eb42b5dc79f767cc9c9dda9b15bed2)
 - [2026-07-17] [cap account rows to the content width so wide terminals don't wrap](https://github.com/RubricLab/tokenmaxx/commit/09fe360558968c95db3c33f8ff9ac74a5988a67e)
 - [2026-07-17] [never strand on daemon restart: shutdown watchdog + force-kill fallback](https://github.com/RubricLab/tokenmaxx/commit/108b5a366f4df3b4b4e9954abcdc54d1e62b746b)
 - [2026-07-17] [stagger blitz depletion so codex and claude run out on distinct clocks](https://github.com/RubricLab/tokenmaxx/commit/707f259b426ad37f2ea1fb9f48cda9df388df61d)

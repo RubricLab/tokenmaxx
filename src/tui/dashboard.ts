@@ -90,9 +90,9 @@ function labelWidth(ctx: Ctx): number {
 	return ctx.tier === 'compact' ? 15 : ctx.tier === 'regular' ? 22 : 26
 }
 
-// The single centering + max-width wrapper. Content sits in a column that is
-// centered at any terminal width and grows with it up to `max` — so more space
-// genuinely means more room, never a left-hugged block.
+// The single centering + max-width wrapper. Content sits in a fixed-width column
+// flanked by equal growing spacers, so it is genuinely centered at any terminal
+// width and grows with it up to `max` — never left-hugged with a right gutter.
 function column(
 	ctx: Ctx,
 	children: (ReturnType<typeof Box> | ReturnType<typeof Text>)[],
@@ -100,8 +100,10 @@ function column(
 ) {
 	const width = Math.max(1, Math.min(max, ctx.columns - 2))
 	return Box(
-		{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
-		Box({ flexDirection: 'column', gap: 1, width }, ...children)
+		{ flexDirection: 'row', width: '100%' },
+		Box({ flexGrow: 1, flexShrink: 1 }),
+		Box({ flexDirection: 'column', flexShrink: 0, gap: 1, width }, ...children),
+		Box({ flexGrow: 1, flexShrink: 1 })
 	)
 }
 
@@ -177,8 +179,9 @@ function bindingWindow(windows: readonly UsageWindow[]): UsageWindow | undefined
 	)
 }
 
-// One window's cell on an account row: name, bar, %, and its own reset — the
-// reset that used to hide inside the expand pane now lives inline.
+// One window's cell on an account row: name, bar, %, and its own reset. The
+// name and reset are fixed-width so every window column lines up down the panel
+// — a missing or longer reset never shifts the cells to its right.
 function windowCell(ctx: Ctx, window: UsageWindow, barWidth: number, withReset: boolean) {
 	const reset = withReset ? shortReset(window.resetAt, ctx.now) : null
 	return [
@@ -187,7 +190,7 @@ function windowCell(ctx: Ctx, window: UsageWindow, barWidth: number, withReset: 
 			content: `${meter(window.usedPercent, barWidth)} ${percentLabel(window.usedPercent)}`,
 			fg: rgb(pressureColor(ctx.theme, window.usedPercent))
 		}),
-		Text({ content: reset === null ? '' : ` ↻${reset}`, fg: rgb(ctx.theme.faint) })
+		Text({ content: (reset === null ? '' : ` ↻${reset}`).padEnd(6), fg: rgb(ctx.theme.faint) })
 	]
 }
 
@@ -265,9 +268,7 @@ function accountLine(
 		// stays modest — wide unicode markers eat into the true column budget.
 		const window = bindingWindow(focused)
 		if (window !== undefined) {
-			children.push(
-				...windowCell(ctx, window, Math.max(8, Math.min(20, cols - labels - 26)), true)
-			)
+			children.push(...windowCell(ctx, window, Math.max(8, Math.min(20, cols - labels - 26)), true))
 		}
 	} else if (ctx.view === 'all') {
 		// Show 2 windows at regular, all at wide, each with its reset. Bars widen
@@ -346,34 +347,47 @@ function providerPanel(
 			switched
 		)
 	})
-	// Title carries routing state (the onboarding gate) plus the auto/switch
-	// status, so the panel answers "is this wired up?" at a glance.
+	// Routing is the on/off switch for the whole provider, so it leads the title.
+	// Off is loud — the border and title go warn and a banner explains it, since
+	// an un-routed provider silently does nothing.
 	const routed = ctx.routing[provider]
-	const routeTag = routed ? '' : ' · not routed'
 	const auto = state?.policy.enabled ? `⟳ auto ${state.policy.thresholdPercent}%` : 'auto off'
 	const activeLabel = snapshot.accounts.find(a => a.id === state?.activeAccountId)?.label
 	const title = switched
 		? ` ${providerTitles[provider]}   ⟳ switched → ${activeLabel ?? '?'} `
-		: ` ${providerTitles[provider]}   ${auto}${routeTag} `
+		: routed
+			? ` ${providerTitles[provider]}   ● routing on · ${auto} `
+			: ` ${providerTitles[provider]}   ◯ ROUTING OFF — press r to turn on `
+	const titleColor = switched
+		? ctx.theme.warn
+		: !routed
+			? ctx.theme.warn
+			: state?.policy.enabled
+				? ctx.theme.good
+				: ctx.theme.dim
+	const banner = routed
+		? []
+		: [
+				Box(
+					{ flexDirection: 'row', width: '100%' },
+					Text({
+						content: ` native ${providerCli[provider]} is not routed through tokenmaxx — nothing here is active yet`,
+						fg: rgb(ctx.theme.warn)
+					})
+				)
+			]
 	return Box(
 		{
 			border: true,
-			borderColor: rgb(switched ? ctx.theme.warn : !routed ? ctx.theme.faint : ctx.theme.border),
+			borderColor: rgb(switched || !routed ? ctx.theme.warn : ctx.theme.border),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
 			flexShrink: 0,
 			title,
-			titleColor: rgb(
-				switched
-					? ctx.theme.warn
-					: !routed
-						? ctx.theme.dim
-						: state?.policy.enabled
-							? ctx.theme.good
-							: ctx.theme.dim
-			),
+			titleColor: rgb(titleColor),
 			width: '100%'
 		},
+		...banner,
 		...lines
 	)
 }
@@ -495,7 +509,6 @@ function throughputChart(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe,
 // A metrics row: a name and right-aligned numeric cells, all fixed width so
 // every row aligns into a real grid even though each is independently centered.
 function metricRow(
-	ctx: Ctx,
 	name: { text: string; color: string; bold?: boolean },
 	cells: { text: string; color: string }[],
 	nameWidth: number
@@ -510,15 +523,24 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 	const body: ReturnType<typeof Box>[] = []
 	const nameWidth = ctx.tier === 'compact' ? 16 : 20
 	const num = (value: number) => compactNumber(value)
+	const faint = (text: string) => ({ color: ctx.theme.faint, text })
+	// A single faint header names the columns, so the numbers can stay clean —
+	// no per-cell glyphs to decode.
+	body.push(
+		metricRow(
+			{ color: ctx.theme.faint, text: 'tokens by provider' },
+			[faint('in'), faint('out'), faint('cache'), faint('value')],
+			nameWidth
+		)
+	)
 	for (const provider of tokens.byProvider) {
 		body.push(
 			metricRow(
-				ctx,
 				{ color: ctx.theme.fg, text: providerShort[provider.provider] },
 				[
-					{ color: ctx.theme.dim, text: `↑${num(provider.input)}` },
-					{ color: ctx.theme.dim, text: `↓${num(provider.output)}` },
-					{ color: ctx.theme.dim, text: `⛁${num(provider.cached + provider.cacheCreation)}` },
+					{ color: ctx.theme.dim, text: num(provider.input) },
+					{ color: ctx.theme.dim, text: num(provider.output) },
+					{ color: ctx.theme.dim, text: num(provider.cached + provider.cacheCreation) },
 					{ color: ctx.theme.good, text: moneyUsd(provider.costUsd) }
 				],
 				nameWidth
@@ -526,21 +548,12 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 		)
 	}
 	body.push(
-		centered(
-			Text({
-				content: '─'.repeat(Math.max(10, Math.min(nameWidth + 40, ctx.columns - 10))),
-				fg: rgb(ctx.theme.border)
-			})
-		)
-	)
-	body.push(
 		metricRow(
-			ctx,
-			{ bold: true, color: ctx.theme.fg, text: 'Σ total' },
+			{ bold: true, color: ctx.theme.fg, text: 'total' },
 			[
-				{ color: ctx.theme.fg, text: `↑${num(tokens.totalInput)}` },
-				{ color: ctx.theme.fg, text: `↓${num(tokens.totalOutput)}` },
-				{ color: ctx.theme.fg, text: `⛁${num(tokens.totalCached + tokens.totalCacheCreation)}` },
+				{ color: ctx.theme.fg, text: num(tokens.totalInput) },
+				{ color: ctx.theme.fg, text: num(tokens.totalOutput) },
+				{ color: ctx.theme.fg, text: num(tokens.totalCached + tokens.totalCacheCreation) },
 				{ color: ctx.theme.good, text: moneyUsd(tokens.costUsd) }
 			],
 			nameWidth
@@ -550,21 +563,27 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 		body.push(
 			centered(
 				Text({
-					content: `input ${moneyUsd(tokens.costInput)}  ·  output ${moneyUsd(tokens.costOutput)}  ·  cache ${moneyUsd(tokens.costCached + tokens.costCacheCreation)}`,
+					content: `priced: input ${moneyUsd(tokens.costInput)}  ·  output ${moneyUsd(tokens.costOutput)}  ·  cache ${moneyUsd(tokens.costCached + tokens.costCacheCreation)}`,
 					fg: rgb(ctx.theme.faint)
 				})
 			)
 		)
 	}
-	// Per-model, scrollable — no header row, the units live in the numbers.
+	// Per-model, scrollable, under its own faint header.
 	body.push(blankRow(ctx))
-	const maxRows = Math.max(3, ctx.rows - 17)
+	body.push(
+		metricRow(
+			{ color: ctx.theme.faint, text: 'by model' },
+			[faint('tokens'), faint('value')],
+			nameWidth + 9
+		)
+	)
+	const maxRows = Math.max(3, ctx.rows - 18)
 	const start = Math.max(0, Math.min(scroll, Math.max(0, tokens.models.length - maxRows)))
 	const shown = tokens.models.slice(start, start + maxRows)
 	for (const model of shown) {
 		body.push(
 			metricRow(
-				ctx,
 				{ color: ctx.theme.fg, text: model.model },
 				[
 					{ color: ctx.theme.dim, text: num(model.tokens) },
@@ -661,11 +680,12 @@ function dwellLabel(milliseconds: number): string {
 }
 
 // Settings rows are a flat list across both providers so ↑↓ walks everything.
-// The rate-limit rows are dynamic — one per window a provider actually reports —
-// so they must be derived from the snapshot, not a static table.
+// Routing lives on the accounts page now; settings tunes rotation and which
+// rate-limit windows show. The window rows are dynamic — one per window a
+// provider actually reports — so they come from the snapshot, not a static table.
 interface SettingRow {
 	provider: ProviderId
-	key: 'routing' | 'auto' | 'threshold' | 'dwell' | 'window'
+	key: 'auto' | 'threshold' | 'dwell' | 'window'
 	windowId?: string
 	windowLabel?: string
 }
@@ -687,7 +707,6 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 
 function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
 	return providerOrder.flatMap(provider => [
-		{ key: 'routing' as const, provider },
 		{ key: 'auto' as const, provider },
 		{ key: 'threshold' as const, provider },
 		{ key: 'dwell' as const, provider },
@@ -709,7 +728,6 @@ function settingsPanel(
 ) {
 	const state = snapshot.providers.find(s => s.provider === provider)
 	const policy = state?.policy
-	const routed = ctx.routing[provider]
 	const rows = allRows.map((row, index) => ({ index, row })).filter(e => e.row.provider === provider)
 	const lines = rows.map(entry => {
 		const { row } = entry
@@ -717,51 +735,36 @@ function settingsPanel(
 		const hidden =
 			row.windowId !== undefined && (policy?.hiddenWindowIds ?? []).includes(row.windowId)
 		const label =
-			row.key === 'routing'
-				? 'native routing'
-				: row.key === 'auto'
-					? 'auto-rotate'
-					: row.key === 'threshold'
-						? 'switch threshold'
-						: row.key === 'dwell'
-							? 'minimum dwell'
-							: `show ${shortWindow(row.windowLabel ?? '')}`
+			row.key === 'auto'
+				? 'auto-rotate'
+				: row.key === 'threshold'
+					? 'switch at'
+					: row.key === 'dwell'
+						? 'cooldown'
+						: `${shortWindow(row.windowLabel ?? '')} limit`
 		const value =
-			row.key === 'routing'
-				? routed
+			row.key === 'auto'
+				? policy?.enabled
 					? 'on'
 					: 'off'
-				: row.key === 'auto'
-					? policy?.enabled
-						? 'on'
-						: 'off'
-					: row.key === 'threshold'
-						? `${policy?.thresholdPercent ?? 90}%`
-						: row.key === 'dwell'
-							? dwellLabel(policy?.minimumDwellMilliseconds ?? 300_000)
-							: hidden
-								? 'hidden'
-								: 'shown'
+				: row.key === 'threshold'
+					? `${policy?.thresholdPercent ?? 90}%`
+					: row.key === 'dwell'
+						? dwellLabel(policy?.minimumDwellMilliseconds ?? 300_000)
+						: hidden
+							? 'hidden'
+							: 'shown'
 		const hint =
-			row.key === 'routing'
-				? `route native ${providerCli[provider]} through tokenmaxx`
-				: row.key === 'auto'
-					? 'rotate off an account before it runs out'
-					: row.key === 'threshold'
-						? 'switch when the fullest window reaches this'
-						: row.key === 'dwell'
-							? 'hold a threshold switch this long (hard limits ignore it)'
-							: `${row.windowLabel ?? 'this window'} on the accounts view`
-		const on =
-			(row.key === 'routing' && routed) ||
-			(row.key === 'auto' && (policy?.enabled ?? false)) ||
-			(row.key === 'window' && !hidden)
+			row.key === 'auto'
+				? 'rotate before an account runs out'
+				: row.key === 'threshold'
+					? 'switch when the fullest window hits this'
+					: row.key === 'dwell'
+						? 'min wait between switches (anti-flap)'
+						: 'show on the accounts page'
+		const on = (row.key === 'auto' && (policy?.enabled ?? false)) || (row.key === 'window' && !hidden)
 		const valueColor =
-			row.key === 'routing' || row.key === 'auto' || row.key === 'window'
-				? on
-					? ctx.theme.good
-					: ctx.theme.dim
-				: ctx.theme.fg
+			row.key === 'auto' || row.key === 'window' ? (on ? ctx.theme.good : ctx.theme.dim) : ctx.theme.fg
 		return Box(
 			{
 				backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
@@ -769,25 +772,21 @@ function settingsPanel(
 				width: '100%'
 			},
 			Text({ content: isSelected ? ' ▸ ' : '   ', fg: rgb(ctx.theme.accent) }),
-			Text({ content: pad(label, 18), fg: rgb(isSelected ? ctx.theme.fg : ctx.theme.dim) }),
+			Text({ content: pad(label, 12), fg: rgb(isSelected ? ctx.theme.fg : ctx.theme.dim) }),
 			Text({ attributes: 1, content: pad(value, 7), fg: rgb(valueColor) }),
-			Text({ content: hint, fg: rgb(ctx.theme.faint) })
+			Text({ content: pad(hint, 40), fg: rgb(ctx.theme.faint) })
 		)
 	})
-	const status = !routed
-		? 'not routed'
-		: policy?.enabled
-			? `⟳ auto ${policy.thresholdPercent}%`
-			: 'routed'
+	const auto = policy?.enabled ? `⟳ auto ${policy.thresholdPercent}%` : 'auto off'
 	return Box(
 		{
 			border: true,
-			borderColor: rgb(routed ? ctx.theme.border : ctx.theme.faint),
+			borderColor: rgb(ctx.theme.border),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
 			flexShrink: 0,
-			title: ` ${providerTitles[provider]}   ${status} `,
-			titleColor: rgb(!routed ? ctx.theme.dim : policy?.enabled ? ctx.theme.good : ctx.theme.dim),
+			title: ` ${providerTitles[provider]}   ${auto} `,
+			titleColor: rgb(policy?.enabled ? ctx.theme.good : ctx.theme.dim),
 			width: '100%'
 		},
 		...lines
@@ -803,12 +802,12 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 			Box(
 				{ flexDirection: 'row' },
 				Text({
-					content: 'add accounts, then turn routing on. switches land on the next request — no restart.',
+					content: 'routing on/off lives on the accounts page · changes apply live',
 					fg: rgb(ctx.theme.faint)
 				})
 			)
 		],
-		96
+		78
 	)
 }
 
@@ -856,7 +855,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const footer =
 		state.tab === 'accounts'
-			? '↑↓ select · ⏎ switch/add · v view · a auto · tab next'
+			? '↑↓ select · ⏎ switch/add · r route on/off · a auto · v view · tab next'
 			: state.tab === 'analytics'
 				? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
 				: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
@@ -874,7 +873,10 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	children.push(
 		Box(
 			{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
-			Box({ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) }, tabBar(ctx, state.tab))
+			Box(
+				{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
+				tabBar(ctx, state.tab)
+			)
 		)
 	)
 	if (state.updateAvailable !== null && !state.updateDismissed) {
@@ -1114,17 +1116,18 @@ export async function runTuiDashboard(
 		applyPolicy(provider, { hiddenWindowIds: next }, 'rate-limit view…')
 	}
 
+	// Routing is a config-file change owned by the CLI process, so it's handed
+	// out as an action rather than an in-place IPC call.
+	const toggleRouting = (provider: ProviderId) => {
+		finish({ enable: !options.routing[provider], kind: 'routing', provider })
+	}
+
 	const adjustSetting = (delta: number) => {
 		const row = buildSettingRows(analytics.snapshot)[state.settingsSelected]
 		if (row === undefined) {
 			return
 		}
 		const policy = currentPolicy(row.provider)
-		if (row.key === 'routing') {
-			// Routing is a config-file change done by the CLI process; hand it out.
-			finish({ enable: !options.routing[row.provider], kind: 'routing', provider: row.provider })
-			return
-		}
 		if (row.key === 'auto') {
 			toggleAuto(row.provider)
 			return
@@ -1202,7 +1205,7 @@ export async function runTuiDashboard(
 				} else if (key.name === 'tab') {
 					state.tab = TABS[(TABS.indexOf(state.tab) + 1) % TABS.length] as Tab
 					paint()
-				} else if (key.name === 'r' && live) {
+				} else if (key.name === 'r' && live && state.tab !== 'accounts') {
 					void reload(true)
 				} else if (state.tab === 'analytics') {
 					// In the metrics table ↑↓ scroll the model list; ←→ always move
@@ -1249,6 +1252,11 @@ export async function runTuiDashboard(
 					paint()
 				} else if (key.name === 'return' && live) {
 					switchToSelected()
+				} else if (key.name === 'r' && live) {
+					const row = rows[state.selected]
+					if (row !== undefined) {
+						toggleRouting(row.provider)
+					}
 				} else if (key.name === 'a' && live) {
 					const row = rows[state.selected]
 					if (row !== undefined && row.accountId !== ADD_ROW) {
