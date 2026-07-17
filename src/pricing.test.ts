@@ -19,19 +19,16 @@ describe('priceFor', () => {
 		const opus = priceFor('claude-opus-4-8')
 		expect(opus.cacheReadPerMTok).toBeCloseTo(opus.inputPerMTok * 0.1)
 		expect(opus.cacheWritePerMTok).toBeCloseTo(opus.inputPerMTok * 1.25)
-		// OpenAI prompt-cache writes are free.
 		expect(priceFor('gpt-5.6-sol').cacheWritePerMTok).toBe(0)
 	})
 })
 
 describe('costUsd', () => {
 	test('prices each token class at its own rate', () => {
-		// 1M of each class on Fable 5: 10 + 50 + 1 + 12.5
 		expect(costUsd('claude-fable-5', 1_000_000, 1_000_000, 1_000_000, 1_000_000)).toBeCloseTo(73.5)
 	})
 
 	test('cache-heavy traffic is dominated by the cache-read rate', () => {
-		// The realistic Claude Code shape: tiny input, huge cache reads.
 		const cost = costUsd('claude-fable-5', 10_000, 5_000, 10_000_000, 100_000)
 		expect(cost).toBeCloseTo(0.1 + 0.25 + 10 + 1.25, 5)
 	})

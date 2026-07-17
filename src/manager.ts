@@ -1,6 +1,9 @@
+import { claudeUpstream, migrateClaudeAccount, probeClaude, removeClaudeProfile } from './claude.ts'
+import { codexUpstream, probeCodex } from './codex.ts'
 import {
 	type Account,
 	AutomationPolicySchema,
+	type FetchImplementation,
 	type ProviderId,
 	type ProviderState,
 	SwitchRecordSchema,
@@ -9,16 +12,15 @@ import {
 	UsageSnapshotSchema,
 	type UsageWindow
 } from './domain.ts'
-import { ApplicationError, errorMessage } from './errors.ts'
-import type { FetchImplementation } from './http.ts'
+import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
 import type { ApplicationPaths } from './paths.ts'
 import { costUsd } from './pricing.ts'
-import { migrateClaudeAccount, removeClaudeProfile } from './providers/claude/auth.ts'
-import { AnthropicProviderAdapter } from './providers/claude/provider.ts'
-import { OpenAiProviderAdapter } from './providers/codex/provider.ts'
-import type { ProviderAdapter } from './providers/provider.ts'
-import { type ProxyLimitEvent, type RunningProxy, startProxy } from './proxy.ts'
-import { createRuntimeCredentialSource } from './runtime-source.ts'
+import {
+	type ProxyLimitEvent,
+	type RunningProxy,
+	startProxy,
+	type UpstreamInjection
+} from './proxy.ts'
 import { selectRotation } from './selection.ts'
 import type { StateStore, TokenTimeframeAggregate } from './storage.ts'
 import type { CredentialVault } from './vault.ts'
@@ -47,8 +49,6 @@ function addInto(target: TokenBreakdownAccumulator, entry: TokenBreakdownAccumul
 
 function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe {
 	const grand = emptyBreakdown()
-	// costUsd is linear per token class, so a class's dollar share is just the
-	// same call with the other classes zeroed — no second price table needed.
 	let costInput = 0
 	let costOutput = 0
 	let costCached = 0
@@ -98,14 +98,9 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 	}
 }
 
-export interface ManagerDependencies {
+interface ManagerDependencies {
 	fetchImplementation: FetchImplementation
 	now(): Date
-}
-
-export interface ProviderAdapters {
-	openai: ProviderAdapter
-	anthropic: ProviderAdapter
 }
 
 const defaultDependencies: ManagerDependencies = {
@@ -136,7 +131,6 @@ export class AccountManager {
 	readonly #store: StateStore
 	readonly #paths: ApplicationPaths
 	readonly #dependencies: ManagerDependencies
-	readonly #adapters: ProviderAdapters
 	readonly #vault: CredentialVault
 	readonly #providerOperationTails = new Map<ProviderId, Promise<void>>()
 	readonly #probeCooldownUntil = new Map<string, number>()
@@ -153,47 +147,56 @@ export class AccountManager {
 		store: StateStore
 		vault: CredentialVault
 		dependencies?: Partial<ManagerDependencies>
-		adapters?: ProviderAdapters
 	}) {
 		this.#store = input.store
 		this.#paths = input.paths
 		this.#vault = input.vault
 		this.#dependencies = { ...defaultDependencies, ...input.dependencies }
-		this.#adapters =
-			input.adapters ??
-			({
-				anthropic: new AnthropicProviderAdapter({
-					dependencies: this.#dependencies,
-					vault: input.vault
-				}),
-				openai: new OpenAiProviderAdapter({
-					dependencies: this.#dependencies,
-					vault: input.vault
-				})
-			} satisfies ProviderAdapters)
-		if (
-			this.#adapters.openai.provider !== 'openai' ||
-			this.#adapters.anthropic.provider !== 'anthropic'
-		) {
-			throw new ApplicationError(
-				'PROVIDER_MISMATCH',
-				'Injected provider adapters do not match their registry keys'
-			)
-		}
 	}
 
 	public get proxyPort(): number | null {
 		return this.#proxy?.port ?? null
 	}
 
+	private async upstreamInjection(
+		provider: ProviderId,
+		forceRefresh: boolean
+	): Promise<UpstreamInjection | null> {
+		const account = this.activeAccount(provider)
+		if (account === null) {
+			return null
+		}
+		const shared = {
+			fetchImplementation: this.#dependencies.fetchImplementation,
+			forceRefresh,
+			now: () => this.#dependencies.now().getTime(),
+			vault: this.#vault
+		}
+		try {
+			return account.provider === 'openai'
+				? await codexUpstream({ account, ...shared })
+				: await claudeUpstream({ account, ...shared })
+		} catch (error) {
+			const cause = error instanceof Error ? error : undefined
+			if (isNetworkFailure(error)) {
+				throw new ApplicationError(
+					'UPSTREAM_UNREACHABLE',
+					`could not refresh ${account.label} credentials: ${errorMessage(error)}`,
+					{ cause }
+				)
+			}
+			const cli = provider === 'openai' ? 'codex' : 'claude'
+			throw new ApplicationError(
+				'ACTIVE_CREDENTIAL_UNUSABLE',
+				`${account.label} needs re-login — run: tokenmaxx login ${cli}`,
+				{ cause }
+			)
+		}
+	}
+
 	public async start(): Promise<void> {
 		this.#stopping = false
 		await this.migrateClaudeProfiles()
-		const source = createRuntimeCredentialSource({
-			fetchImplementation: this.#dependencies.fetchImplementation,
-			store: { activeAccount: provider => this.activeAccount(provider) },
-			vault: this.#vault
-		})
 		this.#proxy = startProxy({
 			observeLimits: event => this.noteRateLimitObservation(event),
 			port: this.#paths.proxyPort,
@@ -202,7 +205,12 @@ export class AccountManager {
 					this.#store.recordTokenEvent(event)
 				} catch {}
 			},
-			source
+			source: {
+				refresh: async provider => {
+					await this.upstreamInjection(provider, true)
+				},
+				resolve: provider => this.upstreamInjection(provider, false)
+			}
 		})
 		void this.refreshAll().catch(() => undefined)
 		this.#monitor = setInterval(() => {
@@ -349,7 +357,15 @@ export class AccountManager {
 	}
 
 	private async probeAndSave(account: Account): Promise<void> {
-		const result = await this.adapter(account.provider).probe(account)
+		const shared = {
+			fetchImplementation: this.#dependencies.fetchImplementation,
+			now: () => this.#dependencies.now(),
+			vault: this.#vault
+		}
+		const result =
+			account.provider === 'anthropic'
+				? await probeClaude({ account, ...shared })
+				: await probeCodex({ account, ...shared })
 		this.#store.saveUsage(result.usage)
 		this.#store.saveAccount(result.account)
 	}
@@ -381,10 +397,6 @@ export class AccountManager {
 		})
 	}
 
-	// True while the proxy's per-response rate-limit headers are keeping this
-	// account's usage fresh. While that holds, polling the usage endpoint adds
-	// nothing — it only burns the shared rate limit that causes probe 429s on
-	// exactly the account that is busiest.
 	private headerFresh(accountId: string): boolean {
 		const snapshot = this.#store.findUsage(accountId)
 		if (snapshot === null || snapshot.source !== 'proxyResponseHeaders') {
@@ -407,8 +419,6 @@ export class AccountManager {
 				continue
 			}
 			const isActive = this.#store.findProviderState(account.provider).activeAccountId === account.id
-			// Headers cover the unified windows in real time; a slow full probe
-			// still refreshes the scoped windows headers do not carry.
 			const probeInterval = this.headerFresh(account.id) ? 10 * 60_000 : isActive ? 0 : 5 * 60_000
 			const lastStartedAt = this.#lastProbeStartedAt.get(account.id) ?? 0
 			if (this.#dependencies.now().getTime() - lastStartedAt < probeInterval) {
@@ -428,9 +438,6 @@ export class AccountManager {
 						this.#probeCooldownUntil.set(account.id, this.#dependencies.now().getTime() + cooldown)
 					}
 					const health = healthForError(error)
-					// A rate-limited probe is not a rate-limited account: while live
-					// header data flows the account is demonstrably fine, so don't
-					// flag it "limited" in the dashboard.
 					if (health === 'usageRateLimited' && this.headerFresh(account.id)) {
 						return
 					}
@@ -467,11 +474,6 @@ export class AccountManager {
 		}
 	}
 
-	// The proxy reports the rate-limit state each upstream response carries.
-	// This keeps the active account's usage fresh for free while traffic flows —
-	// exactly when the 60s poll loop is too slow and the usage endpoints start
-	// rate-limiting probes — and lets a 429 trigger rotation immediately (the
-	// proxy awaits this, then retries the failed request on the new account).
 	public async noteRateLimitObservation(event: ProxyLimitEvent): Promise<void> {
 		const account = this.#store.findAccount(event.accountId)
 		if (account === null || account.provider !== event.provider) {
@@ -483,8 +485,6 @@ export class AccountManager {
 		}
 		this.#observationSavedAt.set(event.accountId, event.at)
 		const existing = this.#store.findUsage(event.accountId)
-		// Headers only cover the unified windows; keep probe-only windows (like
-		// per-model weekly limits) so rotation never loses sight of them.
 		const windows = new Map<string, UsageWindow>(
 			(existing?.windows ?? []).map(window => [window.id, window])
 		)
@@ -580,15 +580,6 @@ export class AccountManager {
 				switchedAt: now
 			}
 		)
-	}
-
-	private adapter(provider: ProviderId): ProviderAdapter {
-		switch (provider) {
-			case 'openai':
-				return this.#adapters.openai
-			case 'anthropic':
-				return this.#adapters.anthropic
-		}
 	}
 
 	private async withProviderOperation<Result>(

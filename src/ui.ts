@@ -7,7 +7,7 @@ import type {
 	UsageWindow
 } from './domain.ts'
 
-export interface RenderOptions {
+interface RenderOptions {
 	color?: boolean
 }
 

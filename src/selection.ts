@@ -6,7 +6,7 @@ import {
 	UsageSnapshotSchema
 } from './domain.ts'
 
-export const RotationDecisionSchema = z.discriminatedUnion('rotate', [
+const RotationDecisionSchema = z.discriminatedUnion('rotate', [
 	z.object({
 		reason: z.enum(['threshold', 'hardLimit']),
 		rotate: z.literal(true),
@@ -29,9 +29,9 @@ export const RotationDecisionSchema = z.discriminatedUnion('rotate', [
 		rotate: z.literal(false)
 	})
 ])
-export type RotationDecision = z.infer<typeof RotationDecisionSchema>
+type RotationDecision = z.infer<typeof RotationDecisionSchema>
 
-export interface RotationInput {
+interface RotationInput {
 	accounts: readonly Account[]
 	usage: readonly UsageSnapshot[]
 	state: ProviderState
@@ -93,9 +93,6 @@ export function selectRotation(input: RotationInput): RotationDecision {
 	if (!activeSnapshot.hardLimitReached && activePressure < policy.thresholdPercent) {
 		return { reason: 'belowThreshold', rotate: false }
 	}
-	// Dwell prevents threshold-driven flapping. A hard-limited account is
-	// unusable right now — every request on it fails — so dwell must not pin
-	// traffic to it.
 	if (!activeSnapshot.hardLimitReached && input.state.switchedAt !== null) {
 		const dwell = input.now.getTime() - Date.parse(input.state.switchedAt)
 		if (dwell < policy.minimumDwellMilliseconds) {

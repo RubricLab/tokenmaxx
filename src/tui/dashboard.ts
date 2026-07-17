@@ -60,8 +60,6 @@ interface Row {
 	accountId: string
 }
 
-// One breakpoint set drives the whole layout: narrower shows less, wider shows
-// more, and everything stays centered in a column that grows with the terminal.
 type Tier = 'compact' | 'regular' | 'wide'
 function tierFor(columns: number): Tier {
 	return columns < 96 ? 'compact' : columns < 130 ? 'regular' : 'wide'
@@ -73,11 +71,7 @@ interface Ctx {
 	columns: number
 	rows: number
 	tier: Tier
-	// Native routing per provider, so panels can show routed / not routed and
-	// settings can toggle it.
 	routing: Record<ProviderId, boolean>
-	// How long a completed switch stays flagged. Long in fixture timelapses
-	// (simulated minutes pass per paint), short in live mode.
 	switchFlagMs: number
 }
 
@@ -85,9 +79,6 @@ function labelWidth(ctx: Ctx): number {
 	return ctx.tier === 'compact' ? 15 : ctx.tier === 'regular' ? 22 : 26
 }
 
-// The single centering + max-width wrapper. Content sits in a fixed-width column
-// flanked by equal growing spacers, so it is genuinely centered at any terminal
-// width and grows with it up to `max` — never left-hugged with a right gutter.
 function column(
 	ctx: Ctx,
 	children: (ReturnType<typeof Box> | ReturnType<typeof Text>)[],
@@ -102,29 +93,17 @@ function column(
 	)
 }
 
-// The synthetic "add an account" row id, so navigation and Enter can target it
-// like any account row.
 const ADD_ROW = '__add__'
 
-// The centered content column caps here, so account rows never sprawl the full
-// width of an ultra-wide terminal.
 const CONTENT_MAX = 126
 
-// Fixed meter widths per tier make each row a known width, so the panel can be
-// sized to hug its content instead of stretching to a fixed cap and leaving a
-// right gutter. Compact keeps two columns visible by using a slim bar.
 const BAR: Record<Tier, number> = { compact: 9, regular: 11, wide: 14 }
-// Windows shown per row: two even at the smallest size, three only when wide.
 function windowsShown(ctx: Ctx): number {
 	return ctx.tier === 'wide' ? 3 : 2
 }
-// A window cell is ` name ` + `bar pct` + ` ↻reset ` — its exact column width.
 function windowCellWidth(tier: Tier, window: UsageWindow): number {
 	return 2 + shortWindow(window.label).length + BAR[tier] + 5 + 6
 }
-// The panel content width: the widest account row plus its chrome, so both
-// provider panels share one width and the block centers cleanly with the widest
-// provider filling it exactly.
 function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 	const labels = labelWidth(ctx)
 	let widest = 46 // never narrower than a provider title with its routing tag
@@ -168,10 +147,6 @@ function orderedRows(snapshot: DashboardSnapshot): Row[] {
 	const rows: Row[] = []
 	for (const provider of providerOrder) {
 		const state = snapshot.providers.find(s => s.provider === provider)
-		// Rows sort by pressure (the account's most-used visible window), NOT
-		// active-first: a switch just moves the ● marker to another row instead of
-		// reshuffling the list. Rows trade places only when their pressures
-		// actually cross; the label tiebreak keeps equal rows from jittering.
 		const hidden = state?.policy.hiddenWindowIds ?? []
 		const pressure = (accountId: string): number => {
 			const windows = snapshot.usage.find(u => u.accountId === accountId)?.windows ?? []
@@ -186,15 +161,11 @@ function orderedRows(snapshot: DashboardSnapshot): Row[] {
 		for (const account of accounts) {
 			rows.push({ accountId: account.id, provider })
 		}
-		// A navigable "add an account" affordance closes every provider, so signing
-		// in a new account is always ⏎ away — and it is the whole panel when empty.
 		rows.push({ accountId: ADD_ROW, provider })
 	}
 	return rows
 }
 
-// Windows the operator hasn't hidden, hard limits only, ordered 5h → 7d → scoped
-// so the row always reads the same way.
 function visibleWindows(
 	windows: readonly UsageWindow[],
 	hiddenIds: readonly string[]
@@ -206,9 +177,6 @@ function visibleWindows(
 		.sort((left, right) => rank(left) - rank(right))
 }
 
-// One window's cell on an account row: name, bar, %, and its own reset. The
-// name and reset are fixed-width so every window column lines up down the panel
-// — a missing or longer reset never shifts the cells to its right.
 function windowCell(ctx: Ctx, window: UsageWindow, barWidth: number, withReset: boolean) {
 	const reset = withReset ? shortReset(window.resetAt, ctx.now) : null
 	return [
@@ -221,7 +189,6 @@ function windowCell(ctx: Ctx, window: UsageWindow, barWidth: number, withReset: 
 	]
 }
 
-// The "＋ add a Codex account" row — selectable like an account, ⏎ signs one in.
 function addAccountLine(ctx: Ctx, provider: ProviderId, isSelected: boolean, sole: boolean) {
 	const color = isSelected ? ctx.theme.accent : sole ? ctx.theme.dim : ctx.theme.faint
 	return Box(
@@ -252,8 +219,6 @@ function accountLine(
 	const badge = healthBadge(ctx.theme, account)
 	const labels = labelWidth(ctx)
 	const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
-	// A fresh switch is deliberately quiet: the ● briefly reads ⟳ on the new
-	// active row, same green, and that's the whole announcement.
 	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
 	const markerColor = isActive ? ctx.theme.good : isSelected ? ctx.theme.accent : ctx.theme.faint
 	const labelText = pad(account.label, labels - 2)
@@ -271,8 +236,6 @@ function accountLine(
 	if (visible.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
 	} else {
-		// Two windows even at the smallest size, three when wide — fixed meter
-		// widths so the columns line up straight down the panel.
 		for (const window of visible.slice(0, windowsShown(ctx))) {
 			children.push(...windowCell(ctx, window, BAR[ctx.tier], true))
 		}
@@ -321,9 +284,6 @@ function providerPanel(
 			switched
 		)
 	})
-	// On is quiet — the title just shows the auto policy. Off is loud — ✗, warn
-	// border, and a banner pointing at settings, since
-	// an un-routed provider silently does nothing.
 	const routed = ctx.routing[provider]
 	const auto = state?.policy.enabled ? `auto ${state.policy.thresholdPercent}%` : 'auto off'
 	const title = routed
@@ -398,8 +358,6 @@ function tabBar(ctx: Ctx, tab: Tab) {
 	)
 }
 
-// The analytics header: the time ranges on the left, the chart/metrics toggle
-// on the right — one row that says both "over what window" and "which view".
 function analyticsBar(ctx: Ctx, timeframe: Timeframe, view: AnalyticsView) {
 	const ranges = TIMEFRAMES.flatMap((option, index) => [
 		...(index === 0 ? [] : [Text({ content: ' ', fg: rgb(ctx.theme.faint) })]),
@@ -424,8 +382,6 @@ function analyticsBar(ctx: Ctx, timeframe: Timeframe, view: AnalyticsView) {
 	)
 }
 
-// One stat: dim label, bright bold value, a wide fixed gutter. The metrics
-// read as three calm columns instead of a run-on line.
 function stat(ctx: Ctx, label: string, value: string, valueColor?: string) {
 	return [
 		Text({ content: `${label} `, fg: rgb(ctx.theme.dim) }),
@@ -475,8 +431,6 @@ function throughputChart(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe,
 	return body
 }
 
-// A metrics row: a name and right-aligned numeric cells, all fixed width so
-// every row aligns into a real grid even though each is independently centered.
 function metricRow(
 	name: { text: string; color: string; bold?: boolean },
 	cells: { text: string; color: string }[],
@@ -493,8 +447,6 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 	const nameWidth = ctx.tier === 'compact' ? 16 : 20
 	const num = (value: number) => compactNumber(value)
 	const faint = (text: string) => ({ color: ctx.theme.faint, text })
-	// A single faint header names the columns, so the numbers can stay clean —
-	// no per-cell glyphs to decode.
 	body.push(
 		metricRow(
 			{ color: ctx.theme.faint, text: 'tokens by provider' },
@@ -529,8 +481,6 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 		)
 	)
 	if (ctx.tier === 'wide') {
-		// The dollar cost of each token class, aligned under its own column so it
-		// reads straight down from the token counts.
 		body.push(
 			metricRow(
 				{ color: ctx.theme.faint, text: '$ by class' },
@@ -544,7 +494,6 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 			)
 		)
 	}
-	// Per-model, scrollable, under its own faint header.
 	body.push(blankRow(ctx))
 	body.push(
 		metricRow(
@@ -654,11 +603,6 @@ function dwellLabel(milliseconds: number): string {
 	return minutes === 0 ? 'off' : `${minutes}m`
 }
 
-// Settings rows are a flat list across both providers so ↑↓ walks everything.
-// The first row per provider is the master on/off (is this CLI routed through
-// tokenmaxx at all), then rotation tuning, then which rate-limit windows show.
-// The window rows are dynamic — one per window a provider actually reports —
-// so they come from the snapshot, not a static table.
 interface SettingRow {
 	provider: ProviderId
 	key: 'routing' | 'auto' | 'threshold' | 'dwell' | 'window'
@@ -807,8 +751,6 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 
 function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], selected: number) {
 	const note = legend(ctx, snapshot)
-	// Both panels share the content-fit width so the block reads as one centered
-	// unit rather than a fixed slab with a right gutter.
 	const width = accountsWidth(ctx, snapshot)
 	return column(
 		ctx,
@@ -835,7 +777,7 @@ interface ViewState {
 	updateDismissed: boolean
 }
 
-export type DashboardAction =
+type DashboardAction =
 	| { kind: 'relogin'; provider: ProviderId }
 	| { kind: 'login'; provider: ProviderId }
 	| { kind: 'routing'; provider: ProviderId; enable: boolean }
@@ -927,11 +869,9 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	)
 }
 
-export interface FixtureOptions {
+interface FixtureOptions {
 	name: string
 	now: number
-	// Simulated milliseconds that pass per real millisecond. Zero freezes the
-	// clock (stills); anything above plays the scenario as a timelapse.
 	timewarp: number
 }
 
@@ -1047,7 +987,6 @@ export async function runTuiDashboard(
 		if (row === undefined) {
 			return
 		}
-		// The "＋ add an account" row signs a fresh account into this provider.
 		if (row.accountId === ADD_ROW) {
 			finish({ kind: 'login', provider: row.provider })
 			return
@@ -1110,8 +1049,6 @@ export async function runTuiDashboard(
 		applyPolicy(provider, { hiddenWindowIds: next }, 'rate-limit view…')
 	}
 
-	// Routing is a config-file change owned by the CLI process, so it's handed
-	// out as an action rather than an in-place IPC call.
 	const toggleRouting = (provider: ProviderId) => {
 		finish({ enable: !options.routing[provider], kind: 'routing', provider })
 	}
@@ -1203,8 +1140,6 @@ export async function runTuiDashboard(
 				} else if (key.name === 'r' && live) {
 					void reload(true)
 				} else if (state.tab === 'analytics') {
-					// In the metrics table ↑↓ scroll the model list; ←→ always move
-					// the time range. In the chart view every arrow moves the range.
 					if (key.name === 'left' || key.name === 'h') {
 						changeTimeframe(-1)
 					} else if (key.name === 'right' || key.name === 'l') {

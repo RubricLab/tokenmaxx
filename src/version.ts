@@ -6,7 +6,7 @@ function parts(version: string): number[] {
 	return version.split('.').map(part => Number.parseInt(part, 10) || 0)
 }
 
-export function isNewerVersion(candidate: string, current: string): boolean {
+function isNewerVersion(candidate: string, current: string): boolean {
 	const a = parts(candidate)
 	const b = parts(current)
 	for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
@@ -19,9 +19,7 @@ export function isNewerVersion(candidate: string, current: string): boolean {
 	return false
 }
 
-// The npm registry is the single source for "a newer tokenmaxx exists". Quiet
-// on any failure — an update notice is never worth breaking the dashboard for.
-export async function latestPublishedVersion(): Promise<string | null> {
+async function latestPublishedVersion(): Promise<string | null> {
 	try {
 		const response = await fetch('https://registry.npmjs.org/tokenmaxx/latest', {
 			signal: AbortSignal.timeout(1_500)

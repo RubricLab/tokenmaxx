@@ -1,19 +1,5 @@
 import type { ProviderId, UsageWindow } from './domain.ts'
 
-// Both upstreams report live rate-limit state on every response, which makes
-// the proxy the freshest possible usage source — no polling, no probe quota:
-//
-//   Anthropic  anthropic-ratelimit-unified-5h-utilization: 0.06   (fraction)
-//              anthropic-ratelimit-unified-5h-reset: 1784259000   (unix s)
-//              anthropic-ratelimit-unified-status: allowed | allowed_warning | rejected
-//   Codex      x-codex-primary-used-percent: 18                   (percent)
-//              x-codex-primary-window-minutes: 10080
-//              x-codex-primary-reset-at: 1784780264               (unix s)
-//              x-codex-<feature>-primary-used-percent: …          (additional limits)
-//
-// Window ids must match the ones the usage-endpoint probes produce so history
-// and rotation see one continuous series per window.
-
 export interface RateLimitObservation {
 	limited: boolean
 	windows: UsageWindow[]
@@ -88,15 +74,10 @@ function codexObservation(headers: Headers, status: number): RateLimitObservatio
 		if (!Number.isFinite(percent)) {
 			return
 		}
-		// The usage endpoint names additional limits with a codex_ prefix
-		// (metered_feature "codex_bengalfox") that the response headers drop
-		// (x-codex-bengalfox-…). Normalize to the endpoint's ids so both sources
-		// update the same window.
 		const feature = match[1] === undefined ? 'codex' : `codex_${match[1]}`
 		const slot = match[2] as 'primary' | 'secondary'
 		const prefix = match[1] === undefined ? '' : `${match[1]}-`
 		const minutes = Number(headers.get(`x-codex-${prefix}${slot}-window-minutes`))
-		// A zero-minute window is the backend's way of saying the slot is unused.
 		if (!Number.isFinite(minutes) || minutes <= 0) {
 			return
 		}

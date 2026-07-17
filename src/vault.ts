@@ -39,13 +39,13 @@ const chunkLength = 2_048
 const maximumChunkCount = 64
 const manifestPrefix = 'tokmax-chunks:'
 
-export interface KeychainCommandResult {
+interface KeychainCommandResult {
 	exitCode: number
 	stdout: string
 	stderr: string
 }
 
-export interface KeychainCommandRunner {
+interface KeychainCommandRunner {
 	run(command: readonly string[], stdinText?: string): Promise<KeychainCommandResult>
 }
 

@@ -1,6 +1,5 @@
-import type { ProviderId } from './domain.ts'
+import type { FetchImplementation, ProviderId } from './domain.ts'
 import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
-import type { FetchImplementation } from './http.ts'
 import { observeRateLimitHeaders, type RateLimitObservation } from './ratelimit.ts'
 
 export interface UpstreamInjection {
@@ -11,12 +10,12 @@ export interface UpstreamInjection {
 	stripHeaders?: readonly string[]
 }
 
-export interface ProxyCredentialSource {
+interface ProxyCredentialSource {
 	resolve(provider: ProviderId): Promise<UpstreamInjection | null>
 	refresh(provider: ProviderId): Promise<void>
 }
 
-export interface ProxyUsageEvent {
+interface ProxyUsageEvent {
 	at: number
 	provider: ProviderId
 	accountId: string
@@ -34,13 +33,10 @@ export interface ProxyLimitEvent {
 	observation: RateLimitObservation
 }
 
-export interface ProxyOptions {
+interface ProxyOptions {
 	source: ProxyCredentialSource
 	fetchImplementation?: FetchImplementation
 	record?: (event: ProxyUsageEvent) => void
-	// Called with the rate-limit state each upstream response reports. Awaited
-	// on 429 so a rotation can land before the one-shot retry below; otherwise
-	// fire-and-forget.
 	observeLimits?: (event: ProxyLimitEvent) => Promise<void> | void
 }
 
@@ -62,10 +58,6 @@ interface SseEvent {
 	response?: { model?: string; usage?: SseUsage }
 }
 
-// Reads usage out of the response body without trusting content-type: the
-// ChatGPT backend streams SSE with no content-type header at all. Any line
-// starting with "data:" is treated as an SSE event; if none ever appears the
-// whole body is parsed as one JSON document.
 export function createUsageObserver(
 	provider: ProviderId,
 	onUsage: (usage: {
@@ -107,7 +99,6 @@ export function createUsageObserver(
 				output = event.usage.output_tokens ?? output
 				saw = true
 			} else if (event.type === 'message' && event.usage) {
-				// Non-streaming Messages response: usage sits at the top level.
 				model = event.model ?? model
 				input += event.usage.input_tokens ?? 0
 				cacheCreation += event.usage.cache_creation_input_tokens ?? 0
@@ -266,11 +257,11 @@ function passThrough(response: Response): Response {
 	})
 }
 
-export interface ProxyHandler {
+interface ProxyHandler {
 	handle(request: Request): Promise<Response>
 }
 
-export function createProxyHandler(options: ProxyOptions): ProxyHandler {
+function createProxyHandler(options: ProxyOptions): ProxyHandler {
 	const doFetch = options.fetchImplementation ?? fetch
 	return {
 		async handle(request) {
@@ -374,10 +365,6 @@ export function createProxyHandler(options: ProxyOptions): ProxyHandler {
 					})
 			}
 
-			// The account hit its limit mid-flight. Tell the manager right away —
-			// that flips the account to hard-limited and lets auto-rotation commit a
-			// new active account synchronously — then retry this request once on
-			// whichever account is active now, so the client never sees the 429.
 			let reported = false
 			if (response.status === 429) {
 				const limitReport = reportLimits(served.accountId, response)

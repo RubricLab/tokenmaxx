@@ -1,11 +1,16 @@
 import { z } from 'zod'
 
+export type FetchImplementation = (
+	input: string | URL | Request,
+	initialization?: RequestInit
+) => Promise<Response>
+
 export const ProviderIdSchema = z.enum(['openai', 'anthropic'])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 export const AccountEmailSchema = z.string().trim().toLowerCase().email()
 
-export const HealthStateSchema = z.enum([
+const HealthStateSchema = z.enum([
 	'unchecked',
 	'ready',
 	'refreshDue',
@@ -17,7 +22,6 @@ export const HealthStateSchema = z.enum([
 	'usageRateLimited',
 	'disabled'
 ])
-export type HealthState = z.infer<typeof HealthStateSchema>
 
 const AccountFieldsSchema = z.object({
 	createdAt: z.iso.datetime(),
@@ -52,7 +56,7 @@ export const AccountSchema = z
 	})
 export type Account = z.infer<typeof AccountSchema>
 
-export const UsageWindowSchema = z
+const UsageWindowSchema = z
 	.object({
 		id: z.string().trim().min(1),
 		kind: z.enum(['hard', 'soft', 'spend']),
@@ -82,15 +86,17 @@ export const UsageSnapshotSchema = z.discriminatedUnion('provider', [
 ])
 export type UsageSnapshot = z.infer<typeof UsageSnapshotSchema>
 
-export const AuthorizationStateSchema = z.enum(['notConfirmed', 'confirmed'])
+export interface ProviderProbeResult {
+	account: Account
+	usage: UsageSnapshot
+}
+
+const AuthorizationStateSchema = z.enum(['notConfirmed', 'confirmed'])
 
 export const AutomationPolicySchema = z
 	.object({
 		authorization: AuthorizationStateSchema.default('notConfirmed'),
 		enabled: z.boolean(),
-		// Rate-limit windows the operator has chosen to hide from the dashboard,
-		// keyed by UsageWindow.id (display-only; never affects rotation). Defaulted
-		// so every policy persisted before this field parses unchanged.
 		hiddenWindowIds: z.array(z.string()).default([]),
 		hysteresisPercent: z.number().min(0).max(25).default(5),
 		maximumSnapshotAgeMilliseconds: z.number().int().positive().default(420_000),
@@ -120,7 +126,7 @@ export const ProviderStateSchema = z
 	})
 export type ProviderState = z.infer<typeof ProviderStateSchema>
 
-export const SwitchPhaseSchema = z.enum([
+const SwitchPhaseSchema = z.enum([
 	'prepared',
 	'draining',
 	'synchronizing',
@@ -130,7 +136,6 @@ export const SwitchPhaseSchema = z.enum([
 	'rolledBack',
 	'failed'
 ])
-export type SwitchPhase = z.infer<typeof SwitchPhaseSchema>
 
 export const SwitchRecordSchema = z
 	.object({
@@ -185,9 +190,7 @@ export const TokenEventSchema = z
 	.strict()
 export type TokenEvent = z.infer<typeof TokenEventSchema>
 
-// A model or provider row in the metrics view: token counts split by class,
-// with the dollar value already priced at each class's own rate.
-export const TokenBreakdownSchema = z
+const TokenBreakdownSchema = z
 	.object({
 		cacheCreation: z.number().nonnegative(),
 		cached: z.number().nonnegative(),
@@ -197,23 +200,18 @@ export const TokenBreakdownSchema = z
 		tokens: z.number().nonnegative()
 	})
 	.strict()
-export type TokenBreakdown = z.infer<typeof TokenBreakdownSchema>
 
-export const TokenTimeframeSchema = z
+const TokenTimeframeSchema = z
 	.object({
 		bucketMs: z.number().positive(),
 		buckets: z.array(z.number().nonnegative()),
-		// Per-provider rollup, each priced per token class, for the metrics table.
 		byProvider: z.array(TokenBreakdownSchema.extend({ provider: ProviderIdSchema }).strict()),
-		// The grand total split by cost class, so the value is auditable per type.
 		costCacheCreation: z.number().nonnegative(),
 		costCached: z.number().nonnegative(),
 		costInput: z.number().nonnegative(),
 		costOutput: z.number().nonnegative(),
 		costUsd: z.number().nonnegative(),
 		key: z.string(),
-		// Every model that saw traffic in the window, richest first — the metrics
-		// view scrolls through them rather than truncating to a top-N.
 		models: z.array(
 			TokenBreakdownSchema.extend({ model: z.string(), provider: ProviderIdSchema }).strict()
 		),
@@ -227,10 +225,8 @@ export const TokenTimeframeSchema = z
 	.strict()
 export type TokenTimeframe = z.infer<typeof TokenTimeframeSchema>
 
-export const TokenAnalyticsSchema = z
+const TokenAnalyticsSchema = z
 	.object({
-		// Trailing five-minute throughput in tokens/hour — timeframe-independent, so
-		// the "now" figure never depends on a partially-filled chart bucket.
 		nowPerHour: z.number().nonnegative(),
 		timeframes: z.array(TokenTimeframeSchema)
 	})

@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
-import { mkdir, readFile, rm, stat } from 'node:fs/promises'
+import { type FileHandle, mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { registerClaudeAccount } from './claude.ts'
+import { registerCodexAccount } from './codex.ts'
 import {
 	installClaudeConfig,
 	installCodexConfig,
@@ -11,7 +13,6 @@ import {
 	uninstallClaudeConfig,
 	uninstallCodexConfig
 } from './config-install.ts'
-import { acquireDaemonLock } from './daemon-lock.ts'
 import type { Account, ProviderId } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
 import {
@@ -26,13 +27,107 @@ import {
 } from './ipc.ts'
 import { AccountManager } from './manager.ts'
 import { type ApplicationPaths, applicationPaths, ensureApplicationPaths } from './paths.ts'
-import { runCommand } from './process.ts'
-import { registerClaudeAccount } from './providers/claude/auth.ts'
-import { registerCodexAccount } from './providers/codex/auth.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
 import { createMacOsKeychainVault } from './vault.ts'
 import { availableUpdate, VERSION } from './version.ts'
+
+const DaemonLockSchema = z
+	.object({
+		createdAt: z.iso.datetime(),
+		ownerId: z.uuid(),
+		processId: z.number().int().positive()
+	})
+	.strict()
+
+interface DaemonLock {
+	release(): Promise<void>
+}
+
+function isAlreadyExists(error: unknown): boolean {
+	return error instanceof Error && 'code' in error && Reflect.get(error, 'code') === 'EEXIST'
+}
+
+function processExists(processId: number): boolean {
+	try {
+		process.kill(processId, 0)
+		return true
+	} catch (error) {
+		return error instanceof Error && 'code' in error && Reflect.get(error, 'code') !== 'ESRCH'
+	}
+}
+
+async function readLock(lockPath: string): Promise<z.infer<typeof DaemonLockSchema> | null> {
+	try {
+		return DaemonLockSchema.parse(JSON.parse(await readFile(lockPath, 'utf8')))
+	} catch {
+		return null
+	}
+}
+
+async function ownedLock(lockPath: string, fileHandle: FileHandle): Promise<DaemonLock> {
+	const owner = DaemonLockSchema.parse({
+		createdAt: new Date().toISOString(),
+		ownerId: crypto.randomUUID(),
+		processId: process.pid
+	})
+	await fileHandle.writeFile(JSON.stringify(owner), 'utf8')
+	await fileHandle.sync()
+	let released = false
+	return {
+		async release() {
+			if (released) {
+				return
+			}
+			released = true
+			await fileHandle.close()
+			const current = await readLock(lockPath)
+			if (current?.ownerId === owner.ownerId) {
+				await rm(lockPath, { force: true })
+			}
+		}
+	}
+}
+
+async function acquireDaemonLock(lockPath: string): Promise<DaemonLock> {
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		try {
+			return await ownedLock(lockPath, await open(lockPath, 'wx', 0o600))
+		} catch (error) {
+			if (!isAlreadyExists(error)) {
+				throw error
+			}
+			const existing = await readLock(lockPath)
+			if (existing === null) {
+				throw new ApplicationError(
+					'DAEMON_LOCKED',
+					'Manager startup lock exists but has incomplete metadata; remove it only after confirming no manager is starting'
+				)
+			}
+			if (processExists(existing.processId)) {
+				throw new ApplicationError(
+					'DAEMON_LOCKED',
+					`Manager startup is already owned by process ${existing.processId}`
+				)
+			}
+			const unchanged = await readLock(lockPath)
+			if (unchanged?.ownerId === existing.ownerId) {
+				await rm(lockPath, { force: true })
+			}
+		}
+	}
+	throw new ApplicationError('DAEMON_LOCKED', 'Could not acquire the manager startup lock')
+}
+
+async function commandOutput(command: readonly string[]): Promise<string> {
+	const handle = Bun.spawn([...command], { stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' })
+	const [stdout, stderr] = await Promise.all([
+		new Response(handle.stdout).text(),
+		new Response(handle.stderr).text()
+	])
+	await handle.exited
+	return stdout.trim() || stderr.trim()
+}
 
 const CommandSchema = z.array(z.string())
 const EmptyResultSchema = z.unknown()
@@ -155,12 +250,6 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 			const stopped = new Promise<void>(resolve => {
 				requestStop = resolve
 			})
-			// A shutdown must actually finish. The proxy holds long-lived streaming
-			// connections (an active codex/claude session, or Claude Code itself),
-			// and draining them can stall indefinitely — which would keep port 8459
-			// held and block the next daemon from starting. So the moment a stop is
-			// requested, arm a watchdog that force-exits; the OS then frees the port
-			// and the stale lock is reclaimed on the next start.
 			const beginShutdown = () => {
 				const watchdog = setTimeout(() => {
 					process.stderr.write(`[${new Date().toISOString()}] shutdown watchdog: forcing exit\n`)
@@ -228,9 +317,6 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 	}
 }
 
-// SIGKILL the daemon by the pid in its lock, then clear the lock and socket so
-// the next start can bind cleanly. The safety net for a daemon that won't drain
-// on its own (older builds without the shutdown watchdog).
 async function forceStopDaemon(context: ApplicationContext): Promise<void> {
 	const ownerPid = await readFile(context.paths.managerLock, 'utf8').then(
 		raw => {
@@ -273,14 +359,10 @@ async function stopDaemon(context: ApplicationContext): Promise<void> {
 		}
 		await Bun.sleep(200)
 	}
-	// Graceful drain didn't finish in time — force it so the port is freed.
 	await forceStopDaemon(context)
 	process.stdout.write('Manager daemon stopped.\n')
 }
 
-// A daemon from a different build speaks a different schema dialect than this
-// CLI, which surfaces as cryptic "unrecognized key" parse errors. Heal the
-// skew automatically: restart the daemon onto the current build.
 async function ensureDaemon(context: ApplicationContext): Promise<void> {
 	if (!(await managerAvailable(context.paths.managerSocket))) {
 		await startDaemon(context)
@@ -343,9 +425,6 @@ async function login(
 			? `Signed in ${account.label}.\n`
 			: `Re-authenticated ${account.label}; live sessions pick it up on their next request.\n`
 	)
-	// A new account is only useful once its provider is routed. Turn routing on
-	// automatically the first time one is added, so onboarding is just "sign in"
-	// — the operator can still toggle it off later in settings.
 	if (existing === undefined) {
 		const status = await installStatus()
 		const alreadyRouted = provider === 'openai' ? status.codexRouted : status.claudeRouted
@@ -511,8 +590,6 @@ async function uninstallConfig(): Promise<void> {
 	)
 }
 
-// Enable or disable native routing for a single provider — the config-file edit
-// behind the dashboard's routing toggle.
 async function setRouting(
 	context: ApplicationContext,
 	provider: ProviderId,
@@ -536,10 +613,8 @@ async function doctor(context: ApplicationContext): Promise<void> {
 			process.stdout.write(`missing  ${tool}\n`)
 			continue
 		}
-		const version = await runCommand([tool, '--version'])
-		process.stdout.write(
-			`ok       ${tool.padEnd(8)} ${version.stdout.trim() || version.stderr.trim()}  (tested ${testedVersion})\n`
-		)
+		const version = await commandOutput([tool, '--version'])
+		process.stdout.write(`ok       ${tool.padEnd(8)} ${version}  (tested ${testedVersion})\n`)
 	}
 	process.stdout.write(`${Bun.which('security') === null ? 'missing' : 'ok     '}  security\n`)
 	const running = await managerAvailable(context.paths.managerSocket)

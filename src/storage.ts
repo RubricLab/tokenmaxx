@@ -121,11 +121,6 @@ function initialProviderState(provider: ProviderId): ProviderState {
 	})
 }
 
-// Policies saved by earlier releases carry the old defaults. 120s snapshot
-// staleness is shorter than the 5-minute candidate probe interval, so idle
-// accounts flickered in and out of rotation eligibility; 95% left too little
-// headroom under parallel-agent burst. Only values still at the old default
-// are rewritten — anything user-tuned is left alone.
 function migratePolicyDefaults(database: Database): void {
 	const rows = database.query<JsonRow & { provider: string }, []>(
 		'SELECT provider, payload FROM provider_states'

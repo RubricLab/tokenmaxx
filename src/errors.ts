@@ -22,7 +22,7 @@ export function errorMessage(error: unknown): string {
 const networkFailurePattern =
 	/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ENETDOWN|getaddrinfo|timed? ?out|unable to connect|typo in the url|fetch failed|socket hang ?up|dns lookup/i
 
-export function isNetworkFailureText(text: string): boolean {
+function isNetworkFailureText(text: string): boolean {
 	return networkFailurePattern.test(text)
 }
 

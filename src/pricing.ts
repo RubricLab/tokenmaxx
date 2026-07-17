@@ -1,14 +1,10 @@
-export interface ModelPrice {
+interface ModelPrice {
 	inputPerMTok: number
 	outputPerMTok: number
 	cacheReadPerMTok: number
 	cacheWritePerMTok: number
 }
 
-// API list prices per million tokens. Cache reads are 0.1× input; Anthropic
-// cache writes are 1.25× input (5-minute TTL, what the CLIs use); OpenAI
-// prompt-cache writes are free. Match order matters: the dated Opus 4.0/4.1
-// entries must precede the generic claude-opus row (Opus 4.5+ dropped to 5/25).
 const PRICES: ReadonlyArray<{ match: string; price: ModelPrice }> = [
 	{
 		match: 'claude-fable',

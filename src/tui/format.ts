@@ -14,7 +14,7 @@ export interface Theme {
 	bad: string
 }
 
-export const darkTheme: Theme = {
+const darkTheme: Theme = {
 	accent: '#5ab0ff',
 	bad: '#ff5f6e',
 	bg: '#0b0d10',
@@ -28,7 +28,7 @@ export const darkTheme: Theme = {
 	warn: '#f0a83a'
 }
 
-export const lightTheme: Theme = {
+const lightTheme: Theme = {
 	accent: '#0b62d6',
 	bad: '#d23b48',
 	bg: '#fbfcfe',
@@ -89,64 +89,9 @@ export type { Timeframe } from '../domain.ts'
 export { TIMEFRAMES } from '../domain.ts'
 
 const brailleDots: readonly [number, number, number, number][] = [
-	[0x01, 0x02, 0x04, 0x40], // left column, rows top→bottom
-	[0x08, 0x10, 0x20, 0x80] // right column
+	[0x01, 0x02, 0x04, 0x40],
+	[0x08, 0x10, 0x20, 0x80]
 ]
-
-export function brailleLine(
-	columns: readonly (number | null)[],
-	width: number,
-	height: number,
-	max = 100
-): string[] {
-	const dotRows = height * 4
-	const dotCols = width * 2
-	const scale = max <= 0 ? 1 : max
-	const grid: boolean[][] = Array.from({ length: dotCols }, () => new Array(dotRows).fill(false))
-	const toY = (value: number): number =>
-		Math.max(0, Math.min(dotRows - 1, Math.round((value / scale) * (dotRows - 1))))
-	let previousY = -1
-	for (let x = 0; x < dotCols; x += 1) {
-		const value = columns[x]
-		if (value === null || value === undefined) {
-			previousY = -1
-			continue
-		}
-		const y = toY(value)
-		const column = grid[x]
-		if (column === undefined) {
-			continue
-		}
-		if (previousY >= 0) {
-			for (let fill = Math.min(previousY, y); fill <= Math.max(previousY, y); fill += 1) {
-				column[fill] = true
-			}
-		} else {
-			column[y] = true
-		}
-		previousY = y
-	}
-	const rows: string[] = []
-	for (let charRow = 0; charRow < height; charRow += 1) {
-		const topDotY = dotRows - 1 - charRow * 4
-		let line = ''
-		for (let charColumn = 0; charColumn < width; charColumn += 1) {
-			let bits = 0
-			for (let subColumn = 0; subColumn < 2; subColumn += 1) {
-				const gx = charColumn * 2 + subColumn
-				for (let subRow = 0; subRow < 4; subRow += 1) {
-					const gy = topDotY - subRow
-					if (gy >= 0 && grid[gx]?.[gy]) {
-						bits |= brailleDots[subColumn]?.[subRow] ?? 0
-					}
-				}
-			}
-			line += bits === 0 ? ' ' : String.fromCharCode(0x2800 + bits)
-		}
-		rows.push(line)
-	}
-	return rows
-}
 
 export function brailleArea(
 	columns: readonly (number | null)[],
@@ -194,34 +139,6 @@ export function brailleArea(
 	return rows
 }
 
-export function resetCountdown(resetAtIso: string | null, nowMillis: number): string | null {
-	if (resetAtIso === null) {
-		return null
-	}
-	const resetMillis = Date.parse(resetAtIso)
-	if (!Number.isFinite(resetMillis)) {
-		return null
-	}
-	const remaining = resetMillis - nowMillis
-	if (remaining <= 0) {
-		return 'now'
-	}
-	const minutes = Math.round(remaining / 60_000)
-	if (minutes < 60) {
-		return `${minutes}m`
-	}
-	const hours = Math.floor(minutes / 60)
-	const remainderMinutes = minutes % 60
-	if (hours < 24) {
-		return remainderMinutes === 0 ? `${hours}h` : `${hours}h ${remainderMinutes}m`
-	}
-	const days = Math.floor(hours / 24)
-	const remainderHours = hours % 24
-	return remainderHours === 0 ? `${days}d` : `${days}d ${remainderHours}h`
-}
-
-// The single largest unit of a reset countdown, for the inline ↻ marker on an
-// account row where space is tight: 2h, 3d, 45m — never two units.
 export function shortReset(resetAtIso: string | null, nowMillis: number): string | null {
 	if (resetAtIso === null) {
 		return null
@@ -245,7 +162,6 @@ export function shortReset(resetAtIso: string | null, nowMillis: number): string
 	return `${Math.round(hours / 24)}d`
 }
 
-// Plan compacted to a small tag that trails the account label: max20, pro, team.
 export function planTag(plan: string | null | undefined): string | null {
 	const label = planLabel(plan)
 	if (label === null) {
@@ -254,7 +170,7 @@ export function planTag(plan: string | null | undefined): string | null {
 	return label.toLowerCase().replace(/\s*×/g, '').replace(/\s+/g, '')
 }
 
-export function planLabel(plan: string | null | undefined): string | null {
+function planLabel(plan: string | null | undefined): string | null {
 	if (plan === null || plan === undefined) {
 		return null
 	}
@@ -289,7 +205,7 @@ export function relativeAge(observedAtMillis: number, nowMillis: number): string
 	return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`
 }
 
-export interface HealthBadge {
+interface HealthBadge {
 	text: string
 	color: string
 }
@@ -368,15 +284,6 @@ export function compactNumber(value: number): string {
 	return `${Math.round(value)}`
 }
 
-export function compactUsd(value: number): string {
-	if (value >= 1000) {
-		return `$${(value / 1000).toFixed(1)}k`
-	}
-	return `$${value.toFixed(2)}`
-}
-
-// Exact dollars with a thousands separator — for the metrics table, where the
-// value is an audit and rounding to "$1.0k" would read as imprecise.
 export function moneyUsd(value: number): string {
 	return `$${value.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`
 }

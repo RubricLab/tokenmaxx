@@ -60,7 +60,7 @@ const ReplaceCredentialParamsSchema = z
 	})
 	.strict()
 
-export interface ManagerServer {
+interface ManagerServer {
 	close(): Promise<void>
 	finished: Promise<void>
 }
@@ -233,7 +233,6 @@ const PingSchema = z
 	.object({
 		processId: z.number().int().positive(),
 		ready: z.literal(true),
-		// Daemons older than 0.0.9 do not report a version.
 		version: z.string().optional()
 	})
 	.loose()
@@ -249,9 +248,6 @@ export async function managerAvailable(socketPath: string): Promise<boolean> {
 		.catch(() => false)
 }
 
-// The running daemon's version, or null when it is not running. A daemon on a
-// different build than the CLI speaks a different schema dialect, so callers
-// restart it on mismatch instead of surfacing parse errors to the user.
 export async function managerVersion(socketPath: string): Promise<string | null> {
 	return managerRequest({
 		method: 'manager/ping',

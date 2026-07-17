@@ -29,8 +29,6 @@ function buildTokens(scale: number): TokenAnalytics {
 		const target = Math.round(150_000 * hours * 0.5 * scale)
 		const buckets = raw.map(value => Math.round((value / rawSum) * target))
 		const totalTokens = buckets.reduce((sum, value) => sum + value, 0)
-		// A believable spread of models per provider, each split into token
-		// classes and priced per class — the whole metrics view derives from this.
 		const modelMix: { model: string; provider: ProviderId; share: number }[] = [
 			{ model: 'gpt-5.6-sol', provider: 'openai', share: 0.42 },
 			{ model: 'gpt-5.6-codex', provider: 'openai', share: 0.13 },
@@ -41,8 +39,6 @@ function buildTokens(scale: number): TokenAnalytics {
 		const models = modelMix
 			.map(entry => {
 				const tokens = Math.round(totalTokens * entry.share)
-				// Cache-read dominated, like real harness traffic: live captures price
-				// out near $0.5/M blended (478M ≈ $254), which needs ~94% cache reads.
 				const input = Math.round(tokens * 0.03)
 				const output = Math.round(tokens * 0.012)
 				const cacheCreation = Math.round(tokens * 0.02)
@@ -194,8 +190,6 @@ function account(seed: AccountSeed, now: number): Account {
 
 function usage(seed: AccountSeed, now: number): UsageSnapshot {
 	const windows = (seed.windows ?? []).map(spec => toWindow(spec, now))
-	// Usage is read off response headers as traffic flows, so a live system is
-	// always seconds fresh.
 	const base = {
 		accountId: uuid(seed.n),
 		hardLimitReached: windows.some(window => window.usedPercent >= 100),
@@ -439,11 +433,6 @@ const onboarding: ScenarioBuilder = now =>
 		0
 	)
 
-// The demo screenplay: a relay race across accounts, written as a pure
-// function of the clock. Each account's 5h window climbs a linear ramp; the
-// active account is whichever hasn't crossed the 90% threshold yet, so playing
-// this scenario with an accelerated clock (TOKENMAXX_TIMEWARP) shows meters
-// filling and the active dot hopping — the product's whole story in one take.
 const relay: ScenarioBuilder = now => {
 	const t0 = Date.parse('2026-07-15T13:30:00.000Z')
 	const elapsedMinutes = Math.max(0, (now - t0) / MINUTE)
@@ -451,7 +440,6 @@ const relay: ScenarioBuilder = now => {
 		clamp(start + perMinute * elapsedMinutes + noise(Math.floor(now / (5 * MINUTE))) * 1.5)
 	const crossing = (start: number, perMinute: number) => (90 - start) / perMinute
 
-	// Claude: A starts hot and crosses 90% quickly; B carries the middle; C is fresh.
 	const claudeRamps = [
 		{ n: 3, rate: 0.75, start: 62 },
 		{ n: 4, rate: 0.55, start: 24 },
@@ -482,8 +470,6 @@ const relay: ScenarioBuilder = now => {
 			? 480
 			: Math.max(0.2, elapsedMinutes - crossing(previous.start, previous.rate))
 	}
-	// fillFrac === nowFrac makes valueAt(now) return the peak exactly, so the
-	// meter reads the ramp value with no cyclical scaling.
 	const sessionWindow = (spec: { start: number; rate: number }, id: string, label: string) => ({
 		fillFrac: 0.5,
 		id,
@@ -547,32 +533,18 @@ const relay: ScenarioBuilder = now => {
 	)
 }
 
-// A full day compressed: every account's 5h window saws (fill to the
-// threshold, rotate away, refresh) while the 7d windows climb monotonically
-// until, one by one, whole accounts burn out for the week. A pure function of
-// the clock: accounts take ~95-minute shifts round-robin among those whose
-// week is still alive; a shift ramps the 5h window toward the threshold, the
-// window holds hot for the rest of its five hours, then resets.
 const blitz: ScenarioBuilder = now => {
-	const t0 = Date.parse('2026-07-15T11:00:00.000Z') // 7:00 AM in New York
-	const minutes = Math.max(0, (now - t0) / MINUTE)
-	// Short enough that all five Claude seats go hot (4 handoffs × 65 min = 260
-	// min) well BEFORE the first 5h window resets at minute 300 — the board
-	// fills to the last row, then availability starts coming back from the top.
+	const sevenAmNewYork = Date.parse('2026-07-15T11:00:00.000Z')
+	const minutes = Math.max(0, (now - sevenAmNewYork) / MINUTE)
 	const shiftLength = 65
 	interface Runner {
 		n: number
 		provider: ProviderId
 		email: string
-		// Weekly budget already used when the day starts, and how many minutes of
-		// ACTIVE burning it takes to go from there to the 90% threshold. Meters are
-		// functions of active time, never of wall-clock time.
 		sevenStart: number
 		burnMinutes: number
 	}
 	const runners: Runner[] = [
-		// Codex burns gently: legs land at minutes 455 and 910, mid-gap between
-		// Claude handoffs (multiples of 65, offset 33), so flashes never overlap.
 		{ burnMinutes: 455, email: 'dexter@rubriclabs.com', n: 1, provider: 'openai', sevenStart: 34 },
 		{ burnMinutes: 455, email: 'ship@rubriclabs.com', n: 2, provider: 'openai', sevenStart: 22 },
 		{ burnMinutes: 600, email: 'ops@rubriclabs.com', n: 6, provider: 'openai', sevenStart: 11 },
@@ -601,10 +573,6 @@ const blitz: ScenarioBuilder = now => {
 		}
 	]
 	const burnRate = (runner: Runner) => (90 - runner.sevenStart) / runner.burnMinutes
-	// ——— Codex: a strict threshold relay. One account holds the baton and burns
-	// its 7-day budget; the baton passes at exactly 90%, and idle meters never
-	// move. Boundaries fall mid-way between Claude's handoffs so the two
-	// providers never flash "switched" together.
 	const codexRunners = runners.filter(runner => runner.provider === 'openai')
 	const codexBoundaries: number[] = []
 	{
@@ -625,19 +593,12 @@ const blitz: ScenarioBuilder = now => {
 		const activeMinutes = Math.min(m - legStart, runner.burnMinutes)
 		return clamp(runner.sevenStart + burnRate(runner) * activeMinutes)
 	}
-	// ——— Claude: five accounts rotate the 5h session round-robin on a shift
-	// clock offset half a shift from nothing-in-particular — what matters is its
-	// handoffs sit far from the Codex boundaries. The active session ramps to
-	// ~92% by the end of its shift, so a switch always shows a maxed meter. The
-	// Fable weekly climbs only while its account holds the baton.
 	const claudeRunners = runners.filter(runner => runner.provider === 'anthropic')
 	const claudePhase = Math.round(shiftLength / 2)
 	const claudeShiftIndex = (m: number) => Math.floor((m - claudePhase) / shiftLength)
 	const claudeShiftStart = (k: number) => k * shiftLength + claudePhase
 	const claudeActive = (k: number): Runner | undefined =>
 		claudeRunners[((k % claudeRunners.length) + claudeRunners.length) % claudeRunners.length]
-	// The day starts cold: no pre-history shifts, so the board genuinely fills
-	// top-down from the morning instead of inheriting hot rows from "yesterday".
 	const lastShiftStart = (runner: Runner): number | null => {
 		const kNow = claudeShiftIndex(minutes)
 		for (let k = kNow; k >= Math.max(0, kNow - claudeRunners.length); k -= 1) {
@@ -656,7 +617,6 @@ const blitz: ScenarioBuilder = now => {
 		if (sinceStart <= shiftLength) {
 			return clamp(7 + (85 * sinceStart) / shiftLength)
 		}
-		// The window stays hot for the rest of its five hours, then refreshes.
 		return sinceStart < 300 ? 92 : clamp(2 + Math.abs(noise(runner.n * 13)) * 4)
 	}
 	const claudeActiveMinutes = (runner: Runner, m: number): number => {
@@ -673,11 +633,6 @@ const blitz: ScenarioBuilder = now => {
 	}
 	const fableWeekly = (runner: Runner, m: number): number =>
 		clamp(runner.sevenStart + burnRate(runner) * claudeActiveMinutes(runner, m))
-	// A 5h window opened when its account's shift started, so reset countdowns
-	// are staggered by the rotation: each hot 92% row counts down on its own
-	// clock, hits zero, refreshes, and drops to the bottom of the board — the
-	// "they come back to availability" half of the story. Refreshed or
-	// never-active accounts show a nearly fresh window.
 	const sessionFrac = (runner: Runner): number => {
 		const shiftStart = lastShiftStart(runner)
 		if (shiftStart === null) {
@@ -686,17 +641,12 @@ const blitz: ScenarioBuilder = now => {
 		const sinceStart = minutes - shiftStart
 		return sinceStart < 300 ? Math.max(0.02, sinceStart / 300) : 0.06
 	}
-	// Weekly resets vary per account too — the fleet wasn't all provisioned in
-	// the same hour, so no two rows share one countdown.
 	const weeklyFrac = (n: number): number => 0.3 + (n % 5) * 0.06
 	const seeds: AccountSeed[] = runners.map(runner => ({
 		email: runner.email,
 		n: runner.n,
 		plan: runner.provider === 'openai' ? 'pro' : 'claude_max_20x',
 		provider: runner.provider,
-		// Codex shows just its weekly window; Claude shows the 5-hour session
-		// cycling plus the Fable scoped weekly — a calm, legible story where a
-		// meter only moves while its account is doing the work.
 		windows:
 			runner.provider === 'openai'
 				? [
@@ -744,7 +694,6 @@ const blitz: ScenarioBuilder = now => {
 				dwellMs: 300_000,
 				generation: leg + 2,
 				provider,
-				// Before the first threshold crossing nothing has switched today.
 				switchedMinutesAgo: lastBoundary === undefined ? null : Math.max(0.2, minutes - lastBoundary),
 				threshold: 90
 			}
@@ -760,14 +709,9 @@ const blitz: ScenarioBuilder = now => {
 			threshold: 90
 		}
 	}
-	// Scale the throughput to what a real 8-account fleet burns: live captures
-	// show ~478M tokens over a 5h window, so target that magnitude (not a toy
-	// number that undersells the value story).
 	return assemble(now, seeds, [providerSeed('openai'), providerSeed('anthropic')], 1250)
 }
 
-// The cruising accounts with visibly different per-provider policies, for the
-// settings shot: its claim is that tuning is per provider.
 const tuned: ScenarioBuilder = now => {
 	const snapshot = cruising(now)
 	const codex = snapshot.snapshot.providers.find(state => state.provider === 'openai')
@@ -787,7 +731,7 @@ const scenarios: Record<string, ScenarioBuilder> = {
 	tuned
 }
 
-export const SCENARIO_NAMES = Object.keys(scenarios)
+const SCENARIO_NAMES = Object.keys(scenarios)
 
 export function buildScenario(name: string, now: number = FIXTURE_NOW): AnalyticsSnapshot {
 	const builder = scenarios[name]

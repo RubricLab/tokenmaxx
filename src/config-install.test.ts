@@ -6,9 +6,6 @@ import { join } from 'node:path'
 import { installCodexConfig, installStatus, uninstallCodexConfig } from './config-install.ts'
 import { applicationPaths } from './paths.ts'
 
-// The July 16 regression: the managed block was appended at the bottom of
-// config.toml, after a [notice] table, so TOML scoped model_provider to
-// notice.model_provider and codex silently kept its built-in provider.
 const legacyBrokenConfig = `model = "gpt-5.6-sol"
 approval_policy = "never"
 
@@ -63,7 +60,6 @@ describe('installCodexConfig', () => {
 		const providers = parsed.model_providers as Record<string, Record<string, unknown>>
 		expect(providers.tokenmaxx?.base_url).toBe('http://127.0.0.1:8459/openai')
 		expect(providers.tokenmaxx?.requires_openai_auth).toBe(true)
-		// The user's own config survives untouched.
 		expect(parsed.model).toBe('gpt-5.6-sol')
 		expect((parsed.notice as Record<string, unknown>).hide_rate_limit_model_nudge).toBe(true)
 		expect((parsed.notice as Record<string, unknown>).model_provider).toBeUndefined()

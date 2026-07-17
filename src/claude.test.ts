@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { CredentialVault } from '../../vault.ts'
-import { type ClaudeOauth, refreshClaudeCredential } from './auth.ts'
+import { type ClaudeOauth, refreshClaudeCredential } from './claude.ts'
+import type { CredentialVault } from './vault.ts'
 
 function memoryVault(initial: Record<string, string>): CredentialVault & {
 	items: Map<string, string>

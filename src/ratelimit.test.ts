@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { observeRateLimitHeaders } from './ratelimit.ts'
 
 describe('observeRateLimitHeaders', () => {
-	// Captured live from api.anthropic.com with an OAuth credential.
 	test('anthropic unified headers become session and weekly windows', () => {
 		const headers = new Headers({
 			'anthropic-ratelimit-unified-5h-reset': '1784259000',
@@ -44,7 +43,6 @@ describe('observeRateLimitHeaders', () => {
 		expect(observation?.windows[0]?.usedPercent).toBe(100)
 	})
 
-	// Captured live from chatgpt.com/backend-api/codex responses.
 	test('codex primary window and additional feature limits', () => {
 		const headers = new Headers({
 			'x-codex-bengalfox-limit-name': 'GPT-5.3-Codex-Spark',
@@ -70,7 +68,6 @@ describe('observeRateLimitHeaders', () => {
 			usedPercent: 18
 		})
 		expect(byId.get('codex_bengalfox:primary')?.label).toBe('GPT-5.3-Codex-Spark · 7 day')
-		// Zero-minute windows are unused slots, not real limits.
 		expect(byId.has('codex:secondary')).toBe(false)
 		expect(byId.has('codex_bengalfox:secondary')).toBe(false)
 	})

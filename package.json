@@ -58,5 +58,5 @@
 		"post-commit": "[ -n \"$AMENDING\" ] || { bun -e 'const f=Bun.file(\"package.json\");const p=await f.json();const v=p.version.split(\".\").map(Number);v[2]++;p.version=v.join(\".\");await Bun.write(f,JSON.stringify(p,null,\"\\t\")+\"\\n\")' && git add package.json && AMENDING=1 git commit --amend --no-verify --no-edit; }"
 	},
 	"type": "module",
-	"version": "0.0.36"
+	"version": "0.0.37"
 }

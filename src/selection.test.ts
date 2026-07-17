@@ -87,8 +87,6 @@ describe('selectRotation', () => {
 		expect(decision).toEqual({ reason: 'minimumDwell', rotate: false })
 	})
 
-	// The July 16 incident: an account burned to 100% two minutes after we
-	// switched onto it, and dwell pinned every request to a dead account.
 	test('hard limit ignores the dwell hold', () => {
 		const decision = selectRotation({
 			accounts: [account(1), account(2)],
@@ -113,8 +111,6 @@ describe('selectRotation', () => {
 		expect(decision).toEqual({ reason: 'noEligibleCandidate', rotate: false })
 	})
 
-	// Candidates are probed every 5 minutes; the staleness ceiling has to admit
-	// that cadence or idle accounts flicker out of eligibility.
 	test('a candidate probed five minutes ago is still eligible', () => {
 		const decision = selectRotation({
 			accounts: [account(1), account(2)],

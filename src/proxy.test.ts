@@ -23,9 +23,6 @@ function observe(provider: 'openai' | 'anthropic', body: string, chunkSize = 7):
 }
 
 describe('createUsageObserver', () => {
-	// The ChatGPT backend streams SSE with no content-type header at all, so the
-	// observer must recognize SSE by content. This is the shape captured live
-	// from chatgpt.com/backend-api/codex/responses.
 	test('codex SSE stream without content-type', () => {
 		const body = [
 			'event: response.created',

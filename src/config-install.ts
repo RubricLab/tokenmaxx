@@ -4,14 +4,6 @@ import { dirname, join } from 'node:path'
 import type { ApplicationPaths } from './paths.ts'
 import { proxyBaseUrl } from './paths.ts'
 
-// The codex config is TOML, and TOML scopes bare keys to the most recent
-// [table] header. A managed block appended to the bottom of a config that
-// ends in a table (say [notice]) silently becomes notice.model_provider —
-// codex keeps its built-in provider and every request bypasses the proxy.
-// So the managed config is written in two parts: the top-level
-// model_provider key is PREPENDED (before any table header can capture it)
-// and the [model_providers.tokenmaxx] table is APPENDED (where it can't
-// capture the user's own bare keys).
 const providerName = 'tokenmaxx'
 const topBeginMarker = '# >>> tokenmaxx managed (do not edit) >>>'
 const topEndMarker = '# <<< tokenmaxx managed <<<'
@@ -68,7 +60,7 @@ function restoreCodexContent(content: string): string {
 		.trimEnd()}\n`
 }
 
-export function buildCodexManagedConfig(paths: ApplicationPaths): { top: string; table: string } {
+function buildCodexManagedConfig(paths: ApplicationPaths): { top: string; table: string } {
 	return {
 		table: [
 			tableBeginMarker,
@@ -166,13 +158,9 @@ export async function uninstallClaudeConfig(): Promise<string | null> {
 	return path
 }
 
-export interface InstallStatus {
-	// True only when the parsed TOML actually selects a proxy-backed provider —
-	// a managed block swallowed into another table reads as NOT routed.
+interface InstallStatus {
 	codexRouted: boolean
 	claudeRouted: boolean
-	// A tokenmaxx/tokmax marker exists but routing is ineffective; the fix is
-	// re-running `tokenmaxx install`.
 	codexStale: boolean
 }
 
@@ -202,9 +190,4 @@ export async function installStatus(): Promise<InstallStatus> {
 		claudeRouted = false
 	}
 	return { claudeRouted, codexRouted, codexStale }
-}
-
-export async function isInstalled(): Promise<boolean> {
-	const status = await installStatus()
-	return status.codexRouted && status.claudeRouted
 }

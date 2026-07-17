@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
 
-export const ApplicationPathsSchema = z.object({
+const ApplicationPathsSchema = z.object({
 	claudeProfiles: z.string().min(1),
 	database: z.string().min(1),
 	managerLock: z.string().min(1),
