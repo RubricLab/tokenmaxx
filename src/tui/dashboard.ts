@@ -109,6 +109,11 @@ function column(
 // like any account row.
 const ADD_ROW = '__add__'
 
+// The centered content column caps here, so account rows never sprawl the full
+// width of an ultra-wide terminal. Account rows must budget against this, not
+// the raw terminal width, or a wide 3-window row wraps inside the panel.
+const CONTENT_MAX = 126
+
 function isFiveHour(window: UsageWindow): boolean {
 	return /5 ?h/i.test(window.label) || window.id === 'session' || window.id === 'five-hour'
 }
@@ -216,6 +221,9 @@ function accountLine(
 ) {
 	const badge = healthBadge(ctx.theme, account)
 	const labels = labelWidth(ctx)
+	// Budget against the panel's real width, not the terminal's — the content
+	// column is capped, so a wide row must lay out within that cap.
+	const cols = Math.min(ctx.columns, CONTENT_MAX)
 	const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
 	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
 	const markerColor =
@@ -258,7 +266,7 @@ function accountLine(
 		const window = bindingWindow(focused)
 		if (window !== undefined) {
 			children.push(
-				...windowCell(ctx, window, Math.max(8, Math.min(20, ctx.columns - labels - 26)), true)
+				...windowCell(ctx, window, Math.max(8, Math.min(20, cols - labels - 26)), true)
 			)
 		}
 	} else if (ctx.view === 'all') {
@@ -266,7 +274,7 @@ function accountLine(
 		// with the tier.
 		const shown = ctx.tier === 'wide' ? focused : focused.slice(0, 2)
 		const tagCols = tag === null ? 0 : tag.length + 1
-		const perWindow = Math.floor((ctx.columns - labels - tagCols - 8) / shown.length)
+		const perWindow = Math.floor((cols - labels - tagCols - 8) / shown.length)
 		const barWidth = Math.max(6, Math.min(ctx.tier === 'wide' ? 14 : 9, perWindow - 14))
 		for (const window of shown) {
 			children.push(...windowCell(ctx, window, barWidth, true))
@@ -280,7 +288,7 @@ function accountLine(
 		} else {
 			const reset = resetCountdown(window.resetAt, ctx.now)
 			const cellTag = focused.length > 1 ? `${shortWindow(window.label)} ` : ''
-			const barWidth = Math.max(10, ctx.columns - labels - 24 - cellTag.length)
+			const barWidth = Math.max(10, cols - labels - 24 - cellTag.length)
 			children.push(
 				Text({ content: ' ', fg: rgb(ctx.theme.bg) }),
 				Text({
@@ -813,7 +821,7 @@ function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], select
 			providerPanel(ctx, snapshot, 'anthropic', rows, selected),
 			...(note === null ? [] : [note])
 		],
-		118
+		CONTENT_MAX
 	)
 }
 
@@ -855,7 +863,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const header = Box(
 		{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
 		Box(
-			{ flexDirection: 'row', width: Math.min(118, ctx.columns - 2) },
+			{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
 			Text({ attributes: 1, content: 'tokenmaxx', fg: rgb(ctx.theme.accent) }),
 			Text({ content: `  ${clock}`, fg: rgb(ctx.theme.dim) }),
 			Text({ content: `   ↻ ${refreshed}`, fg: rgb(ctx.theme.faint) }),
@@ -866,7 +874,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	children.push(
 		Box(
 			{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
-			Box({ flexDirection: 'row', width: Math.min(118, ctx.columns - 2) }, tabBar(ctx, state.tab))
+			Box({ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) }, tabBar(ctx, state.tab))
 		)
 	)
 	if (state.updateAvailable !== null && !state.updateDismissed) {
@@ -903,7 +911,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 		Box(
 			{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
 			Box(
-				{ flexDirection: 'row', width: Math.min(118, ctx.columns - 2) },
+				{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
 				Text({ content: footer, fg: rgb(ctx.theme.dim) })
 			)
 		)

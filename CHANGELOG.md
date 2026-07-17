@@ -1,3 +1,4 @@
+- [2026-07-17] [cap account rows to the content width so wide terminals don't wrap](https://github.com/RubricLab/tokenmaxx/commit/09fe360558968c95db3c33f8ff9ac74a5988a67e)
 - [2026-07-17] [never strand on daemon restart: shutdown watchdog + force-kill fallback](https://github.com/RubricLab/tokenmaxx/commit/108b5a366f4df3b4b4e9954abcdc54d1e62b746b)
 - [2026-07-17] [stagger blitz depletion so codex and claude run out on distinct clocks](https://github.com/RubricLab/tokenmaxx/commit/707f259b426ad37f2ea1fb9f48cda9df388df61d)
 - [2026-07-17] [breathing room in the metrics columns](https://github.com/RubricLab/tokenmaxx/commit/a41e12b13137569356160cda6d9f35e035b2522b)
