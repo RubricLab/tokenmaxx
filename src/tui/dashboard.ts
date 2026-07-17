@@ -168,12 +168,20 @@ function orderedRows(snapshot: DashboardSnapshot): Row[] {
 	const rows: Row[] = []
 	for (const provider of providerOrder) {
 		const state = snapshot.providers.find(s => s.provider === provider)
+		// Rows sort by pressure (the account's most-used visible window), NOT
+		// active-first: a switch just moves the ● marker to another row instead of
+		// reshuffling the list. Rows trade places only when their pressures
+		// actually cross; the label tiebreak keeps equal rows from jittering.
+		const hidden = state?.policy.hiddenWindowIds ?? []
+		const pressure = (accountId: string): number => {
+			const windows = snapshot.usage.find(u => u.accountId === accountId)?.windows ?? []
+			return visibleWindows(windows, hidden).reduce((max, w) => Math.max(max, w.usedPercent), -1)
+		}
 		const accounts = snapshot.accounts
 			.filter(account => account.provider === provider)
 			.sort((left, right) => {
-				const active =
-					Number(state?.activeAccountId !== left.id) - Number(state?.activeAccountId !== right.id)
-				return active !== 0 ? active : left.label.localeCompare(right.label)
+				const byPressure = pressure(right.id) - pressure(left.id)
+				return byPressure !== 0 ? byPressure : left.label.localeCompare(right.label)
 			})
 		for (const account of accounts) {
 			rows.push({ accountId: account.id, provider })

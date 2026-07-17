@@ -1,3 +1,7 @@
+- [2026-07-17] [sort account rows by pressure, not active-first
+
+A switch now just moves the ● marker to another row instead of reshuffling the
+panel; rows trade places only when their pressures actually cross.](https://github.com/RubricLab/tokenmaxx/commit/e3a7479394e498fe1694ccf8834676739bb12061)
 - [2026-07-17] [blitz meters burn only while active; switches fire exactly at the 90% threshold
 
 Codex is now a strict threshold relay: one account holds the baton, its 7-day
