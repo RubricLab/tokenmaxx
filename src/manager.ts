@@ -23,47 +23,78 @@ import { createRuntimeCredentialSource } from './runtime-source.ts'
 import { selectRotation } from './selection.ts'
 import type { StateStore, TokenTimeframeAggregate } from './storage.ts'
 
+interface TokenBreakdownAccumulator {
+	cacheCreation: number
+	cached: number
+	costUsd: number
+	input: number
+	output: number
+	tokens: number
+}
+
+function emptyBreakdown(): TokenBreakdownAccumulator {
+	return { cacheCreation: 0, cached: 0, costUsd: 0, input: 0, output: 0, tokens: 0 }
+}
+
+function addInto(target: TokenBreakdownAccumulator, entry: TokenBreakdownAccumulator): void {
+	target.input += entry.input
+	target.output += entry.output
+	target.cached += entry.cached
+	target.cacheCreation += entry.cacheCreation
+	target.tokens += entry.tokens
+	target.costUsd += entry.costUsd
+}
+
 function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe {
-	let totalInput = 0
-	let totalOutput = 0
-	let totalCached = 0
-	let totalCacheCreation = 0
-	let costTotal = 0
-	const models: { costUsd: number; model: string; provider: ProviderId; tokens: number }[] = []
+	const grand = emptyBreakdown()
+	// costUsd is linear per token class, so a class's dollar share is just the
+	// same call with the other classes zeroed — no second price table needed.
+	let costInput = 0
+	let costOutput = 0
+	let costCached = 0
+	let costCacheCreation = 0
+	const byProvider = new Map<ProviderId, TokenBreakdownAccumulator>()
+	const models: (TokenBreakdownAccumulator & { model: string; provider: ProviderId })[] = []
 	for (const entry of aggregate.byModel) {
-		const entryCost = costUsd(
-			entry.model,
-			entry.input,
-			entry.output,
-			entry.cached,
-			entry.cacheCreation
-		)
-		const entryTokens = entry.input + entry.output + entry.cached + entry.cacheCreation
-		totalInput += entry.input
-		totalOutput += entry.output
-		totalCached += entry.cached
-		totalCacheCreation += entry.cacheCreation
-		costTotal += entryCost
-		models.push({
-			costUsd: entryCost,
-			model: entry.model,
-			provider: entry.provider === 'anthropic' ? 'anthropic' : 'openai',
-			tokens: entryTokens
-		})
+		const provider: ProviderId = entry.provider === 'anthropic' ? 'anthropic' : 'openai'
+		const priced: TokenBreakdownAccumulator = {
+			cacheCreation: entry.cacheCreation,
+			cached: entry.cached,
+			costUsd: costUsd(entry.model, entry.input, entry.output, entry.cached, entry.cacheCreation),
+			input: entry.input,
+			output: entry.output,
+			tokens: entry.input + entry.output + entry.cached + entry.cacheCreation
+		}
+		costInput += costUsd(entry.model, entry.input, 0, 0, 0)
+		costOutput += costUsd(entry.model, 0, entry.output, 0, 0)
+		costCached += costUsd(entry.model, 0, 0, entry.cached, 0)
+		costCacheCreation += costUsd(entry.model, 0, 0, 0, entry.cacheCreation)
+		addInto(grand, priced)
+		const bucket = byProvider.get(provider) ?? emptyBreakdown()
+		addInto(bucket, priced)
+		byProvider.set(provider, bucket)
+		models.push({ ...priced, model: entry.model, provider })
 	}
 	const peakBucket = aggregate.buckets.reduce((max, value) => Math.max(max, value), 0)
 	return {
 		bucketMs: aggregate.bucketMs,
 		buckets: aggregate.buckets,
-		costUsd: costTotal,
+		byProvider: [...byProvider.entries()]
+			.map(([provider, totals]) => ({ ...totals, provider }))
+			.sort((left, right) => right.costUsd - left.costUsd),
+		costCacheCreation,
+		costCached,
+		costInput,
+		costOutput,
+		costUsd: grand.costUsd,
 		key: aggregate.key,
+		models: models.sort((left, right) => right.costUsd - left.costUsd),
 		peakPerHour: peakBucket * (3_600_000 / aggregate.bucketMs),
-		topModels: models.sort((left, right) => right.tokens - left.tokens).slice(0, 5),
-		totalCacheCreation,
-		totalCached,
-		totalInput,
-		totalOutput,
-		totalTokens: totalInput + totalOutput + totalCached + totalCacheCreation
+		totalCacheCreation: grand.cacheCreation,
+		totalCached: grand.cached,
+		totalInput: grand.input,
+		totalOutput: grand.output,
+		totalTokens: grand.tokens
 	}
 }
 
@@ -246,17 +277,19 @@ export class AccountManager {
 
 	public setAutomationPolicy(input: {
 		provider: ProviderId
-		enabled: boolean
+		enabled?: boolean
 		thresholdPercent?: number
 		authorizationConfirmed?: boolean
 		minimumDwellMilliseconds?: number
 		hysteresisPercent?: number
+		hiddenWindowIds?: string[]
 	}) {
 		const current = this.#store.findProviderState(input.provider).policy
 		const policy = AutomationPolicySchema.parse({
 			...current,
 			authorization: input.authorizationConfirmed ? 'confirmed' : current.authorization,
-			enabled: input.enabled,
+			enabled: input.enabled ?? current.enabled,
+			hiddenWindowIds: input.hiddenWindowIds ?? current.hiddenWindowIds,
 			hysteresisPercent: input.hysteresisPercent ?? current.hysteresisPercent,
 			minimumDwellMilliseconds: input.minimumDwellMilliseconds ?? current.minimumDwellMilliseconds,
 			thresholdPercent: input.thresholdPercent ?? current.thresholdPercent

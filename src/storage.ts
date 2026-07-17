@@ -109,6 +109,7 @@ function initialProviderState(provider: ProviderId): ProviderState {
 		policy: {
 			authorization: 'notConfirmed',
 			enabled: false,
+			hiddenWindowIds: [],
 			hysteresisPercent: 5,
 			maximumSnapshotAgeMilliseconds: 420_000,
 			minimumDwellMilliseconds: 300_000,

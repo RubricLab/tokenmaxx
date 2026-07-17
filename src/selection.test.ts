@@ -47,6 +47,7 @@ function state(
 		policy: {
 			authorization: 'confirmed',
 			enabled: true,
+			hiddenWindowIds: [],
 			hysteresisPercent: 5,
 			maximumSnapshotAgeMilliseconds: 420_000,
 			minimumDwellMilliseconds: 300_000,

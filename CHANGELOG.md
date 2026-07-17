@@ -1,3 +1,4 @@
+- [2026-07-17] [responsive centered dashboard: inline resets, pricing metrics, in-ui onboarding](https://github.com/RubricLab/tokenmaxx/commit/1d3feadc7be6021425131ed123c257bce83b580b)
 - [2026-07-17] [fix stale relogin command in error hints](https://github.com/RubricLab/tokenmaxx/commit/6410fdb1c0bf03e3c7fe906176e97cff559ae5c6)
 - [2026-07-17] [run under any package manager via a bun-locating launcher](https://github.com/RubricLab/tokenmaxx/commit/0beb61a97cee44a780eeeaae46b0ce598fa19531)
 - [2026-07-17] [view modes, switch flash, update prompt, fewer probes](https://github.com/RubricLab/tokenmaxx/commit/2d4a9507b04d4e167b863cf3f4f2dcd5778b27f4)

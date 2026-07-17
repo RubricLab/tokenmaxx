@@ -13,7 +13,7 @@ import {
 	uninstallCodexConfig
 } from './config-install.ts'
 import { acquireDaemonLock } from './daemon-lock.ts'
-import type { Account } from './domain.ts'
+import type { Account, ProviderId } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
 import {
 	managerAvailable,
@@ -465,6 +465,20 @@ async function uninstallConfig(): Promise<void> {
 	)
 }
 
+// Enable or disable native routing for a single provider — the config-file edit
+// behind the dashboard's routing toggle.
+async function setRouting(
+	context: ApplicationContext,
+	provider: ProviderId,
+	enable: boolean
+): Promise<void> {
+	if (provider === 'openai') {
+		await (enable ? installCodexConfig(context.paths) : uninstallCodexConfig())
+	} else {
+		await (enable ? installClaudeConfig(context.paths) : uninstallClaudeConfig())
+	}
+}
+
 async function doctor(context: ApplicationContext): Promise<void> {
 	const tools = [
 		['bun', '1.2+'],
@@ -548,13 +562,14 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 					])
 					const now = process.env.TOKENMAXX_NOW ? Number(process.env.TOKENMAXX_NOW) : FIXTURE_NOW
 					const timewarp = Number(process.env.TOKENMAXX_TIMEWARP ?? 0)
+					const routed = process.env.TOKENMAXX_INSTALLED !== 'false'
 					await runTuiDashboard(context.paths.managerSocket, {
 						fixture: {
 							name: fixtureName,
 							now,
 							timewarp: Number.isFinite(timewarp) && timewarp > 0 ? timewarp : 0
 						},
-						installed: process.env.TOKENMAXX_INSTALLED !== 'false'
+						routing: { anthropic: routed, openai: routed }
 					})
 					context.store.close()
 					process.exit(0)
@@ -562,15 +577,25 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				await ensureDaemon(context)
 				if (process.stdout.isTTY) {
 					const { runTuiDashboard } = await import('./tui/dashboard.ts')
+					const readRouting = async (): Promise<Record<'openai' | 'anthropic', boolean>> => {
+						const status = await installStatus()
+						return { anthropic: status.claudeRouted, openai: status.codexRouted }
+					}
 					for (;;) {
 						const action = await runTuiDashboard(context.paths.managerSocket, {
-							installed: await isInstalled()
+							routing: await readRouting()
 						})
 						if (action === undefined) {
 							break
 						}
-						if (action.kind === 'relogin') {
+						if (action.kind === 'relogin' || action.kind === 'login') {
 							await login(context, action.provider === 'openai' ? 'codex' : 'claude').catch(error => {
+								process.stdout.write(`${errorMessage(error)}\n`)
+							})
+							continue
+						}
+						if (action.kind === 'routing') {
+							await setRouting(context, action.provider, action.enable).catch(error => {
 								process.stdout.write(`${errorMessage(error)}\n`)
 							})
 							continue

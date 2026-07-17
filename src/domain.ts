@@ -88,6 +88,10 @@ export const AutomationPolicySchema = z
 	.object({
 		authorization: AuthorizationStateSchema.default('notConfirmed'),
 		enabled: z.boolean(),
+		// Rate-limit windows the operator has chosen to hide from the dashboard,
+		// keyed by UsageWindow.id (display-only; never affects rotation). Defaulted
+		// so every policy persisted before this field parses unchanged.
+		hiddenWindowIds: z.array(z.string()).default([]),
 		hysteresisPercent: z.number().min(0).max(25).default(5),
 		maximumSnapshotAgeMilliseconds: z.number().int().positive().default(420_000),
 		minimumDwellMilliseconds: z.number().int().min(0).default(300_000),
@@ -181,23 +185,39 @@ export const TokenEventSchema = z
 	.strict()
 export type TokenEvent = z.infer<typeof TokenEventSchema>
 
+// A model or provider row in the metrics view: token counts split by class,
+// with the dollar value already priced at each class's own rate.
+export const TokenBreakdownSchema = z
+	.object({
+		cacheCreation: z.number().nonnegative(),
+		cached: z.number().nonnegative(),
+		costUsd: z.number().nonnegative(),
+		input: z.number().nonnegative(),
+		output: z.number().nonnegative(),
+		tokens: z.number().nonnegative()
+	})
+	.strict()
+export type TokenBreakdown = z.infer<typeof TokenBreakdownSchema>
+
 export const TokenTimeframeSchema = z
 	.object({
 		bucketMs: z.number().positive(),
 		buckets: z.array(z.number().nonnegative()),
+		// Per-provider rollup, each priced per token class, for the metrics table.
+		byProvider: z.array(TokenBreakdownSchema.extend({ provider: ProviderIdSchema }).strict()),
+		// The grand total split by cost class, so the value is auditable per type.
+		costCacheCreation: z.number().nonnegative(),
+		costCached: z.number().nonnegative(),
+		costInput: z.number().nonnegative(),
+		costOutput: z.number().nonnegative(),
 		costUsd: z.number().nonnegative(),
 		key: z.string(),
-		peakPerHour: z.number().nonnegative(),
-		topModels: z.array(
-			z
-				.object({
-					costUsd: z.number().nonnegative(),
-					model: z.string(),
-					provider: ProviderIdSchema,
-					tokens: z.number().nonnegative()
-				})
-				.strict()
+		// Every model that saw traffic in the window, richest first — the metrics
+		// view scrolls through them rather than truncating to a top-N.
+		models: z.array(
+			TokenBreakdownSchema.extend({ model: z.string(), provider: ProviderIdSchema }).strict()
 		),
+		peakPerHour: z.number().nonnegative(),
 		totalCacheCreation: z.number().nonnegative(),
 		totalCached: z.number().nonnegative(),
 		totalInput: z.number().nonnegative(),

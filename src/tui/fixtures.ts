@@ -29,51 +29,70 @@ function buildTokens(scale: number): TokenAnalytics {
 		const target = Math.round(150_000 * hours * 0.5 * scale)
 		const buckets = raw.map(value => Math.round((value / rawSum) * target))
 		const totalTokens = buckets.reduce((sum, value) => sum + value, 0)
-		const totalCached = Math.round(totalTokens * 0.58)
-		const totalCacheCreation = Math.round(totalTokens * 0.04)
-		const totalInput = Math.round(totalTokens * 0.26)
-		const codexTokens = Math.round(totalTokens * 0.55)
-		const claudeTokens = totalTokens - codexTokens
-		const split = (tokens: number, model: string) =>
-			costUsd(
-				model,
-				Math.round(tokens * 0.24),
-				Math.round(tokens * 0.12),
-				Math.round(tokens * 0.6),
-				Math.round(tokens * 0.04)
-			)
-		const codexCost = split(codexTokens, 'gpt-5.6-sol')
-		const claudeCost = split(claudeTokens, 'claude-opus-4-8')
+		// A believable spread of models per provider, each split into token
+		// classes and priced per class — the whole metrics view derives from this.
+		const modelMix: { model: string; provider: ProviderId; share: number }[] = [
+			{ model: 'gpt-5.6-sol', provider: 'openai', share: 0.42 },
+			{ model: 'gpt-5.6-codex', provider: 'openai', share: 0.13 },
+			{ model: 'claude-opus-4-8', provider: 'anthropic', share: 0.3 },
+			{ model: 'claude-sonnet-4-6', provider: 'anthropic', share: 0.11 },
+			{ model: 'claude-haiku-4-5', provider: 'anthropic', share: 0.04 }
+		]
+		const models = modelMix
+			.map(entry => {
+				const tokens = Math.round(totalTokens * entry.share)
+				const input = Math.round(tokens * 0.24)
+				const output = Math.round(tokens * 0.12)
+				const cacheCreation = Math.round(tokens * 0.04)
+				const cached = tokens - input - output - cacheCreation
+				return {
+					cacheCreation,
+					cached,
+					costUsd: costUsd(entry.model, input, output, cached, cacheCreation),
+					input,
+					model: entry.model,
+					output,
+					provider: entry.provider,
+					tokens
+				}
+			})
+			.filter(entry => entry.tokens > 0)
+		const sum = (pick: (m: (typeof models)[number]) => number) =>
+			models.reduce((total, model) => total + pick(model), 0)
+		const byProviderMap = new Map<ProviderId, (typeof models)[number][]>()
+		for (const model of models) {
+			byProviderMap.set(model.provider, [...(byProviderMap.get(model.provider) ?? []), model])
+		}
+		const byProvider = [...byProviderMap.entries()]
+			.map(([provider, entries]) => ({
+				cacheCreation: entries.reduce((t, m) => t + m.cacheCreation, 0),
+				cached: entries.reduce((t, m) => t + m.cached, 0),
+				costUsd: entries.reduce((t, m) => t + m.costUsd, 0),
+				input: entries.reduce((t, m) => t + m.input, 0),
+				output: entries.reduce((t, m) => t + m.output, 0),
+				provider,
+				tokens: entries.reduce((t, m) => t + m.tokens, 0)
+			}))
+			.sort((left, right) => right.costUsd - left.costUsd)
 		const bucketMs = timeframe.ms / 120
 		const peakBucket = buckets.reduce((max, value) => Math.max(max, value), 0)
 		return {
 			bucketMs,
 			buckets,
-			costUsd: codexCost + claudeCost,
+			byProvider,
+			costCacheCreation: models.reduce((t, m) => t + costUsd(m.model, 0, 0, 0, m.cacheCreation), 0),
+			costCached: models.reduce((t, m) => t + costUsd(m.model, 0, 0, m.cached, 0), 0),
+			costInput: models.reduce((t, m) => t + costUsd(m.model, m.input, 0, 0, 0), 0),
+			costOutput: models.reduce((t, m) => t + costUsd(m.model, 0, m.output, 0, 0), 0),
+			costUsd: sum(m => m.costUsd),
 			key: timeframe.key,
+			models: models.sort((left, right) => right.costUsd - left.costUsd),
 			peakPerHour: Math.round(peakBucket * (3_600_000 / bucketMs)),
-			topModels:
-				totalTokens === 0
-					? []
-					: [
-							{
-								costUsd: codexCost,
-								model: 'gpt-5.6-sol',
-								provider: 'openai' as const,
-								tokens: codexTokens
-							},
-							{
-								costUsd: claudeCost,
-								model: 'claude-opus-4-8',
-								provider: 'anthropic' as const,
-								tokens: claudeTokens
-							}
-						].sort((left, right) => right.tokens - left.tokens),
-			totalCacheCreation,
-			totalCached,
-			totalInput,
-			totalOutput: totalTokens - totalInput - totalCached - totalCacheCreation,
-			totalTokens
+			totalCacheCreation: sum(m => m.cacheCreation),
+			totalCached: sum(m => m.cached),
+			totalInput: sum(m => m.input),
+			totalOutput: sum(m => m.output),
+			totalTokens: sum(m => m.tokens)
 		}
 	})
 	const hourly = timeframes[0]
@@ -192,11 +211,13 @@ function policy(
 	provider: ProviderId,
 	enabled: boolean,
 	thresholdPercent = 90,
-	minimumDwellMilliseconds = 300_000
+	minimumDwellMilliseconds = 300_000,
+	hiddenWindowIds: string[] = []
 ): AutomationPolicy {
 	return {
 		authorization: enabled ? 'confirmed' : 'notConfirmed',
 		enabled,
+		hiddenWindowIds,
 		hysteresisPercent: 5,
 		maximumSnapshotAgeMilliseconds: 420_000,
 		minimumDwellMilliseconds,
@@ -638,7 +659,7 @@ const blitz: ScenarioBuilder = now => {
 				? [
 						{
 							fillFrac: 0.5,
-							id: 'seven_day_fable',
+							id: 'weekly_scoped:fable',
 							label: '7 day · Fable',
 							nowFrac: 0.5,
 							peak: clamp(seven(runner, minutes) * 1.12),

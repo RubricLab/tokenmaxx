@@ -42,7 +42,8 @@ const SwitchParamsSchema = z
 const PolicyParamsSchema = z
 	.object({
 		authorizationConfirmed: z.boolean().optional(),
-		enabled: z.boolean(),
+		enabled: z.boolean().optional(),
+		hiddenWindowIds: z.array(z.string()).optional(),
 		hysteresisPercent: z.number().min(0).max(25).optional(),
 		minimumDwellMilliseconds: z.number().int().min(0).optional(),
 		provider: ProviderIdSchema,
@@ -316,11 +317,12 @@ export function requestPolicy(
 	socketPath: string,
 	input: {
 		provider: ProviderId
-		enabled: boolean
+		enabled?: boolean
 		thresholdPercent?: number
 		authorizationConfirmed?: boolean
 		minimumDwellMilliseconds?: number
 		hysteresisPercent?: number
+		hiddenWindowIds?: string[]
 	}
 ): Promise<void> {
 	return managerRequest({

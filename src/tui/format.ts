@@ -220,6 +220,40 @@ export function resetCountdown(resetAtIso: string | null, nowMillis: number): st
 	return remainderHours === 0 ? `${days}d` : `${days}d ${remainderHours}h`
 }
 
+// The single largest unit of a reset countdown, for the inline ↻ marker on an
+// account row where space is tight: 2h, 3d, 45m — never two units.
+export function shortReset(resetAtIso: string | null, nowMillis: number): string | null {
+	if (resetAtIso === null) {
+		return null
+	}
+	const resetMillis = Date.parse(resetAtIso)
+	if (!Number.isFinite(resetMillis)) {
+		return null
+	}
+	const remaining = resetMillis - nowMillis
+	if (remaining <= 0) {
+		return 'now'
+	}
+	const minutes = Math.round(remaining / 60_000)
+	if (minutes < 60) {
+		return `${minutes}m`
+	}
+	const hours = Math.round(minutes / 60)
+	if (hours < 24) {
+		return `${hours}h`
+	}
+	return `${Math.round(hours / 24)}d`
+}
+
+// Plan compacted to a small tag that trails the account label: max20, pro, team.
+export function planTag(plan: string | null | undefined): string | null {
+	const label = planLabel(plan)
+	if (label === null) {
+		return null
+	}
+	return label.toLowerCase().replace(/\s*×/g, '').replace(/\s+/g, '')
+}
+
 export function planLabel(plan: string | null | undefined): string | null {
 	if (plan === null || plan === undefined) {
 		return null
