@@ -1,15 +1,16 @@
-- [2026-07-17] [bring back rubriclab package](https://github.com/RubricLab/tokenmaxx/commit/b44ba5b1bc9cb7323f1533f12fd2f1f00bcc6c95)
+- [2026-07-17] update rubriclab package
+- [2026-07-17] [bring back rubriclab package](https://github.com/RubricLab/tokenmaxx/commit/90884242a1971fd4fa8271e67b02f9a8ff8c51cb)
 - [2026-07-17] [flatten providers, strip comments, drop dead code](https://github.com/RubricLab/tokenmaxx/commit/b5aa307b5010159591d713474589bcfd5cce3114)
 - [2026-07-17] [drop changelog, architecture doc, vercel redirect](https://github.com/RubricLab/tokenmaxx/commit/6cbdb2659d1d60acbdca8479b837d009e080affd)
-- [2026-07-17] [claude refresh in process](https://github.com/RubricLab/tokenmaxx/commit/f9ae2f1e88c607c533f57255077441211e9c2f41)
-- [2026-07-17] [the readme is the landing page: real captures only](https://github.com/RubricLab/tokenmaxx/commit/0db404df5a3d7ac4fa7fadcc8c4d7d1a74139ae4)
-- [2026-07-17] [drop the asset factory: fixture renders, remotion, brand generator](https://github.com/RubricLab/tokenmaxx/commit/3de71c1a13402ff8abb24bb111cdca42a25d5267)
+- [2026-07-17] [claude refresh in process](https://github.com/RubricLab/tokenmaxx/commit/2e1f340563b7df4fadfaee6cbd5c740ed1ae8f2a)
+- [2026-07-17] [the readme is the landing page: real captures only](https://github.com/RubricLab/tokenmaxx/commit/eb418552300b5148f315045862a4b93b3043e607)
+- [2026-07-17] [drop the asset factory: fixture renders, remotion, brand generator](https://github.com/RubricLab/tokenmaxx/commit/0492d3ad3a1735b1453ba410af0208ef918a3154)
 - [2026-07-17] [routing becomes a plain tokenmaxx on/off in settings
 
 The accounts title is quiet when on (just the auto policy) and shows '✗ off'
 warn with a settings pointer when not. Settings gains a master on/off row per
 provider — 'tokenmaxx · on/off · run codex through tokenmaxx' — and r is
-refresh everywhere. Copy drops the word 'routing' throughout.](https://github.com/RubricLab/tokenmaxx/commit/1579bcdf0d163207c5e4722ec4774f10daf98f39)
+refresh everywhere. Copy drops the word 'routing' throughout.](https://github.com/RubricLab/tokenmaxx/commit/658630836990996c2cdfefc40e4da0eaeba8024f)
 - [2026-07-17] [quiet switches, clearer routing hint, staggered 5h resets
 
 A switch no longer takes over the panel title or paints the border warn — the
@@ -17,36 +18,36 @@ new active row's marker briefly reads ⟳ in the same green, and that is the
 whole announcement. The footer hint is now 'r routing', matching the panel's
 own 'routing on/off' language. In the demo, each 5h window opens when its
 account's shift starts, so reset countdowns stagger by rotation: hot rows count
-down on their own clocks, refresh, and drop to the bottom of the board.](https://github.com/RubricLab/tokenmaxx/commit/78f1a435fb10ff4cf4b934ca8f4ab45f4bfe0485)
+down on their own clocks, refresh, and drop to the bottom of the board.](https://github.com/RubricLab/tokenmaxx/commit/8b5096e71ba586be3881dead4b790010d2bc4b26)
 - [2026-07-17] [sort account rows by pressure, not active-first
 
 A switch now just moves the ● marker to another row instead of reshuffling the
-panel; rows trade places only when their pressures actually cross.](https://github.com/RubricLab/tokenmaxx/commit/e3a7479394e498fe1694ccf8834676739bb12061)
+panel; rows trade places only when their pressures actually cross.](https://github.com/RubricLab/tokenmaxx/commit/865449c8078104c634aed19e260f30e56fa4463e)
 - [2026-07-17] [blitz meters burn only while active; switches fire exactly at the 90% threshold
 
 Codex is now a strict threshold relay: one account holds the baton, its 7-day
 meter climbs, and the handoff happens at exactly 90% — idle meters never move.
 Claude's Fable weekly likewise accrues only during its account's active shifts.
 Handoff times stay mid-way between the other provider's, so the two never flash
-'switched' together.](https://github.com/RubricLab/tokenmaxx/commit/8333a3987b2e37b3bc2a058a9440ad546a810537)
+'switched' together.](https://github.com/RubricLab/tokenmaxx/commit/6429c63e28bf71937f210cb565a7d6d8d08b03a3)
 - [2026-07-17] [drop the accounts view toggle — settings now controls window visibility](https://github.com/RubricLab/tokenmaxx/commit/61e65d6b10088b15aa535222e6117ec8d0c66fdf)
-- [2026-07-17] [align the per-class cost row under its columns](https://github.com/RubricLab/tokenmaxx/commit/54e4756b5000d74a1fe99d1ea6f30ec07f0d0c6e)
-- [2026-07-17] [auto-enable routing when the first account is added](https://github.com/RubricLab/tokenmaxx/commit/c296237cdff57d09a3616a5438e3d50d5b97980e)
-- [2026-07-17] [compact tier shows two window columns](https://github.com/RubricLab/tokenmaxx/commit/eb8e6ab164aef67d55e0cd91c9d5199d8c9e18d6)
-- [2026-07-17] [content-fit account panels; calmer demo fixture (codex 7d, claude 5h+fable)](https://github.com/RubricLab/tokenmaxx/commit/90f68e234e843e80130856235efbb959b2ac0251)
-- [2026-07-17] [routing as a loud on/off on accounts; clearer metrics + settings; aligned resets](https://github.com/RubricLab/tokenmaxx/commit/28539c21d8eb42b5dc79f767cc9c9dda9b15bed2)
-- [2026-07-17] [cap account rows to the content width so wide terminals don't wrap](https://github.com/RubricLab/tokenmaxx/commit/09fe360558968c95db3c33f8ff9ac74a5988a67e)
-- [2026-07-17] [never strand on daemon restart: shutdown watchdog + force-kill fallback](https://github.com/RubricLab/tokenmaxx/commit/108b5a366f4df3b4b4e9954abcdc54d1e62b746b)
-- [2026-07-17] [stagger blitz depletion so codex and claude run out on distinct clocks](https://github.com/RubricLab/tokenmaxx/commit/707f259b426ad37f2ea1fb9f48cda9df388df61d)
-- [2026-07-17] [breathing room in the metrics columns](https://github.com/RubricLab/tokenmaxx/commit/a41e12b13137569356160cda6d9f35e035b2522b)
-- [2026-07-17] [exact dollar values in the metrics table](https://github.com/RubricLab/tokenmaxx/commit/2d0e789c1bc8ddf9cb36308e9d2e03f50bee370f)
-- [2026-07-17] [responsive centered dashboard: inline resets, pricing metrics, in-ui onboarding](https://github.com/RubricLab/tokenmaxx/commit/1d3feadc7be6021425131ed123c257bce83b580b)
-- [2026-07-17] [fix stale relogin command in error hints](https://github.com/RubricLab/tokenmaxx/commit/6410fdb1c0bf03e3c7fe906176e97cff559ae5c6)
-- [2026-07-17] [run under any package manager via a bun-locating launcher](https://github.com/RubricLab/tokenmaxx/commit/0beb61a97cee44a780eeeaae46b0ce598fa19531)
-- [2026-07-17] [view modes, switch flash, update prompt, fewer probes](https://github.com/RubricLab/tokenmaxx/commit/2d4a9507b04d4e167b863cf3f4f2dcd5778b27f4)
-- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/01bab2e6760ff74f92fb5d34e63949c7a690db78)
-- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/6cacce71b04ff308e9ce235ac6d5a3a4d897fde6)
-- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/f0972d14ad7ea685ea00e0aebac2e29e3f9757a0)
+- [2026-07-17] [align the per-class cost row under its columns](https://github.com/RubricLab/tokenmaxx/commit/e5c77bb5318f60553a46f66d63ff4d0ed0ec88fc)
+- [2026-07-17] [auto-enable routing when the first account is added](https://github.com/RubricLab/tokenmaxx/commit/68b514c09a5f20bdb4f67377f8302c25548030e5)
+- [2026-07-17] [compact tier shows two window columns](https://github.com/RubricLab/tokenmaxx/commit/1f5f286743955b32f8d1629d642041ee8ecb7c0f)
+- [2026-07-17] [content-fit account panels; calmer demo fixture (codex 7d, claude 5h+fable)](https://github.com/RubricLab/tokenmaxx/commit/8907027c93923ca9fd78386201875345f29a02a9)
+- [2026-07-17] [routing as a loud on/off on accounts; clearer metrics + settings; aligned resets](https://github.com/RubricLab/tokenmaxx/commit/46b8642aff52fbf86152e20f5b289be6579f974f)
+- [2026-07-17] [cap account rows to the content width so wide terminals don't wrap](https://github.com/RubricLab/tokenmaxx/commit/d46f98b98547abb80a7edc65417fda3417c35bd2)
+- [2026-07-17] [never strand on daemon restart: shutdown watchdog + force-kill fallback](https://github.com/RubricLab/tokenmaxx/commit/0b58f04adcec0c5e4630c6505b099d29d3109f20)
+- [2026-07-17] [stagger blitz depletion so codex and claude run out on distinct clocks](https://github.com/RubricLab/tokenmaxx/commit/022a78073a2782fdc75d9a6ec2410434f13b3b2d)
+- [2026-07-17] [breathing room in the metrics columns](https://github.com/RubricLab/tokenmaxx/commit/6c862cca3750fb107e29302595bf1ef334317f0d)
+- [2026-07-17] [exact dollar values in the metrics table](https://github.com/RubricLab/tokenmaxx/commit/df5716481c32bc5fb4c1e1050874cfb8961b7577)
+- [2026-07-17] [responsive centered dashboard: inline resets, pricing metrics, in-ui onboarding](https://github.com/RubricLab/tokenmaxx/commit/6b769c593ee4f9a02cea782a0f49b6cd679f8c7b)
+- [2026-07-17] [fix stale relogin command in error hints](https://github.com/RubricLab/tokenmaxx/commit/2845f3047c0fe20e11cbb35dbaeb0a36c67c4f2d)
+- [2026-07-17] [run under any package manager via a bun-locating launcher](https://github.com/RubricLab/tokenmaxx/commit/05ff0720f3c1fee453a2fc1693271a6bba4496df)
+- [2026-07-17] [view modes, switch flash, update prompt, fewer probes](https://github.com/RubricLab/tokenmaxx/commit/3d10711dfbd7a7cf6c521da10944fd0d1c184743)
+- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/146fa7cd97c2e434bf9278ff1721e061b9e5c2c1)
+- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/146fa7cd97c2e434bf9278ff1721e061b9e5c2c1)
+- [2026-07-17] [version-aware daemon, update notice, wider labels, blitz fixture](https://github.com/RubricLab/tokenmaxx/commit/146fa7cd97c2e434bf9278ff1721e061b9e5c2c1)
 - [2026-07-16] [style: give the analytics metrics hierarchy and alignment
 
 The block under the chart was five ragged rows fighting for attention.
@@ -108,7 +109,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>](https://github.com/Rubri
   reauthentication-required, so an outage no longer flips accounts to
   "login" at random
 - cool re-auth probes down for 15 minutes instead of retrying every 60s,
-  and timestamp daemon log lines](https://github.com/RubricLab/tokenmaxx/commit/b283d1ea48fcf358375f91f7a39a7fdec28754e4)
+  and timestamp daemon log lines](https://github.com/RubricLab/tokenmaxx/commit/924e3c525d7f0224b7c11a33ff2d83d8bb94c71d)
 - [2026-07-16] [fix: honest proxy errors, serialized claude refresh, network-aware health
 
 - pass upstream API errors through untouched; proxy-generated failures now
@@ -126,11 +127,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>](https://github.com/Rubri
   reauthentication-required, so an outage no longer flips accounts to
   "login" at random
 - cool re-auth probes down for 15 minutes instead of retrying every 60s,
-  and timestamp daemon log lines](https://github.com/RubricLab/tokenmaxx/commit/ce7f2d16591c2a3698d0609d3d16966b2473b300)
-- [2026-07-15] [docs: restore the flaked analytics screenshot](https://github.com/RubricLab/tokenmaxx/commit/68ebb3cf1abac88bae5f7718d22870814bd2a44e)
-- [2026-07-15] [feat: cache-aware token metering and a polished analytics dashboard](https://github.com/RubricLab/tokenmaxx/commit/271094ba01447ced0e3423d4d5356744d4545c92)
-- [2026-07-15] [chore: redirect tokenmaxx.sh to the repo](https://github.com/RubricLab/tokenmaxx/commit/07f247f2add6c743a81e80be5e55bc5253f132b6)
-- [2026-07-15] [docs: simplify the install line](https://github.com/RubricLab/tokenmaxx/commit/45fd2aa0ffdf991976969a3108f260954bae1d31)
-- [2026-07-15] [chore: adopt the rubric package conventions](https://github.com/RubricLab/tokenmaxx/commit/465dfeb5879bd4bbdf6e7e455e13c81b2f5d3715)
+  and timestamp daemon log lines](https://github.com/RubricLab/tokenmaxx/commit/924e3c525d7f0224b7c11a33ff2d83d8bb94c71d)
+- [2026-07-15] [docs: restore the flaked analytics screenshot](https://github.com/RubricLab/tokenmaxx/commit/dc0dc7c5dc947cf421ef9445116c6e348117c48c)
+- [2026-07-15] [feat: cache-aware token metering and a polished analytics dashboard](https://github.com/RubricLab/tokenmaxx/commit/0a88f7b17a4174d21ed795837a7876e687dc3d5c)
+- [2026-07-15] [chore: redirect tokenmaxx.sh to the repo](https://github.com/RubricLab/tokenmaxx/commit/c02bbd94c96eb00a1007dac28aec805ff90a814a)
+- [2026-07-15] [docs: simplify the install line](https://github.com/RubricLab/tokenmaxx/commit/2176f13ad1f4506d9440365d76d4391e8250c28d)
+- [2026-07-15] [chore: adopt the rubric package conventions](https://github.com/RubricLab/tokenmaxx/commit/f7cea41d2ad0c6e90ac8ee01fffb3a28652afb60)
 # Changelog
 

@@ -10,7 +10,7 @@
       "devDependencies": {
         "@biomejs/biome": "^2.0.0",
         "@rubriclab/config": "*",
-        "@rubriclab/package": "*",
+        "@rubriclab/package": "^0.0.125",
         "@types/bun": "^1.2.0",
         "typescript": "^5.8.0",
       },
@@ -69,7 +69,7 @@
 
     "@rubriclab/config": ["@rubriclab/config@0.0.24", "", { "dependencies": { "@rubriclab/package": "*" }, "peerDependencies": { "@biomejs/biome": "^2.3.8", "@tailwindcss/postcss": "^4.1.17", "postcss": "^8.5.6", "tailwindcss": "^4.1.17", "typescript": "^5.9.3" } }, "sha512-9i+nj7ESsG/r95SiDtncQG9fZbNKNJrIJDNh09kAAvfKGpGputV6lSsIshr3dBNm8sYl+59u+w5QKilFKilXOA=="],
 
-    "@rubriclab/package": ["@rubriclab/package@0.0.124", "", { "dependencies": { "@rubriclab/cli": "*", "zod": "latest" }, "bin": { "rubriclab-package": "cli.ts" } }, "sha512-H0xMiWFdrTf/aoEd8hsJ9PfsBhhutROo4+Ryc8TKCjEPky1HFwEUPtD7l/wdaAHbGEGgTQP/8hTn6J0SDOFHIQ=="],
+    "@rubriclab/package": ["@rubriclab/package@0.0.125", "", { "dependencies": { "@rubriclab/cli": "*", "zod": "latest" }, "bin": { "rubriclab-package": "cli.ts" } }, "sha512-pngTkacuZIW308N1ujCjXqB7bI8LWPCLpZZeqtwDIudA1Mcugr1mVKsj834XVD1zPp0XLwWxWT+aPeJu3sdL1A=="],
 
     "@tailwindcss/node": ["@tailwindcss/node@4.3.2", "", { "dependencies": { "@jridgewell/remapping": "^2.3.5", "enhanced-resolve": "5.21.6", "jiti": "^2.7.0", "lightningcss": "1.32.0", "magic-string": "^0.30.21", "source-map-js": "^1.2.1", "tailwindcss": "4.3.2" } }, "sha512-yWP/sqEcBLaD8JuA6zNwxoYKr75qxTioYwlRwekj5Jr/I5GXnoJfjetH/psLUIv74cYTH2lBUEzBkinthoYcBg=="],
 
@@ -176,6 +176,10 @@
     "web-tree-sitter": ["web-tree-sitter@0.25.10", "", { "peerDependencies": { "@types/emscripten": "^1.40.0" }, "optionalPeers": ["@types/emscripten"] }, "sha512-Y09sF44/13XvgVKgO2cNDw5rGk6s26MgoZPXLESvMXeefBf7i6/73eFurre0IsTW6E14Y0ArIzhUMmjoc7xyzA=="],
 
     "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
+
+    "@rubriclab/cli/@rubriclab/package": ["@rubriclab/package@0.0.124", "", { "dependencies": { "@rubriclab/cli": "*", "zod": "latest" }, "bin": { "rubriclab-package": "cli.ts" } }, "sha512-H0xMiWFdrTf/aoEd8hsJ9PfsBhhutROo4+Ryc8TKCjEPky1HFwEUPtD7l/wdaAHbGEGgTQP/8hTn6J0SDOFHIQ=="],
+
+    "@rubriclab/config/@rubriclab/package": ["@rubriclab/package@0.0.124", "", { "dependencies": { "@rubriclab/cli": "*", "zod": "latest" }, "bin": { "rubriclab-package": "cli.ts" } }, "sha512-H0xMiWFdrTf/aoEd8hsJ9PfsBhhutROo4+Ryc8TKCjEPky1HFwEUPtD7l/wdaAHbGEGgTQP/8hTn6J0SDOFHIQ=="],
 
     "@tailwindcss/oxide-wasm32-wasi/@emnapi/core": ["@emnapi/core@1.11.2", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.2", "tslib": "^2.4.0" }, "bundled": true }, "sha512-TC8MkTuZUtcTSiFeuC0ksCh9QIJ5+F21MvZ4Wn4ORfYaFJ/0dsiudv5tVkejgwZlwQ39jL9WWDe2lz8x0WglOA=="],
 
