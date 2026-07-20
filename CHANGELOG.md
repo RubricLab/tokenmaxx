@@ -1,4 +1,5 @@
-- [2026-07-20] update readme
+- [2026-07-20] license
+- [2026-07-20] [update readme](https://github.com/RubricLab/tokenmaxx/commit/0162f48d6b7bfb3639ed953aa1719965350d01fe)
 - [2026-07-20] [the limited star gets its own column, panels get slack](https://github.com/RubricLab/tokenmaxx/commit/15976c0786b8e2a83aa455bf13e56f8d0784d1a8)
 - [2026-07-20] [surface login errors, call out missing clis](https://github.com/RubricLab/tokenmaxx/commit/8baf36981e3b662aa5bf293a18d101f79490b4f7)
 - [2026-07-20] [replace an unreachable daemon holding the port, fixes #3](https://github.com/RubricLab/tokenmaxx/commit/9e43ffb64961c34de13e82b71f59827637e2f18f)
