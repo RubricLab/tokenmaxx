@@ -186,6 +186,20 @@ function observeStream(
 	)
 }
 
+const proxyFingerprint = 'tokenmaxx proxy'
+
+export async function proxyIdentity(port: number): Promise<'tokenmaxx' | 'foreign' | null> {
+	try {
+		const response = await fetch(`http://127.0.0.1:${port}/`, {
+			signal: AbortSignal.timeout(1_000)
+		})
+		const body = await response.text()
+		return body.startsWith(proxyFingerprint) ? 'tokenmaxx' : 'foreign'
+	} catch {
+		return null
+	}
+}
+
 const strippedRequestHeaders = [
 	'host',
 	'connection',
@@ -268,7 +282,7 @@ function createProxyHandler(options: ProxyOptions): ProxyHandler {
 			const url = new URL(request.url)
 			const route = routeProvider(url.pathname)
 			if (route === null) {
-				return new Response('tokenmaxx proxy: unknown route\n', { status: 404 })
+				return new Response(`${proxyFingerprint}: unknown route\n`, { status: 404 })
 			}
 			const body =
 				request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer()
