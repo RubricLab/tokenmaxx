@@ -134,6 +134,14 @@ function panelResetColumn(snapshot: DashboardSnapshot, provider: ProviderId): nu
 		)
 }
 
+function panelBadgeColumn(ctx: Ctx, snapshot: DashboardSnapshot, provider: ProviderId): number {
+	return snapshot.accounts.some(
+		account => account.provider === provider && healthBadge(ctx.theme, account) !== null
+	)
+		? 2
+		: 1
+}
+
 function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 	const labels = labelWidth(ctx)
 	let widest = 46 // never narrower than a provider title with its routing tag
@@ -148,13 +156,14 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 			(labels - 2) +
 			(tag === null ? 0 : tag.length + 1) +
 			panelResetColumn(snapshot, account.provider) +
-			2
+			panelBadgeColumn(ctx, snapshot, account.provider) +
+			1
 		const body = visible
 			.slice(0, windowsShown(ctx))
 			.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
 		widest = Math.max(widest, base + body)
 	}
-	return Math.min(CONTENT_MAX, ctx.columns - 2, widest)
+	return Math.min(CONTENT_MAX, ctx.columns - 2, widest + 2)
 }
 
 function isFiveHour(window: UsageWindow): boolean {
@@ -252,6 +261,7 @@ function accountLine(
 	usage: UsageSnapshot | undefined,
 	hiddenIds: readonly string[],
 	resetColumn: number,
+	badgeColumn: number,
 	isActive: boolean,
 	isSelected: boolean,
 	justSwitchedTo: boolean
@@ -279,7 +289,10 @@ function accountLine(
 						fg: rgb((credits?.applicable ?? 0) > 0 ? ctx.theme.good : ctx.theme.faint)
 					})
 				]),
-		Text({ content: badge === null ? ' ' : ' *', fg: rgb(badge?.color ?? ctx.theme.dim) })
+		Text({
+			content: (badge === null ? '' : ' *').padEnd(badgeColumn),
+			fg: rgb(badge?.color ?? ctx.theme.dim)
+		})
 	]
 	const visible = visibleWindows(usage?.windows ?? [], hiddenIds)
 	if (visible.length === 0) {
@@ -314,6 +327,7 @@ function providerPanel(
 		.filter(entry => entry.row.provider === provider)
 	const accountCount = providerRows.filter(entry => entry.row.accountId !== ADD_ROW).length
 	const resetColumn = panelResetColumn(snapshot, provider)
+	const badgeColumn = panelBadgeColumn(ctx, snapshot, provider)
 	const lines = providerRows.map(entry => {
 		const isSelected = entry.index === selected
 		if (entry.row.accountId === ADD_ROW) {
@@ -330,6 +344,7 @@ function providerPanel(
 			usage,
 			hiddenIds,
 			resetColumn,
+			badgeColumn,
 			state?.activeAccountId === entry.row.accountId,
 			isSelected,
 			switched
