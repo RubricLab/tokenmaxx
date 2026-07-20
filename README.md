@@ -4,13 +4,13 @@
 
 <br/>
 
-**Switch between your own Codex and Claude Code accounts, without logging in and out. See every token you burn.**
+**One dashboard for every Codex and Claude Code account you pay for. Switch between them without logging out and back in.**
 
 <sub>macOS · [Bun](https://bun.sh) · a [Rubric Labs](https://rubriclabs.com) project · not affiliated with OpenAI or Anthropic</sub>
 
 <br/><br/>
 
-<img alt="a day of switching: meters fill, and the active dot moves to the account with the most headroom" src="media/relay.gif" width="820">
+<img alt="a day of switching: meters fill, and the active dot moves to the account with the most room" src="media/relay.gif" width="820">
 
 </div>
 
@@ -26,24 +26,28 @@ tokenmaxx login claude
 tokenmaxx install         # route native codex & claude through tokenmaxx
 
 codex                     # use your clients as before
-claude                    # tokenmaxx injects the account, per request
+claude                    # tokenmaxx picks the account, per request
 ```
 
 ## What it does
 
-You pay for more than one Claude or ChatGPT subscription, and your coding
-agents fill the five-hour or weekly window on whichever account is signed in:
+You run a fleet of coding agents, and a five-hour window goes faster than
+you'd think:
 
 <div align="center">
 <img alt="a desktop full of parallel agent sessions burning tokens" src="media/fleet.gif" width="820">
 </div>
 
-tokenmaxx runs a loopback proxy that reads the active account on every request
-and injects its credential, so a switch lands on the very next request, even
-mid-turn, with your clients running unmodified. Each account stays exactly what
-it is: its own login, its own billing, its own limits, enforced by the provider
-as always. Credentials stay in the macOS Keychain; nothing but opaque
-references touches disk.
+If you pay for more than one account, tokenmaxx keeps them all signed in
+locally and lets you choose which one your clients use. A small proxy on your
+machine attaches the active account's credential to each request, so a switch
+takes effect on the very next request, even mid-turn. Your credentials live in
+the macOS Keychain and never go anywhere except to the provider that issued
+them.
+
+Nothing about the accounts themselves changes. Each one keeps its own login,
+its own billing, and its own limits, and the provider enforces those limits
+the same as always. tokenmaxx just saves you the logging out and back in.
 
 ## The dashboard
 
@@ -74,13 +78,15 @@ switch threshold, and cooldown, applied live.
 
 ## Auto-rotation
 
-Turn it on and tokenmaxx switches accounts when the active one's fullest
-window crosses your threshold, moving to the account with the most headroom.
-The default 90% keeps the last stretch of each window in reserve for you
-instead of spending it automatically. If an account hits its hard limit
-mid-request, the proxy retries that request on the next eligible account. Off
-by default; enabling it is your confirmation that your provider permits this
-use.
+Turn it on and tokenmaxx watches the active account's rate-limit windows.
+When the fullest one crosses your threshold, it switches to whichever of your
+accounts has the most room. The default threshold is 90%, which leaves the
+last stretch of every window alone in case you want it later. If an account
+hits a hard limit in the middle of a request, the proxy retries that request
+on your next account with room.
+
+Auto-rotation is off by default. Turning it on is your confirmation that your
+provider's terms are fine with it.
 
 ```bash
 tokenmaxx auto both on --threshold 90    # or: codex | claude … off
@@ -91,13 +97,13 @@ tokenmaxx auto both on --threshold 90    # or: codex | claude … off
 A single loopback proxy on `127.0.0.1:8459`, and the clients you already use.
 
 - **Account per request.** The proxy reads which account is active for each
-  request and injects its credential. Switching lands on the next request.
+  request and attaches its credential. Switching lands on the next request.
 - **Pressure read for free.** Both providers report rate-limit state on every
   response; the proxy reads it as traffic streams by, so it always knows how
   full the active account is, with zero extra requests.
-- **For the official apps.** The subscription login belongs in Claude Code and
-  Codex. For custom clients, harnesses, or anything else speaking the API, use
-  a provider-issued API key instead.
+- **Official apps only.** Your subscription login is for Claude Code and
+  Codex. If you're building something custom, use an API key from the
+  provider. tokenmaxx doesn't turn a subscription into an API plan.
 
 ## Commands
 
@@ -115,18 +121,18 @@ Env: `TOKENMAXX_HOME`, `TOKENMAXX_PROXY_PORT`, `TOKENMAXX_THEME`.
 
 ## Intended use
 
-tokenmaxx is one person switching between accounts they personally own and
-pay for, through the official Claude Code and Codex apps. It changes which
-account is signed in, never the limits attached to any of them. Don't share
-accounts or credentials, and don't pool or resell subscription usage. The
-software is provided as is, without warranty of any kind.
+tokenmaxx is for one person with accounts they pay for themselves. It signs
+you in and out, nothing more. No account gets bigger limits, no limit gets
+bypassed, and your credentials stay between your Keychain and the provider.
+Don't share accounts, don't pool them, don't resell access. Provider terms
+change, and it's on you to check that yours allow this kind of switching. The
+software is provided as is, with no warranty.
 
 ## Not affiliated
 
 An independent [Rubric Labs](https://rubriclabs.com) project, not an official
-product of, affiliated with, or endorsed by OpenAI or Anthropic. Use only
-accounts you own, and only where the relevant terms permit account automation.
-Inspired by [codex-account-switcher](https://github.com/Sls0n/codex-account-switcher).
+product of, affiliated with, or endorsed by OpenAI or Anthropic. Inspired by
+[codex-account-switcher](https://github.com/Sls0n/codex-account-switcher).
 
 <div align="center">
 <br/>
