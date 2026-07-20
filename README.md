@@ -4,13 +4,13 @@
 
 <br/>
 
-**Juggle rate limits across all your Codex and Claude Code accounts. See every token you burn.**
+**Switch between your own Codex and Claude Code accounts, without logging in and out. See every token you burn.**
 
 <sub>macOS · [Bun](https://bun.sh) · a [Rubric Labs](https://rubriclabs.com) project · not affiliated with OpenAI or Anthropic</sub>
 
 <br/><br/>
 
-<img alt="a day of juggling: meters fill, accounts max out, the active dot hops to fresh ones" src="media/relay.gif" width="820">
+<img alt="a day of switching: meters fill, and the active dot moves to the account with the most headroom" src="media/relay.gif" width="820">
 
 </div>
 
@@ -31,8 +31,8 @@ claude                    # tokenmaxx injects the account, per request
 
 ## What it does
 
-You run a fleet of coding agents, and they burn through the five-hour or
-weekly limit on whichever subscription you're using:
+You pay for more than one Claude or ChatGPT subscription, and your coding
+agents fill the five-hour or weekly window on whichever account is signed in:
 
 <div align="center">
 <img alt="a desktop full of parallel agent sessions burning tokens" src="media/fleet.gif" width="820">
@@ -40,8 +40,10 @@ weekly limit on whichever subscription you're using:
 
 tokenmaxx runs a loopback proxy that reads the active account on every request
 and injects its credential, so a switch lands on the very next request, even
-mid-turn, with your clients running unmodified. Credentials stay in the macOS
-Keychain; nothing but opaque references touches disk.
+mid-turn, with your clients running unmodified. Each account stays exactly what
+it is: its own login, its own billing, its own limits, enforced by the provider
+as always. Credentials stay in the macOS Keychain; nothing but opaque
+references touches disk.
 
 ## The dashboard
 
@@ -54,13 +56,13 @@ sort by pressure; the ● marks where traffic is going right now.
 </div>
 
 **Analytics** is combined token throughput across all accounts and both
-providers, with the ≈ API-list-price value you're pulling from your flat
-subscriptions. Tokens are metered as responses stream by, never buffered, so
-every number is cross-checkable against your clients' own session logs. Press
-`m` for the full pricing breakdown per model.
+providers, with the ≈ cost of that usage at API list rates. Tokens are metered
+as responses stream by, never buffered, so every number is cross-checkable
+against your clients' own session logs. Press `m` for the full pricing
+breakdown per model.
 
 <div align="center">
-<img alt="combined token throughput and API-list-price value across all accounts" src="media/analytics.png" width="820">
+<img alt="combined token throughput and API-list-price cost across all accounts" src="media/analytics.png" width="820">
 </div>
 
 **Settings** holds the master on/off per provider, then auto-rotation, the
@@ -72,11 +74,13 @@ switch threshold, and cooldown, applied live.
 
 ## Auto-rotation
 
-Turn it on and tokenmaxx steps off an account the moment its fullest window
-crosses your threshold, onto the one with the most headroom. If an account
-still hits its hard limit mid-flight, the proxy rotates and retries that
-request before your client ever sees the 429. Off by default; enabling it is
-your confirmation that your provider permits this use.
+Turn it on and tokenmaxx switches accounts when the active one's fullest
+window crosses your threshold, moving to the account with the most headroom.
+The default 90% keeps the last stretch of each window in reserve for you
+instead of spending it automatically. If an account hits its hard limit
+mid-request, the proxy retries that request on the next eligible account. Off
+by default; enabling it is your confirmation that your provider permits this
+use.
 
 ```bash
 tokenmaxx auto both on --threshold 90    # or: codex | claude … off
@@ -91,8 +95,9 @@ A single loopback proxy on `127.0.0.1:8459`, and the clients you already use.
 - **Pressure read for free.** Both providers report rate-limit state on every
   response; the proxy reads it as traffic streams by, so it always knows how
   full the active account is, with zero extra requests.
-- **Harness-agnostic.** Anything speaking the Anthropic or OpenAI Responses API
-  can point at `/anthropic` or `/openai` and get the same juggling.
+- **For the official apps.** The subscription login belongs in Claude Code and
+  Codex. For custom clients, harnesses, or anything else speaking the API, use
+  a provider-issued API key instead.
 
 ## Commands
 
@@ -107,6 +112,14 @@ tokenmaxx list | status | refresh | doctor
 ```
 
 Env: `TOKENMAXX_HOME`, `TOKENMAXX_PROXY_PORT`, `TOKENMAXX_THEME`.
+
+## Intended use
+
+tokenmaxx is one person switching between accounts they personally own and
+pay for, through the official Claude Code and Codex apps. It changes which
+account is signed in, never the limits attached to any of them. Don't share
+accounts or credentials, and don't pool or resell subscription usage. The
+software is provided as is, without warranty of any kind.
 
 ## Not affiliated
 

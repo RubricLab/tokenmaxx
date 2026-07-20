@@ -752,9 +752,9 @@ function settingsPanel(
 			row.key === 'routing'
 				? `run ${providerCli[row.provider]} through tokenmaxx`
 				: row.key === 'auto'
-					? 'rotate before an account runs out'
+					? 'switch accounts as the active one fills'
 					: row.key === 'threshold'
-						? 'switch when the fullest window hits this'
+						? 'switch here; the rest stays in reserve'
 						: row.key === 'dwell'
 							? 'min wait between switches (anti-flap)'
 							: 'show on the accounts page'

@@ -228,7 +228,7 @@ function help(): string {
 		return [`  ${accent(name)}`, ...lines.map(line => `${gutter}${dim(line)}`)].join('\n')
 	}
 	return [
-		`${accent('tokenmaxx')} ${dim('— juggle rate limits across your Codex and Claude Code accounts')}`,
+		`${accent('tokenmaxx')} ${dim('— switch between your own Codex and Claude Code accounts')}`,
 		'',
 		`${head('Usage')}  tokenmaxx <command> [options]        ${dim('run with no command for the dashboard')}`,
 		'',
@@ -242,7 +242,7 @@ function help(): string {
 		row('switch <codex|claude> <email>', 'make an account active now'),
 		row(
 			'auto <codex|claude|both> <on|off>',
-			'rotate before you hit a limit',
+			'switch accounts at a usage threshold',
 			'optional: --threshold N  (default 90)'
 		),
 		'',
@@ -254,12 +254,13 @@ function help(): string {
 		'',
 		head('Auto-rotation'),
 		dim("  The threshold is measured against the active account's fullest rate-limit"),
-		dim('  window — its 5-hour or weekly window, whichever is highest. The proxy reads'),
-		dim('  live rate-limit headers off every response, so crossing the threshold'),
-		dim('  (default 90%) or getting limited rotates immediately — a 429 is even'),
-		dim('  retried on the next account before your client sees it. Threshold switches'),
-		dim('  hold for 5 minutes to avoid flapping; hard limits ignore the hold.'),
-		dim('  Turning auto on is what authorizes the switching.'),
+		dim('  window — its 5-hour or weekly window, whichever is highest. The default 90%'),
+		dim('  keeps the rest of each window in reserve for you instead of spending it'),
+		dim('  automatically. The proxy reads live rate-limit headers off every response,'),
+		dim('  so crossing the threshold or hitting a hard limit switches to the account'),
+		dim('  with the most headroom, and an interrupted request is retried there.'),
+		dim('  Threshold switches hold for 5 minutes to avoid flapping; hard limits'),
+		dim('  ignore the hold. Turning auto on is what authorizes the switching.'),
 		'',
 		dim('Once installed, use codex and claude normally — a local proxy injects the'),
 		dim("active account's credential per request, so a switch takes effect on the"),
