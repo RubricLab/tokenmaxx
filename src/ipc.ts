@@ -1,12 +1,21 @@
 import { chmod, rm } from 'node:fs/promises'
 import { createConnection, createServer, type Socket } from 'node:net'
 import { z } from 'zod'
-import type { Account, AnalyticsSnapshot, DashboardSnapshot, ProviderId } from './domain.ts'
+import type {
+	Account,
+	AnalyticsSnapshot,
+	DashboardSnapshot,
+	ProviderId,
+	ResetCreditsView,
+	ResetOutcome
+} from './domain.ts'
 import {
 	AccountSchema,
 	AnalyticsSnapshotSchema,
 	DashboardSnapshotSchema,
-	ProviderIdSchema
+	ProviderIdSchema,
+	ResetCreditsViewSchema,
+	ResetOutcomeSchema
 } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
 import type { AccountManager } from './manager.ts'
@@ -50,6 +59,8 @@ const PolicyParamsSchema = z
 		thresholdPercent: z.number().min(1).max(100).optional()
 	})
 	.strict()
+
+const ResetParamsSchema = z.object({ accountId: z.uuid() }).strict()
 
 const ReplaceCredentialParamsSchema = z
 	.object({
@@ -100,6 +111,10 @@ async function dispatch(
 			await manager.saveAccount(parsed)
 			return { saved: true }
 		}
+		case 'codex/resetCredits':
+			return manager.codexResetCredits(ResetParamsSchema.parse(params).accountId)
+		case 'codex/consumeReset':
+			return manager.consumeCodexReset(ResetParamsSchema.parse(params).accountId)
 		default:
 			throw new ApplicationError('METHOD_NOT_FOUND', `Unknown manager method ${method}`)
 	}
@@ -297,6 +312,29 @@ export function requestSwitch(
 		schema: DashboardSnapshotSchema,
 		socketPath,
 		timeoutMilliseconds: 30_000
+	})
+}
+
+export function requestResetCredits(
+	socketPath: string,
+	accountId: string
+): Promise<ResetCreditsView> {
+	return managerRequest({
+		method: 'codex/resetCredits',
+		params: { accountId },
+		schema: ResetCreditsViewSchema,
+		socketPath,
+		timeoutMilliseconds: 20_000
+	})
+}
+
+export function requestConsumeReset(socketPath: string, accountId: string): Promise<ResetOutcome> {
+	return managerRequest({
+		method: 'codex/consumeReset',
+		params: { accountId },
+		schema: ResetOutcomeSchema,
+		socketPath,
+		timeoutMilliseconds: 45_000
 	})
 }
 

@@ -7,6 +7,8 @@ import {
 	AccountEmailSchema,
 	type FetchImplementation,
 	type ProviderProbeResult,
+	type ResetCreditsView,
+	type ResetOutcome,
 	type UsageSnapshot,
 	type UsageWindow
 } from './domain.ts'
@@ -17,6 +19,8 @@ import { type CredentialVault, exclusive } from './vault.ts'
 const clientId = 'app_EMoamEEZ73f0CkXaXp7hrann'
 const refreshEndpoint = 'https://auth.openai.com/oauth/token'
 const usageEndpoint = 'https://chatgpt.com/backend-api/wham/usage'
+const resetCreditsEndpoint = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits'
+const consumeResetEndpoint = `${resetCreditsEndpoint}/consume`
 
 const CodexTokensSchema = z
 	.object({
@@ -312,7 +316,14 @@ const UsageResponseSchema = z
 	.object({
 		additional_rate_limits: z.array(AdditionalLimitSchema).nullish(),
 		rate_limit: LimitDetailsSchema.nullish(),
-		rate_limit_reached_type: z.unknown().nullish()
+		rate_limit_reached_type: z.unknown().nullish(),
+		rate_limit_reset_credits: z
+			.object({
+				applicable_available_count: z.number().int().nonnegative(),
+				available_count: z.number().int().nonnegative()
+			})
+			.passthrough()
+			.nullish()
 	})
 	.passthrough()
 
@@ -386,8 +397,38 @@ function normalizeResponse(accountId: string, body: UsageResponse): UsageSnapsho
 			),
 		observedAt: new Date().toISOString(),
 		provider: 'openai',
+		resetCredits:
+			body.rate_limit_reset_credits == null
+				? null
+				: {
+						applicable: body.rate_limit_reset_credits.applicable_available_count,
+						available: body.rate_limit_reset_credits.available_count
+					},
 		source: 'codexUsageEndpoint',
 		windows
+	}
+}
+
+function codexBackendHeaders(credential: CodexAuth): Record<string, string> {
+	return {
+		Authorization: `Bearer ${credential.tokens.access_token}`,
+		'ChatGPT-Account-Id': codexIdentity(credential).accountId,
+		'User-Agent': 'codex-cli'
+	}
+}
+
+function assertCodexBackendStatus(response: Response, what: string): void {
+	if (response.status === 401) {
+		throw new ApplicationError('ACCESS_TOKEN_REJECTED', `Codex ${what} rejected the access token`)
+	}
+	if (response.status === 429) {
+		throw new ApplicationError('USAGE_RATE_LIMITED', `Codex ${what} rate-limited the request`)
+	}
+	if (!response.ok) {
+		throw new ApplicationError(
+			'PROVIDER_UNREACHABLE',
+			`Codex ${what} returned HTTP ${response.status}`
+		)
 	}
 }
 
@@ -396,32 +437,111 @@ async function fetchCodexUsage(input: {
 	credential: CodexAuth
 	fetchImplementation?: FetchImplementation
 }): Promise<UsageSnapshot> {
-	const identity = codexIdentity(input.credential)
 	const fetchImplementation = input.fetchImplementation ?? fetch
 	const response = await fetchImplementation(usageEndpoint, {
-		headers: {
-			Authorization: `Bearer ${input.credential.tokens.access_token}`,
-			'ChatGPT-Account-Id': identity.accountId,
-			'User-Agent': 'codex-cli'
-		},
+		headers: codexBackendHeaders(input.credential),
 		signal: AbortSignal.timeout(10_000)
 	})
-	if (response.status === 401) {
-		throw new ApplicationError(
-			'ACCESS_TOKEN_REJECTED',
-			'Codex usage endpoint rejected the access token'
-		)
-	}
-	if (response.status === 429) {
-		throw new ApplicationError('USAGE_RATE_LIMITED', 'Codex usage endpoint rate-limited the probe')
-	}
-	if (!response.ok) {
-		throw new ApplicationError(
-			'PROVIDER_UNREACHABLE',
-			`Codex usage endpoint returned HTTP ${response.status}`
-		)
-	}
+	assertCodexBackendStatus(response, 'usage endpoint')
 	return normalizeResponse(input.accountId, UsageResponseSchema.parse(await response.json()))
+}
+
+const ResetCreditsResponseSchema = z
+	.object({
+		available_count: z.number().int().nonnegative(),
+		credits: z.array(
+			z
+				.object({
+					expires_at: z.string().nullish(),
+					id: z.string().min(1),
+					status: z.string(),
+					title: z.string().nullish()
+				})
+				.passthrough()
+		)
+	})
+	.passthrough()
+
+const ConsumeResetResponseSchema = z
+	.object({
+		code: z.enum(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed']),
+		windows_reset: z.number().int().nonnegative().default(0)
+	})
+	.passthrough()
+
+async function withCodexCredential<Result>(
+	input: {
+		account: Extract<Account, { provider: 'openai' }>
+		vault: CredentialVault
+		fetchImplementation?: FetchImplementation
+	},
+	operation: (credential: CodexAuth) => Promise<Result>
+): Promise<Result> {
+	const credential = await readCodexCredential(input.vault, input.account.secretReference)
+	try {
+		return await operation(credential)
+	} catch (error) {
+		if (!(error instanceof ApplicationError) || error.code !== 'ACCESS_TOKEN_REJECTED') {
+			throw error
+		}
+		const refreshed = await refreshCodexCredential({
+			fetchImplementation: input.fetchImplementation,
+			reference: input.account.secretReference,
+			vault: input.vault
+		})
+		return operation(refreshed)
+	}
+}
+
+function isoOrNull(value: string | null | undefined): string | null {
+	if (value == null) {
+		return null
+	}
+	const millis = Date.parse(value)
+	return Number.isFinite(millis) ? new Date(millis).toISOString() : null
+}
+
+export async function probeCodexResetCredits(input: {
+	account: Extract<Account, { provider: 'openai' }>
+	vault: CredentialVault
+	fetchImplementation?: FetchImplementation
+}): Promise<ResetCreditsView> {
+	return withCodexCredential(input, async credential => {
+		const response = await (input.fetchImplementation ?? fetch)(resetCreditsEndpoint, {
+			headers: codexBackendHeaders(credential),
+			signal: AbortSignal.timeout(10_000)
+		})
+		assertCodexBackendStatus(response, 'reset credits endpoint')
+		const body = ResetCreditsResponseSchema.parse(await response.json())
+		const credits = body.credits
+			.filter(credit => credit.status === 'available')
+			.map(credit => ({
+				expiresAt: isoOrNull(credit.expires_at),
+				id: credit.id,
+				title: credit.title ?? null
+			}))
+			.sort((left, right) => (left.expiresAt ?? '~').localeCompare(right.expiresAt ?? '~'))
+		return { available: body.available_count, credits }
+	})
+}
+
+export async function redeemCodexResetCredit(input: {
+	account: Extract<Account, { provider: 'openai' }>
+	vault: CredentialVault
+	redeemRequestId: string
+	fetchImplementation?: FetchImplementation
+}): Promise<ResetOutcome> {
+	return withCodexCredential(input, async credential => {
+		const response = await (input.fetchImplementation ?? fetch)(consumeResetEndpoint, {
+			body: JSON.stringify({ redeem_request_id: input.redeemRequestId }),
+			headers: { ...codexBackendHeaders(credential), 'Content-Type': 'application/json' },
+			method: 'POST',
+			signal: AbortSignal.timeout(15_000)
+		})
+		assertCodexBackendStatus(response, 'reset consume endpoint')
+		const body = ConsumeResetResponseSchema.parse(await response.json())
+		return { code: body.code, windowsReset: body.windows_reset }
+	})
 }
 
 export async function probeCodex(input: {

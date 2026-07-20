@@ -5,10 +5,20 @@ import type {
 	DashboardSnapshot,
 	ProviderId,
 	ProviderState,
+	ResetCreditsView,
+	ResetOutcome,
 	TokenTimeframe,
+	UsageSnapshot,
 	UsageWindow
 } from '../domain.ts'
-import { readAnalytics, refreshUsage, requestPolicy, requestSwitch } from '../ipc.ts'
+import {
+	readAnalytics,
+	refreshUsage,
+	requestConsumeReset,
+	requestPolicy,
+	requestResetCredits,
+	requestSwitch
+} from '../ipc.ts'
 import { availableUpdate } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
 import {
@@ -104,16 +114,40 @@ function windowsShown(ctx: Ctx): number {
 function windowCellWidth(tier: Tier, window: UsageWindow): number {
 	return 2 + shortWindow(window.label).length + BAR[tier] + 5 + 6
 }
+function accountResetCredits(usage: UsageSnapshot | undefined) {
+	return usage?.provider === 'openai' ? (usage.resetCredits ?? null) : null
+}
+
+function resetGlyph(usage: UsageSnapshot | undefined): string {
+	const credits = accountResetCredits(usage)
+	return credits === null || credits.available === 0 ? '' : ` ↺${credits.available}`
+}
+
+function panelResetColumn(snapshot: DashboardSnapshot, provider: ProviderId): number {
+	return snapshot.accounts
+		.filter(account => account.provider === provider)
+		.reduce(
+			(widest, account) =>
+				Math.max(widest, resetGlyph(snapshot.usage.find(u => u.accountId === account.id)).length),
+			0
+		)
+}
+
 function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 	const labels = labelWidth(ctx)
 	let widest = 46 // never narrower than a provider title with its routing tag
 	for (const account of snapshot.accounts) {
 		const state = snapshot.providers.find(s => s.provider === account.provider)
 		const hidden = state?.policy.hiddenWindowIds ?? []
-		const windows = snapshot.usage.find(u => u.accountId === account.id)?.windows ?? []
-		const visible = visibleWindows(windows, hidden)
+		const usage = snapshot.usage.find(u => u.accountId === account.id)
+		const visible = visibleWindows(usage?.windows ?? [], hidden)
 		const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
-		const base = 3 + (labels - 2) + (tag === null ? 0 : tag.length + 1) + 2
+		const base =
+			3 +
+			(labels - 2) +
+			(tag === null ? 0 : tag.length + 1) +
+			panelResetColumn(snapshot, account.provider) +
+			2
 		const body = visible
 			.slice(0, windowsShown(ctx))
 			.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
@@ -210,8 +244,9 @@ function addAccountLine(ctx: Ctx, provider: ProviderId, isSelected: boolean, sol
 function accountLine(
 	ctx: Ctx,
 	account: Account,
-	windows: readonly UsageWindow[],
+	usage: UsageSnapshot | undefined,
 	hiddenIds: readonly string[],
+	resetColumn: number,
 	isActive: boolean,
 	isSelected: boolean,
 	justSwitchedTo: boolean
@@ -222,6 +257,7 @@ function accountLine(
 	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
 	const markerColor = isActive ? ctx.theme.good : isSelected ? ctx.theme.accent : ctx.theme.faint
 	const labelText = pad(account.label, labels - 2)
+	const credits = accountResetCredits(usage)
 	const children = [
 		Text({ content: ` ${marker} `, fg: rgb(markerColor) }),
 		Text({
@@ -230,9 +266,17 @@ function accountLine(
 			fg: rgb(isActive || isSelected ? ctx.theme.fg : ctx.theme.dim)
 		}),
 		Text({ content: tag === null ? '' : ` ${tag}`, fg: rgb(ctx.theme.faint) }),
+		...(resetColumn === 0
+			? []
+			: [
+					Text({
+						content: resetGlyph(usage).padEnd(resetColumn),
+						fg: rgb((credits?.applicable ?? 0) > 0 ? ctx.theme.good : ctx.theme.faint)
+					})
+				]),
 		Text({ content: badge === null ? ' ' : ' *', fg: rgb(badge?.color ?? ctx.theme.dim) })
 	]
-	const visible = visibleWindows(windows, hiddenIds)
+	const visible = visibleWindows(usage?.windows ?? [], hiddenIds)
 	if (visible.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
 	} else {
@@ -264,6 +308,7 @@ function providerPanel(
 		.map((row, index) => ({ index, row }))
 		.filter(entry => entry.row.provider === provider)
 	const accountCount = providerRows.filter(entry => entry.row.accountId !== ADD_ROW).length
+	const resetColumn = panelResetColumn(snapshot, provider)
 	const lines = providerRows.map(entry => {
 		const isSelected = entry.index === selected
 		if (entry.row.accountId === ADD_ROW) {
@@ -273,12 +318,13 @@ function providerPanel(
 		if (account === undefined) {
 			return Box({ width: '100%' })
 		}
-		const windows = snapshot.usage.find(u => u.accountId === entry.row.accountId)?.windows
+		const usage = snapshot.usage.find(u => u.accountId === entry.row.accountId)
 		return accountLine(
 			ctx,
 			account,
-			windows ?? [],
+			usage,
 			hiddenIds,
+			resetColumn,
 			state?.activeAccountId === entry.row.accountId,
 			isSelected,
 			switched
@@ -763,6 +809,82 @@ function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], select
 	)
 }
 
+interface ResetConfirm {
+	accountId: string
+	credits: ResetCreditsView
+}
+
+function resetNote(outcome: ResetOutcome): string {
+	switch (outcome.code) {
+		case 'reset':
+			return `↺ reset applied — ${outcome.windowsReset === 1 ? '1 window' : `${outcome.windowsReset} windows`} cleared`
+		case 'nothing_to_reset':
+			return '↺ kept — nothing is at its limit'
+		case 'no_credit':
+			return 'no reset available on this account'
+		case 'already_redeemed':
+			return '↺ already used — nothing consumed'
+	}
+}
+
+function resetConfirmBody(ctx: Ctx, snapshot: DashboardSnapshot, confirm: ResetConfirm) {
+	const account = snapshot.accounts.find(a => a.id === confirm.accountId)
+	const usage = snapshot.usage.find(u => u.accountId === confirm.accountId)
+	const applicable = accountResetCredits(usage)?.applicable ?? 0
+	const tag = planTag(account?.plan)
+	const banked = confirm.credits.available
+	const soonest = shortReset(confirm.credits.credits[0]?.expiresAt ?? null, ctx.now)
+	const line = (...children: ReturnType<typeof Text>[]) =>
+		Box(
+			{ flexDirection: 'row', width: '100%' },
+			Text({ content: '  ', fg: rgb(ctx.theme.bg) }),
+			...children
+		)
+	const card = Box(
+		{
+			border: true,
+			borderColor: rgb(ctx.theme.accent),
+			borderStyle: 'rounded',
+			flexDirection: 'column',
+			title: ' Use a rate limit reset ',
+			titleColor: rgb(ctx.theme.accent),
+			width: '100%'
+		},
+		blankRow(ctx),
+		line(
+			Text({ attributes: 1, content: account?.label ?? '', fg: rgb(ctx.theme.fg) }),
+			Text({ content: tag === null ? '' : ` · ${tag}`, fg: rgb(ctx.theme.faint) })
+		),
+		line(
+			Text({
+				content: 'clears its limited rate-limit windows immediately',
+				fg: rgb(ctx.theme.dim)
+			})
+		),
+		blankRow(ctx),
+		line(
+			Text({
+				attributes: 1,
+				content: `↺ ${banked} banked`,
+				fg: rgb(applicable > 0 ? ctx.theme.good : ctx.theme.fg)
+			}),
+			Text({
+				content: soonest === null ? '' : ` · soonest expires in ${soonest}`,
+				fg: rgb(ctx.theme.dim)
+			})
+		),
+		blankRow(ctx),
+		line(
+			Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' ⏎ ', fg: rgb(ctx.theme.fg) }),
+			Text({ content: ' use one now      ', fg: rgb(ctx.theme.dim) }),
+			Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' esc ', fg: rgb(ctx.theme.fg) }),
+			Text({ content: ' keep it banked', fg: rgb(ctx.theme.dim) })
+		),
+		blankRow(ctx)
+	)
+	return column(ctx, [card], 60)
+}
+
 type AnalyticsView = 'chart' | 'table'
 
 interface ViewState {
@@ -773,6 +895,7 @@ interface ViewState {
 	analyticsView: AnalyticsView
 	modelScroll: number
 	note: string
+	resetConfirm: ResetConfirm | null
 	updateAvailable: string | null
 	updateDismissed: boolean
 }
@@ -791,12 +914,21 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 		.reduce((max, millis) => Math.max(max, millis), 0)
 	const refreshed = freshestMillis === 0 ? '—' : `${relativeAge(freshestMillis, ctx.now)} ago`
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
+	const selectedRow = rows[state.selected]
+	const resettable =
+		state.tab === 'accounts' &&
+		selectedRow !== undefined &&
+		selectedRow.accountId !== ADD_ROW &&
+		(accountResetCredits(analytics.snapshot.usage.find(u => u.accountId === selectedRow.accountId))
+			?.available ?? 0) > 0
 	const footer =
-		state.tab === 'accounts'
-			? '↑↓ select · ⏎ switch/add · a auto · tab next'
-			: state.tab === 'analytics'
-				? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
-				: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
+		state.resetConfirm !== null
+			? '⏎ use one reset · esc keep it banked'
+			: state.tab === 'accounts'
+				? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''} · tab next`
+				: state.tab === 'analytics'
+					? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
+					: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
 	const header = Box(
 		{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
 		Box(
@@ -836,7 +968,9 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	}
 	children.push(
 		state.tab === 'accounts'
-			? accountsBody(ctx, analytics.snapshot, rows, state.selected)
+			? state.resetConfirm !== null
+				? resetConfirmBody(ctx, analytics.snapshot, state.resetConfirm)
+				: accountsBody(ctx, analytics.snapshot, rows, state.selected)
 			: state.tab === 'analytics'
 				? analyticsBody(ctx, analytics, timeframe, state)
 				: settingsBody(
@@ -895,6 +1029,7 @@ export async function runTuiDashboard(
 		analyticsView: 'chart',
 		modelScroll: 0,
 		note: '',
+		resetConfirm: null,
 		selected: 0,
 		settingsSelected: 0,
 		tab: 'accounts',
@@ -1002,6 +1137,59 @@ export async function runTuiDashboard(
 			const moved = rows.findIndex(r => r.accountId === row.accountId)
 			if (moved >= 0) {
 				state.selected = moved
+			}
+		})
+	}
+
+	const openResetConfirm = (): boolean => {
+		const row = rows[state.selected]
+		if (row === undefined || row.accountId === ADD_ROW) {
+			return false
+		}
+		const usage = analytics.snapshot.usage.find(u => u.accountId === row.accountId)
+		const credits = accountResetCredits(usage)
+		if (credits === null || credits.available === 0) {
+			return false
+		}
+		if (!live) {
+			const day = 24 * 3_600_000
+			state.resetConfirm = {
+				accountId: row.accountId,
+				credits: {
+					available: credits.available,
+					credits: Array.from({ length: credits.available }, (_, index) => ({
+						expiresAt: new Date(simulatedNow + (11 + index * 12) * day).toISOString(),
+						id: `banked-${index + 1}`,
+						title: 'Full reset'
+					}))
+				}
+			}
+			paint()
+			return true
+		}
+		void withBusy('checking resets…', async () => {
+			const fresh = await requestResetCredits(socketPath, row.accountId)
+			state.resetConfirm = { accountId: row.accountId, credits: fresh }
+		})
+		return true
+	}
+
+	const consumeReset = (confirm: ResetConfirm) => {
+		state.resetConfirm = null
+		if (!live) {
+			state.note = '↺ reset applied — rate-limit windows cleared'
+			paint()
+			return
+		}
+		let outcome: ResetOutcome | null = null
+		void withBusy('using a reset…', async () => {
+			outcome = await requestConsumeReset(socketPath, confirm.accountId)
+			analytics = await readAnalytics(socketPath)
+			rows = orderedRows(analytics.snapshot)
+		}).then(() => {
+			if (outcome !== null) {
+				state.note = resetNote(outcome)
+				paint()
 			}
 		})
 	}
@@ -1129,6 +1317,17 @@ export async function runTuiDashboard(
 		}
 		renderer.keyInput.on('keypress', (key: { name: string; ctrl: boolean }) => {
 			try {
+				if (state.resetConfirm !== null) {
+					if (key.ctrl && key.name === 'c') {
+						finish()
+					} else if (key.name === 'return') {
+						consumeReset(state.resetConfirm)
+					} else if (key.name === 'escape' || key.name === 'q') {
+						state.resetConfirm = null
+						paint()
+					}
+					return
+				}
 				if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
 					finish()
 				} else if (
@@ -1148,8 +1347,10 @@ export async function runTuiDashboard(
 				} else if (key.name === 'tab') {
 					state.tab = TABS[(TABS.indexOf(state.tab) + 1) % TABS.length] as Tab
 					paint()
-				} else if (key.name === 'r' && live) {
-					void reload(true)
+				} else if (key.name === 'r') {
+					if (!(state.tab === 'accounts' && openResetConfirm()) && live) {
+						void reload(true)
+					}
 				} else if (state.tab === 'analytics') {
 					if (key.name === 'left' || key.name === 'h') {
 						changeTimeframe(-1)

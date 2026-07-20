@@ -1,11 +1,18 @@
 import { claudeUpstream, migrateClaudeAccount, probeClaude, removeClaudeProfile } from './claude.ts'
-import { codexUpstream, probeCodex } from './codex.ts'
+import {
+	codexUpstream,
+	probeCodex,
+	probeCodexResetCredits,
+	redeemCodexResetCredit
+} from './codex.ts'
 import {
 	type Account,
 	AutomationPolicySchema,
 	type FetchImplementation,
 	type ProviderId,
 	type ProviderState,
+	type ResetCreditsView,
+	type ResetOutcome,
 	SwitchRecordSchema,
 	TIMEFRAMES,
 	type TokenTimeframe,
@@ -370,6 +377,36 @@ export class AccountManager {
 		this.#store.saveAccount(result.account)
 	}
 
+	private codexAccountOrThrow(accountId: string): Extract<Account, { provider: 'openai' }> {
+		const account = this.#store.findAccount(accountId)
+		if (account === null || account.provider !== 'openai') {
+			throw new ApplicationError('INVALID_TARGET', `Account ${accountId} is not a codex account`)
+		}
+		return account
+	}
+
+	public async codexResetCredits(accountId: string): Promise<ResetCreditsView> {
+		return probeCodexResetCredits({
+			account: this.codexAccountOrThrow(accountId),
+			fetchImplementation: this.#dependencies.fetchImplementation,
+			vault: this.#vault
+		})
+	}
+
+	public async consumeCodexReset(accountId: string): Promise<ResetOutcome> {
+		return this.withProviderOperation('openai', async () => {
+			const account = this.codexAccountOrThrow(accountId)
+			const outcome = await redeemCodexResetCredit({
+				account,
+				fetchImplementation: this.#dependencies.fetchImplementation,
+				redeemRequestId: crypto.randomUUID(),
+				vault: this.#vault
+			})
+			await this.probeAndSave(account).catch(() => undefined)
+			return outcome
+		})
+	}
+
 	public async switchAccount(
 		provider: ProviderId,
 		targetAccountId: string,
@@ -502,7 +539,10 @@ export class AccountManager {
 					observedAt: new Date(event.at).toISOString(),
 					provider: event.provider,
 					source: 'proxyResponseHeaders',
-					windows: merged
+					windows: merged,
+					...(event.provider === 'openai'
+						? { resetCredits: existing?.provider === 'openai' ? (existing.resetCredits ?? null) : null }
+						: {})
 				})
 			)
 		} catch {

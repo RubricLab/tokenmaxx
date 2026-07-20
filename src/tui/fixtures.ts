@@ -154,6 +154,7 @@ interface AccountSeed {
 	plan: string | null
 	health?: Account['health']
 	windows?: WindowSpec[]
+	resetCredits?: { available: number; applicable: number }
 }
 
 function account(seed: AccountSeed, now: number): Account {
@@ -199,7 +200,12 @@ function usage(seed: AccountSeed, now: number): UsageSnapshot {
 		windows
 	} as const
 	return seed.provider === 'openai'
-		? { ...base, provider: 'openai', source: 'codexUsageEndpoint' }
+		? {
+				...base,
+				provider: 'openai',
+				resetCredits: seed.resetCredits ?? null,
+				source: 'codexUsageEndpoint'
+			}
 		: { ...base, provider: 'anthropic', source: 'claudeUsageEndpoint' }
 }
 
@@ -308,6 +314,7 @@ const cruising: ScenarioBuilder = now =>
 				n: 1,
 				plan: 'pro',
 				provider: 'openai',
+				resetCredits: { applicable: 0, available: 3 },
 				windows: [fiveHour(58, 0.62, 11), weekly(44, 0.63, 21)]
 			},
 			{
@@ -347,6 +354,7 @@ const oneHot: ScenarioBuilder = now =>
 				n: 1,
 				plan: 'pro',
 				provider: 'openai',
+				resetCredits: { applicable: 1, available: 2 },
 				windows: [fiveHour(99, 0.87, 11), weekly(72, 0.7, 21)]
 			},
 			{
@@ -393,6 +401,7 @@ const rotated: ScenarioBuilder = now =>
 				n: 1,
 				plan: 'pro',
 				provider: 'openai',
+				resetCredits: { applicable: 1, available: 1 },
 				windows: [fiveHour(96, 0.95, 11), weekly(74, 0.72, 21)]
 			},
 			{
