@@ -21,7 +21,7 @@ bun add -g tokenmaxx
 ```
 
 ```bash
-tokenmaxx
+tokenmaxx #starts the dashboard
 ```
 
 ## What it does
