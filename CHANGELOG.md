@@ -1,4 +1,5 @@
-- [2026-07-20] banked codex resets: see the count, spend one with r
+- [2026-07-20] replace an unreachable daemon holding the port, fixes #3
+- [2026-07-20] [banked codex resets: see the count, spend one with r](https://github.com/RubricLab/tokenmaxx/commit/22ef989d736f03e51cdcbe7175cad613dd658c24)
 - [2026-07-17] [drop the one-shot home migration](https://github.com/RubricLab/tokenmaxx/commit/f1cbbe575fb51a2b5bd9b9a3c2415900a31ccd0d)
 - [2026-07-17] [home is ~/.tokenmaxx](https://github.com/RubricLab/tokenmaxx/commit/ae233348f9287b5724b8b66a78fc700a9687f40b)
 - [2026-07-17] [exit when the terminal goes away, fixes #2](https://github.com/RubricLab/tokenmaxx/commit/33e9e1b1e2c1cd5a3948675dc3ca298da2a7ed88)

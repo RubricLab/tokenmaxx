@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createUsageObserver } from './proxy.ts'
+import { createUsageObserver, proxyIdentity, startProxy } from './proxy.ts'
 
 type Observed = {
 	model: string | null
@@ -113,5 +113,43 @@ describe('createUsageObserver', () => {
 		const body =
 			'data: {"type":"response.completed","response":{"model":"gpt-5.6-sol","usage":{"input_tokens":10,"output_tokens":2}}}'
 		expect(observe('openai', body)?.outputTokens).toBe(2)
+	})
+})
+
+describe('proxyIdentity', () => {
+	test('recognizes any tokenmaxx proxy by its unknown-route response', async () => {
+		const proxy = startProxy({
+			source: { refresh: async () => undefined, resolve: async () => null }
+		})
+		expect(await proxyIdentity(proxy.port)).toBe('tokenmaxx')
+		await proxy.stop()
+	})
+
+	test('reports a foreign listener without claiming it', async () => {
+		const server = Bun.serve({
+			fetch: () => new Response('hello'),
+			hostname: '127.0.0.1',
+			port: 0
+		})
+		const port = server.port
+		if (port === undefined) {
+			throw new Error('server did not bind')
+		}
+		expect(await proxyIdentity(port)).toBe('foreign')
+		await server.stop(true)
+	})
+
+	test('reports a free port as nothing listening', async () => {
+		const server = Bun.serve({
+			fetch: () => new Response(''),
+			hostname: '127.0.0.1',
+			port: 0
+		})
+		const port = server.port
+		if (port === undefined) {
+			throw new Error('server did not bind')
+		}
+		await server.stop(true)
+		expect(await proxyIdentity(port)).toBe(null)
 	})
 })

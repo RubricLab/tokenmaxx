@@ -27,6 +27,7 @@ import {
 } from './ipc.ts'
 import { AccountManager } from './manager.ts'
 import { type ApplicationPaths, applicationPaths, ensureApplicationPaths } from './paths.ts'
+import { proxyIdentity } from './proxy.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
 import { createMacOsKeychainVault } from './vault.ts'
@@ -127,6 +128,56 @@ async function commandOutput(command: readonly string[]): Promise<string> {
 	])
 	await handle.exited
 	return stdout.trim() || stderr.trim()
+}
+
+async function portOwnerProcessId(port: number): Promise<number | null> {
+	const output = await commandOutput(['lsof', '-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'])
+	const processId = Number(output.split('\n')[0])
+	return Number.isInteger(processId) && processId > 0 ? processId : null
+}
+
+async function portFreed(port: number, deadlineMilliseconds: number): Promise<boolean> {
+	const deadline = Date.now() + deadlineMilliseconds
+	while ((await proxyIdentity(port)) !== null) {
+		if (Date.now() > deadline) {
+			return false
+		}
+		await Bun.sleep(200)
+	}
+	return true
+}
+
+async function replacePortOccupant(port: number): Promise<void> {
+	const identity = await proxyIdentity(port)
+	if (identity === null) {
+		return
+	}
+	const processId = await portOwnerProcessId(port)
+	if (identity === 'foreign' || processId === null) {
+		throw new ApplicationError(
+			'PROXY_PORT_IN_USE',
+			`Port ${port} is in use by another program${processId === null ? '' : ` (process ${processId})`}; stop it or set TOKENMAXX_PROXY_PORT`
+		)
+	}
+	process.stdout.write(
+		`Replacing an unreachable tokenmaxx daemon (process ${processId}) holding port ${port}…\n`
+	)
+	try {
+		process.kill(processId, 'SIGTERM')
+	} catch {}
+	if (await portFreed(port, 5_000)) {
+		return
+	}
+	try {
+		process.kill(processId, 'SIGKILL')
+	} catch {}
+	if (await portFreed(port, 2_000)) {
+		return
+	}
+	throw new ApplicationError(
+		'PROXY_PORT_IN_USE',
+		`Port ${port} is still held by process ${processId}`
+	)
 }
 
 const CommandSchema = z.array(z.string())
@@ -279,6 +330,7 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 	if (await managerAvailable(context.paths.managerSocket)) {
 		return
 	}
+	await replacePortOccupant(context.paths.proxyPort)
 	await mkdir(context.paths.runtime, { mode: 0o700, recursive: true })
 	const entrypoint = process.argv[1]
 	if (entrypoint === undefined) {
@@ -619,9 +671,17 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	process.stdout.write(`${Bun.which('security') === null ? 'missing' : 'ok     '}  security\n`)
 	const running = await managerAvailable(context.paths.managerSocket)
 	const daemonVersion = running ? await managerVersion(context.paths.managerSocket) : null
-	process.stdout.write(
-		`${running ? 'running' : 'stopped'}  manager daemon${daemonVersion === null ? '' : ` (${daemonVersion})`}\n`
-	)
+	const unreachable = !running && (await proxyIdentity(context.paths.proxyPort)) === 'tokenmaxx'
+	if (unreachable) {
+		const processId = await portOwnerProcessId(context.paths.proxyPort)
+		process.stdout.write(
+			`warning  manager daemon${processId === null ? '' : ` (process ${processId})`} holds port ${context.paths.proxyPort} but does not answer — tokenmaxx daemon start replaces it\n`
+		)
+	} else {
+		process.stdout.write(
+			`${running ? 'running' : 'stopped'}  manager daemon${daemonVersion === null ? '' : ` (${daemonVersion})`}\n`
+		)
+	}
 	const update = await availableUpdate()
 	process.stdout.write(
 		update === null
@@ -793,11 +853,22 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 					case 'stop':
 						await stopDaemon(context)
 						return 0
-					case 'status':
-						process.stdout.write(
-							`${(await managerAvailable(context.paths.managerSocket)) ? 'running' : 'stopped'}\n`
-						)
+					case 'status': {
+						if (await managerAvailable(context.paths.managerSocket)) {
+							process.stdout.write('running\n')
+							return 0
+						}
+						const port = context.paths.proxyPort
+						if ((await proxyIdentity(port)) === 'tokenmaxx') {
+							const processId = await portOwnerProcessId(port)
+							process.stdout.write(
+								`unreachable — a tokenmaxx daemon${processId === null ? '' : ` (process ${processId})`} holds port ${port} but does not answer; tokenmaxx daemon start replaces it\n`
+							)
+							return 1
+						}
+						process.stdout.write('stopped\n')
 						return 0
+					}
 					default:
 						throw new ApplicationError('USAGE', 'Usage: daemon <start|run|stop|status>')
 				}
