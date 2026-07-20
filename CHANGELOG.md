@@ -1,4 +1,5 @@
-- [2026-07-20] replace an unreachable daemon holding the port, fixes #3
+- [2026-07-20] surface login errors, call out missing clis
+- [2026-07-20] [replace an unreachable daemon holding the port, fixes #3](https://github.com/RubricLab/tokenmaxx/commit/9e43ffb64961c34de13e82b71f59827637e2f18f)
 - [2026-07-20] [banked codex resets: see the count, spend one with r](https://github.com/RubricLab/tokenmaxx/commit/22ef989d736f03e51cdcbe7175cad613dd658c24)
 - [2026-07-17] [drop the one-shot home migration](https://github.com/RubricLab/tokenmaxx/commit/f1cbbe575fb51a2b5bd9b9a3c2415900a31ccd0d)
 - [2026-07-17] [home is ~/.tokenmaxx](https://github.com/RubricLab/tokenmaxx/commit/ae233348f9287b5724b8b66a78fc700a9687f40b)

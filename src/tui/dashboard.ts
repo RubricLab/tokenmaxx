@@ -82,6 +82,7 @@ interface Ctx {
 	rows: number
 	tier: Tier
 	routing: Record<ProviderId, boolean>
+	cliPresent: Record<ProviderId, boolean>
 	switchFlagMs: number
 }
 
@@ -225,6 +226,7 @@ function windowCell(ctx: Ctx, window: UsageWindow, barWidth: number, withReset: 
 
 function addAccountLine(ctx: Ctx, provider: ProviderId, isSelected: boolean, sole: boolean) {
 	const color = isSelected ? ctx.theme.accent : sole ? ctx.theme.dim : ctx.theme.faint
+	const installed = ctx.cliPresent[provider]
 	return Box(
 		{
 			backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
@@ -237,7 +239,10 @@ function addAccountLine(ctx: Ctx, provider: ProviderId, isSelected: boolean, sol
 			content: `add a ${providerShort[provider]} account`,
 			fg: rgb(color)
 		}),
-		Text({ content: '   ⏎', fg: rgb(ctx.theme.faint) })
+		Text({
+			content: installed ? '   ⏎' : ` · install ${providerCli[provider]} first`,
+			fg: rgb(installed ? ctx.theme.faint : ctx.theme.warn)
+		})
 	)
 }
 
@@ -895,6 +900,7 @@ interface ViewState {
 	analyticsView: AnalyticsView
 	modelScroll: number
 	note: string
+	alert: string
 	resetConfirm: ResetConfirm | null
 	updateAvailable: string | null
 	updateDismissed: boolean
@@ -936,7 +942,8 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 			Text({ attributes: 1, content: 'tokenmaxx', fg: rgb(ctx.theme.accent) }),
 			Text({ content: `  ${clock}`, fg: rgb(ctx.theme.dim) }),
 			Text({ content: `   ↻ ${refreshed}`, fg: rgb(ctx.theme.faint) }),
-			...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })])
+			...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })]),
+			...(state.alert === '' ? [] : [Text({ content: `   ${state.alert}`, fg: rgb(ctx.theme.warn) })])
 		)
 	)
 	const children: Array<ReturnType<typeof Box> | ReturnType<typeof Text>> = [header]
@@ -1011,10 +1018,13 @@ interface FixtureOptions {
 
 export async function runTuiDashboard(
 	socketPath: string,
-	options: { routing: Record<ProviderId, boolean>; fixture?: FixtureOptions }
+	options: { routing: Record<ProviderId, boolean>; fixture?: FixtureOptions; alert?: string }
 ): Promise<DashboardAction | undefined> {
 	const fixture = options.fixture
 	const live = fixture === undefined
+	const cliPresent: Record<ProviderId, boolean> = live
+		? { anthropic: Bun.which('claude') !== null, openai: Bun.which('codex') !== null }
+		: { anthropic: true, openai: true }
 	const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
 	await renderer.waitForThemeMode(400).catch(() => null)
 	const envFallback: ThemeName = detectThemeName(process.env)
@@ -1026,6 +1036,7 @@ export async function runTuiDashboard(
 			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
 	const state: ViewState = {
+		alert: options.alert ?? '',
 		analyticsView: 'chart',
 		modelScroll: 0,
 		note: '',
@@ -1058,6 +1069,7 @@ export async function runTuiDashboard(
 		try {
 			next = view(
 				{
+					cliPresent,
 					columns,
 					now: live ? Date.now() : simulatedNow,
 					routing: options.routing,
@@ -1317,6 +1329,10 @@ export async function runTuiDashboard(
 		}
 		renderer.keyInput.on('keypress', (key: { name: string; ctrl: boolean }) => {
 			try {
+				if (state.alert !== '') {
+					state.alert = ''
+					paint()
+				}
 				if (state.resetConfirm !== null) {
 					if (key.ctrl && key.name === 'c') {
 						finish()

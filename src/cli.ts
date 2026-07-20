@@ -437,6 +437,21 @@ function registerIsolatedAccount(provider: 'openai' | 'anthropic'): Promise<Acco
 	}
 }
 
+const cliInstallHint: Record<ProviderId, string> = {
+	anthropic: 'npm install -g @anthropic-ai/claude-code',
+	openai: 'npm install -g @openai/codex'
+}
+
+function assertCliInstalled(provider: ProviderId): void {
+	const binary = provider === 'openai' ? 'codex' : 'claude'
+	if (Bun.which(binary) === null) {
+		throw new ApplicationError(
+			'CLI_MISSING',
+			`${binary} is not installed — run: ${cliInstallHint[provider]}`
+		)
+	}
+}
+
 async function login(
 	context: ApplicationContext,
 	providerArgument: string | undefined
@@ -445,6 +460,7 @@ async function login(
 		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude>')
 	}
 	const provider = providerFromCli(providerArgument)
+	assertCliInstalled(provider)
 	await ensureDaemon(context)
 	const authenticated = await registerIsolatedAccount(provider)
 	const existing = context.store
@@ -762,22 +778,25 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						const status = await installStatus()
 						return { anthropic: status.claudeRouted, openai: status.codexRouted }
 					}
+					let alert = ''
 					for (;;) {
 						const action = await runTuiDashboard(context.paths.managerSocket, {
+							alert,
 							routing: await readRouting()
 						})
+						alert = ''
 						if (action === undefined) {
 							break
 						}
 						if (action.kind === 'relogin' || action.kind === 'login') {
 							await login(context, action.provider === 'openai' ? 'codex' : 'claude').catch(error => {
-								process.stdout.write(`${errorMessage(error)}\n`)
+								alert = errorMessage(error)
 							})
 							continue
 						}
 						if (action.kind === 'routing') {
 							await setRouting(context, action.provider, action.enable).catch(error => {
-								process.stdout.write(`${errorMessage(error)}\n`)
+								alert = errorMessage(error)
 							})
 							continue
 						}
