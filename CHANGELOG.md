@@ -1,4 +1,5 @@
-- [2026-07-20] readme
+- [2026-07-21] failed logins say why
+- [2026-07-20] [readme](https://github.com/RubricLab/tokenmaxx/commit/e2d9002286227126cb529961d6bad9ca4bc36f6c)
 - [2026-07-20] [license](https://github.com/RubricLab/tokenmaxx/commit/31cedc2f75d9caf809e97f17110805fcf95342e9)
 - [2026-07-20] [update readme](https://github.com/RubricLab/tokenmaxx/commit/0162f48d6b7bfb3639ed953aa1719965350d01fe)
 - [2026-07-20] [the limited star gets its own column, panels get slack](https://github.com/RubricLab/tokenmaxx/commit/15976c0786b8e2a83aa455bf13e56f8d0784d1a8)
