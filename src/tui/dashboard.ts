@@ -957,11 +957,21 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 			Text({ attributes: 1, content: 'tokenmaxx', fg: rgb(ctx.theme.accent) }),
 			Text({ content: `  ${clock}`, fg: rgb(ctx.theme.dim) }),
 			Text({ content: `   ↻ ${refreshed}`, fg: rgb(ctx.theme.faint) }),
-			...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })]),
-			...(state.alert === '' ? [] : [Text({ content: `   ${state.alert}`, fg: rgb(ctx.theme.warn) })])
+			...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })])
 		)
 	)
 	const children: Array<ReturnType<typeof Box> | ReturnType<typeof Text>> = [header]
+	if (state.alert !== '') {
+		children.push(
+			Box(
+				{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
+				Box(
+					{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
+					Text({ content: state.alert, fg: rgb(ctx.theme.warn) })
+				)
+			)
+		)
+	}
 	children.push(
 		Box(
 			{ flexDirection: 'row', justifyContent: 'center', width: '100%' },

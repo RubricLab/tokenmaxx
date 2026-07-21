@@ -10,7 +10,7 @@ import {
 	type UsageSnapshot,
 	type UsageWindow
 } from './domain.ts'
-import { ApplicationError } from './errors.ts'
+import { ApplicationError, loginFailureMessage } from './errors.ts'
 import { type UpstreamInjection, upstreamFor } from './proxy.ts'
 import { type CredentialVault, exclusive } from './vault.ts'
 
@@ -74,7 +74,7 @@ interface ClaudeLoginDependencies {
 	interactive(
 		command: readonly string[],
 		environment: Record<string, string | undefined>
-	): Promise<number>
+	): Promise<{ exitCode: number; stderr: string }>
 	captured(command: readonly string[]): Promise<{ exitCode: number; stdout: string }>
 }
 
@@ -94,13 +94,20 @@ function defaultClaudeLoginDependencies(): ClaudeLoginDependencies {
 			clearTimeout(timeout)
 			return { exitCode, stdout }
 		},
-		interactive(command, environment) {
-			return Bun.spawn([...command], {
+		async interactive(command, environment) {
+			const child = Bun.spawn([...command], {
 				env: { ...process.env, ...environment },
-				stderr: 'inherit',
+				stderr: 'pipe',
 				stdin: 'inherit',
 				stdout: 'inherit'
-			}).exited
+			})
+			const decoder = new TextDecoder()
+			let stderr = ''
+			for await (const chunk of child.stderr) {
+				process.stderr.write(chunk)
+				stderr = `${stderr}${decoder.decode(chunk, { stream: true })}`.slice(-4_096)
+			}
+			return { exitCode: await child.exited, stderr }
 		}
 	}
 }
@@ -275,11 +282,11 @@ export async function registerClaudeAccount(input: {
 	const dependencies = input.dependencies ?? defaultClaudeLoginDependencies()
 	const profilePath = await mkdtemp(join(tmpdir(), 'tokenmaxx-claude-'))
 	try {
-		const exitCode = await dependencies.interactive(['claude', 'auth', 'login', '--claudeai'], {
+		const login = await dependencies.interactive(['claude', 'auth', 'login', '--claudeai'], {
 			CLAUDE_CONFIG_DIR: profilePath
 		})
-		if (exitCode !== 0) {
-			throw new ApplicationError('LOGIN_FAILED', `claude auth login exited with ${exitCode}`)
+		if (login.exitCode !== 0) {
+			throw new ApplicationError('LOGIN_FAILED', loginFailureMessage('claude auth login', login))
 		}
 		const credential = await importCliCredential(profilePath, dependencies)
 		const profile = await fetchClaudeProfile(

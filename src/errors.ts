@@ -19,6 +19,18 @@ export function errorMessage(error: unknown): string {
 	}
 }
 
+export function loginFailureMessage(
+	command: string,
+	result: { exitCode: number; stderr: string }
+): string {
+	const lines = result.stderr
+		.split('\n')
+		.map(line => line.trim())
+		.filter(line => line.length > 0)
+	const detail = (lines.find(line => /error/i.test(line)) ?? lines.at(-1) ?? '').slice(0, 160)
+	return detail === '' ? `${command} exited with ${result.exitCode}` : `${command}: ${detail}`
+}
+
 const networkFailurePattern =
 	/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ENETDOWN|getaddrinfo|timed? ?out|unable to connect|typo in the url|fetch failed|socket hang ?up|dns lookup/i
 

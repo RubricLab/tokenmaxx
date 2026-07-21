@@ -12,7 +12,7 @@ import {
 	type UsageSnapshot,
 	type UsageWindow
 } from './domain.ts'
-import { ApplicationError } from './errors.ts'
+import { ApplicationError, loginFailureMessage } from './errors.ts'
 import { type UpstreamInjection, upstreamFor } from './proxy.ts'
 import { type CredentialVault, exclusive } from './vault.ts'
 
@@ -76,7 +76,10 @@ interface CodexIdentity {
 }
 
 interface CodexLoginDependencies {
-	run(command: readonly string[], environment: Record<string, string | undefined>): Promise<number>
+	run(
+		command: readonly string[],
+		environment: Record<string, string | undefined>
+	): Promise<{ exitCode: number; stderr: string }>
 	createTemporaryDirectory(prefix: string): Promise<string>
 	read(path: string): Promise<string>
 	remove(path: string): Promise<void>
@@ -138,11 +141,17 @@ function defaultCodexLoginDependencies(): CodexLoginDependencies {
 		async run(command, environment) {
 			const child = Bun.spawn([...command], {
 				env: { ...process.env, ...environment },
-				stderr: 'inherit',
+				stderr: 'pipe',
 				stdin: 'inherit',
 				stdout: 'inherit'
 			})
-			return child.exited
+			const decoder = new TextDecoder()
+			let stderr = ''
+			for await (const chunk of child.stderr) {
+				process.stderr.write(chunk)
+				stderr = `${stderr}${decoder.decode(chunk, { stream: true })}`.slice(-4_096)
+			}
+			return { exitCode: await child.exited, stderr }
 		}
 	}
 }
@@ -154,14 +163,14 @@ export async function registerCodexAccount(input: {
 	const dependencies = input.dependencies ?? defaultCodexLoginDependencies()
 	const temporaryHome = await dependencies.createTemporaryDirectory('tokenmaxx-register-')
 	try {
-		const exitCode = await dependencies.run(
+		const login = await dependencies.run(
 			['codex', 'login', '-c', 'cli_auth_credentials_store="file"'],
 			{
 				CODEX_HOME: temporaryHome
 			}
 		)
-		if (exitCode !== 0) {
-			throw new ApplicationError('LOGIN_FAILED', `codex login exited with ${exitCode}`)
+		if (login.exitCode !== 0) {
+			throw new ApplicationError('LOGIN_FAILED', loginFailureMessage('codex login', login))
 		}
 		const serialized = await dependencies.read(join(temporaryHome, 'auth.json'))
 		const auth = CodexAuthSchema.parse(JSON.parse(serialized))
