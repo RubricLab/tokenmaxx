@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { type ClaudeOauth, refreshClaudeCredential } from './claude.ts'
+import { type ClaudeOauth, refreshClaudeCredential, registerClaudeAccount } from './claude.ts'
 import type { CredentialVault } from './vault.ts'
 
 function memoryVault(initial: Record<string, string>): CredentialVault & {
@@ -31,6 +31,38 @@ const reference = 'claude:test'
 function vaultWith(credential: ClaudeOauth) {
 	return memoryVault({ [reference]: JSON.stringify(credential) })
 }
+
+describe('registerClaudeAccount', () => {
+	test('the renamed profile field account.email is accepted as the identity', async () => {
+		const vault = memoryVault({})
+		const account = await registerClaudeAccount({
+			dependencies: {
+				captured: async command =>
+					command[1] === 'find-generic-password'
+						? { exitCode: 0, stdout: JSON.stringify({ claudeAiOauth: stored }) }
+						: { exitCode: 0, stdout: '' },
+				interactive: async () => ({ exitCode: 0, stderr: '' })
+			},
+			fetchImplementation: async () =>
+				Response.json({
+					account: {
+						created_at: '2025-03-20T17:13:55.409225Z',
+						display_name: 'Lennard',
+						email: 'Lennard@Example.com',
+						has_claude_max: true,
+						has_claude_pro: false,
+						uuid: 'account-uuid'
+					},
+					application: { name: 'Claude Code', slug: 'claude-code', uuid: 'app-uuid' },
+					organization: { rate_limit_tier: 'default_claude_max_20x', uuid: 'org-uuid' }
+				}),
+			vault
+		})
+		expect(account.identity).toBe('lennard@example.com')
+		expect(account.externalAccountId).toBe('account-uuid')
+		expect(vault.items.get(account.secretReference ?? '')).toBe(JSON.stringify(stored))
+	})
+})
 
 describe('refreshClaudeCredential', () => {
 	test('a rejected grant demands re-login and leaves the vault untouched', async () => {

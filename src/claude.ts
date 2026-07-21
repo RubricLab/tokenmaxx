@@ -48,11 +48,13 @@ const ProfileSchema = z
 	.object({
 		account: z
 			.object({
+				email: z.string().email().optional(),
 				email_address: z.string().email().optional(),
 				uuid: z.string().min(1)
 			})
 			.passthrough()
 			.optional(),
+		email: z.string().email().optional(),
 		email_address: z.string().email().optional(),
 		uuid: z.string().min(1).optional()
 	})
@@ -270,7 +272,12 @@ async function fetchClaudeProfile(
 	}
 	return {
 		accountId,
-		email: profile.account?.email_address ?? profile.email_address ?? null
+		email:
+			profile.account?.email_address ??
+			profile.account?.email ??
+			profile.email_address ??
+			profile.email ??
+			null
 	}
 }
 

@@ -1,4 +1,5 @@
-- [2026-07-21] failed logins say why
+- [2026-07-21] follow claude's profile email rename
+- [2026-07-21] [failed logins say why](https://github.com/RubricLab/tokenmaxx/commit/e28f1472327450ca8e7640ca7ab5c3b945790a31)
 - [2026-07-20] [readme](https://github.com/RubricLab/tokenmaxx/commit/e2d9002286227126cb529961d6bad9ca4bc36f6c)
 - [2026-07-20] [license](https://github.com/RubricLab/tokenmaxx/commit/31cedc2f75d9caf809e97f17110805fcf95342e9)
 - [2026-07-20] [update readme](https://github.com/RubricLab/tokenmaxx/commit/0162f48d6b7bfb3639ed953aa1719965350d01fe)
