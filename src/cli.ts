@@ -3,6 +3,7 @@ import { closeSync, openSync } from 'node:fs'
 import { type FileHandle, mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline/promises'
 import { z } from 'zod'
 import { registerClaudeAccount, registerClaudeApiKeyAccount } from './claude.ts'
 import { registerCodexAccount, registerOpenAiApiKeyAccount } from './codex.ts'
@@ -523,15 +524,6 @@ export function stripTerminalNoise(line: string): string {
 	return clean.trim()
 }
 
-async function ask(question: string): Promise<string> {
-	await handTerminalBack()
-	process.stdout.write(question)
-	for await (const line of console) {
-		return stripTerminalNoise(line)
-	}
-	return ''
-}
-
 async function registerApiKeyAccount(
 	provider: 'openai' | 'anthropic',
 	keyArgument: string | undefined
@@ -542,8 +534,18 @@ async function registerApiKeyAccount(
 			'Pass the key inline in non-interactive shells: tokenmaxx login <codex|claude> --api-key <key>'
 		)
 	}
-	const key = keyArgument ?? (await ask('Paste the API key: '))
-	const label = await ask('Name this account (shown in the dashboard): ')
+	await handTerminalBack()
+	const readline = createInterface({ input: process.stdin, output: process.stdout })
+	let key: string
+	let label: string
+	try {
+		key = keyArgument ?? stripTerminalNoise(await readline.question('Paste the API key: '))
+		label = stripTerminalNoise(
+			await readline.question('Name this account (shown in the dashboard): ')
+		)
+	} finally {
+		readline.close()
+	}
 	if (label.trim().length === 0) {
 		throw new ApplicationError('USAGE', 'The account needs a name')
 	}
