@@ -1,5 +1,52 @@
 import { describe, expect, test } from 'bun:test'
-import { createUsageObserver, proxyIdentity, startProxy } from './proxy.ts'
+import { adaptChatGptRequest, createUsageObserver, proxyIdentity, startProxy } from './proxy.ts'
+
+describe('chatgpt dialect adapter', () => {
+	test('lifts system messages into instructions and drops max_output_tokens', () => {
+		const adapted = JSON.parse(
+			adaptChatGptRequest(
+				JSON.stringify({
+					input: [
+						{ content: [{ text: 'You are a helpful agent.', type: 'input_text' }], role: 'system' },
+						{ content: [{ text: 'hi', type: 'input_text' }], role: 'user' }
+					],
+					max_output_tokens: 4096,
+					model: 'gpt-5.6-sol',
+					store: false,
+					stream: true
+				})
+			)
+		)
+		expect(adapted.instructions).toBe('You are a helpful agent.')
+		expect(adapted.input).toHaveLength(1)
+		expect(adapted.input[0].role).toBe('user')
+		expect(adapted.max_output_tokens).toBeUndefined()
+	})
+
+	test('merges lifted developer messages after existing instructions', () => {
+		const adapted = JSON.parse(
+			adaptChatGptRequest(
+				JSON.stringify({
+					input: [
+						{ content: [{ text: 'Prefer short replies.', type: 'input_text' }], role: 'developer' }
+					],
+					instructions: 'You are a coding agent.'
+				})
+			)
+		)
+		expect(adapted.instructions).toBe('You are a coding agent.\n\nPrefer short replies.')
+		expect(adapted.input).toHaveLength(0)
+	})
+
+	test('leaves codex-shaped requests and non-json bodies alone', () => {
+		const codexShaped = JSON.stringify({
+			input: [{ content: [{ text: 'hi', type: 'input_text' }], role: 'user' }],
+			instructions: 'You are Codex.'
+		})
+		expect(JSON.parse(adaptChatGptRequest(codexShaped))).toEqual(JSON.parse(codexShaped))
+		expect(adaptChatGptRequest('not json')).toBe('not json')
+	})
+})
 
 type Observed = {
 	model: string | null

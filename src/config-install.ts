@@ -221,9 +221,10 @@ const anthropicModels = [
 		name: 'Sonnet via tokenmaxx'
 	}
 ]
+// The ChatGPT codex backend accepts exactly this model id for subscription
+// accounts (probed 2026-07-22; gpt-5.6-codex and friends are all rejected).
 const openaiModels = [
-	{ contextWindow: 400_000, id: 'gpt-5.6-sol', maxTokens: 128_000, name: 'GPT via tokenmaxx' },
-	{ contextWindow: 400_000, id: 'gpt-5.6-codex', maxTokens: 128_000, name: 'Codex via tokenmaxx' }
+	{ contextWindow: 400_000, id: 'gpt-5.6-sol', maxTokens: 128_000, name: 'GPT via tokenmaxx' }
 ]
 
 function openclawProviders(paths: ApplicationPaths): Record<string, unknown> {
