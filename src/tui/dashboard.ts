@@ -488,6 +488,24 @@ function tabBar(ctx: Ctx, tab: Tab) {
 	)
 }
 
+function sessionResets(ctx: Ctx, snapshot: DashboardSnapshot): string | null {
+	const parts = providerOrder.flatMap(provider => {
+		const state = snapshot.providers.find(s => s.provider === provider)
+		if (state?.activeAccountId == null) {
+			return []
+		}
+		const account = snapshot.accounts.find(a => a.id === state.activeAccountId)
+		const windows = snapshot.usage.find(u => u.accountId === state.activeAccountId)?.windows ?? []
+		const reset = shortReset(windows.find(isFiveHour)?.resetAt ?? null, ctx.now)
+		if (account === undefined || reset === null) {
+			return []
+		}
+		const label = account.label.length <= 22 ? account.label : `${account.label.slice(0, 21)}…`
+		return [`${providerCli[provider]} · ${label} · ↻ ${reset}`]
+	})
+	return parts.length === 0 ? null : parts.join('    ')
+}
+
 function analyticsBar(ctx: Ctx, timeframe: Timeframe, view: AnalyticsView) {
 	const ranges = TIMEFRAMES.flatMap((option, index) => [
 		...(index === 0 ? [] : [Text({ content: ' ', fg: rgb(ctx.theme.faint) })]),
@@ -529,7 +547,7 @@ function centered(...children: ReturnType<typeof Text>[]) {
 }
 
 function throughputChart(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width: number) {
-	const height = Math.max(4, Math.min(10, ctx.rows - 15))
+	const height = Math.max(4, Math.min(10, ctx.rows - 18))
 	const body: ReturnType<typeof Box>[] = []
 	const axisTop = `${compactNumber(tokens.peakPerHour)}/h`
 	const gutter = Math.max(6, axisTop.length)
@@ -675,9 +693,11 @@ function chartView(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width
 		)
 	}
 	body.push(centered(...headline))
-	body.push(
-		centered(Text({ content: 'press m for the full pricing breakdown', fg: rgb(ctx.theme.faint) }))
-	)
+	if (ctx.rows >= 28) {
+		body.push(
+			centered(Text({ content: 'press m for the full pricing breakdown', fg: rgb(ctx.theme.faint) }))
+		)
+	}
 	return body
 }
 
@@ -725,7 +745,16 @@ function analyticsBody(
 		},
 		...body
 	)
-	return column(ctx, [analyticsBar(ctx, timeframe, state.analyticsView), card], 150)
+	const resets = sessionResets(ctx, analytics.snapshot)
+	return column(
+		ctx,
+		[
+			analyticsBar(ctx, timeframe, state.analyticsView),
+			card,
+			...(resets === null ? [] : [centered(Text({ content: resets, fg: rgb(ctx.theme.dim) }))])
+		],
+		150
+	)
 }
 
 function dwellLabel(milliseconds: number): string {
@@ -872,8 +901,7 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 		ctx,
 		[
 			settingsPanel(ctx, snapshot, rows, 'openai', selected),
-			settingsPanel(ctx, snapshot, rows, 'anthropic', selected),
-			Box({ flexDirection: 'row' }, Text({ content: 'changes apply live', fg: rgb(ctx.theme.faint) }))
+			settingsPanel(ctx, snapshot, rows, 'anthropic', selected)
 		],
 		78
 	)
