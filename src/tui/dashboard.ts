@@ -424,16 +424,38 @@ function tabBar(ctx: Ctx, tab: Tab) {
 	)
 }
 
-function analyticsBar(ctx: Ctx, timeframe: Timeframe, view: AnalyticsView) {
+function sessionResets(ctx: Ctx, snapshot: DashboardSnapshot): string | null {
+	const parts = providerOrder.flatMap(provider => {
+		const state = snapshot.providers.find(s => s.provider === provider)
+		if (state?.activeAccountId == null) {
+			return []
+		}
+		const windows = snapshot.usage.find(u => u.accountId === state.activeAccountId)?.windows ?? []
+		const reset = shortReset(windows.find(isFiveHour)?.resetAt ?? null, ctx.now)
+		return reset === null ? [] : [`${providerCli[provider]} ${reset}`]
+	})
+	return parts.length === 0 ? null : `↻ session · ${parts.join(' · ')}`
+}
+
+function analyticsBar(
+	ctx: Ctx,
+	snapshot: DashboardSnapshot,
+	timeframe: Timeframe,
+	view: AnalyticsView
+) {
 	const ranges = TIMEFRAMES.flatMap((option, index) => [
 		...(index === 0 ? [] : [Text({ content: ' ', fg: rgb(ctx.theme.faint) })]),
 		pill(ctx, option.label, option.key === timeframe.key)
 	])
+	const resets = sessionResets(ctx, snapshot)
 	return Box(
 		{ flexDirection: 'row', width: '100%' },
 		Text({ content: 'range  ', fg: rgb(ctx.theme.dim) }),
 		...ranges,
 		Box({ flexGrow: 1 }),
+		...(resets === null || ctx.tier === 'compact'
+			? []
+			: [Text({ content: resets, fg: rgb(ctx.theme.dim) }), Box({ flexGrow: 1 })]),
 		Text({
 			attributes: view === 'chart' ? 1 : 0,
 			content: 'chart',
@@ -661,7 +683,18 @@ function analyticsBody(
 		},
 		...body
 	)
-	return column(ctx, [analyticsBar(ctx, timeframe, state.analyticsView), card], 150)
+	const resets = sessionResets(ctx, analytics.snapshot)
+	return column(
+		ctx,
+		[
+			analyticsBar(ctx, analytics.snapshot, timeframe, state.analyticsView),
+			card,
+			...(resets === null || ctx.tier !== 'compact'
+				? []
+				: [centered(Text({ content: resets, fg: rgb(ctx.theme.dim) }))])
+		],
+		150
+	)
 }
 
 function dwellLabel(milliseconds: number): string {
