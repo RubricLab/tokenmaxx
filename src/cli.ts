@@ -487,10 +487,47 @@ function freshScreen(title: string): void {
 	process.stdout.write(`\x1b[2J\x1b[H${accent('tokenmaxx')} ${dim(`· ${title}`)}\n\n`)
 }
 
+function skipEscapeSequence(line: string, start: number): number {
+	const kind = line[start + 1]
+	if (kind === '[') {
+		let index = start + 2
+		while (index < line.length && !/[a-zA-Z~]/.test(line[index] ?? '')) {
+			index += 1
+		}
+		return index + 1
+	}
+	if (kind === ']' || kind === 'P') {
+		let index = start + 2
+		while (index < line.length && line.charCodeAt(index) !== 7 && line.charCodeAt(index) !== 27) {
+			index += 1
+		}
+		return line.charCodeAt(index) === 27 ? index + 2 : index + 1
+	}
+	return start + 2
+}
+
+export function stripTerminalNoise(line: string): string {
+	let clean = ''
+	let index = 0
+	while (index < line.length) {
+		const code = line.charCodeAt(index)
+		if (code === 27) {
+			index = skipEscapeSequence(line, index)
+			continue
+		}
+		if (code >= 32 && code !== 127) {
+			clean += line[index]
+		}
+		index += 1
+	}
+	return clean.trim()
+}
+
 async function ask(question: string): Promise<string> {
+	await handTerminalBack()
 	process.stdout.write(question)
 	for await (const line of console) {
-		return line.trim()
+		return stripTerminalNoise(line)
 	}
 	return ''
 }
@@ -854,11 +891,14 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 							routing: await readRouting()
 						})
 						alert = ''
+						await handTerminalBack()
 						if (action === undefined) {
 							break
 						}
 						if (action.kind === 'relogin' || action.kind === 'login' || action.kind === 'loginApiKey') {
-							await login(context, action.provider === 'openai' ? 'codex' : 'claude', {
+							const cli = action.provider === 'openai' ? 'codex' : 'claude'
+							freshScreen(action.kind === 'loginApiKey' ? `add a ${cli} api key` : `sign in with ${cli}`)
+							await login(context, cli, {
 								apiKey: action.kind === 'loginApiKey'
 							}).catch(error => {
 								alert = errorMessage(error)

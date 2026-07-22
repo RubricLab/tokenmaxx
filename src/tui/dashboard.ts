@@ -1184,6 +1184,9 @@ export async function runTuiDashboard(
 ): Promise<DashboardAction | undefined> {
 	const fixture = options.fixture
 	const live = fixture === undefined
+	try {
+		process.stdin.setRawMode?.(true)
+	} catch {}
 	const cliPresent: Record<ProviderId, boolean> = live
 		? { anthropic: Bun.which('claude') !== null, openai: Bun.which('codex') !== null }
 		: { anthropic: true, openai: true }

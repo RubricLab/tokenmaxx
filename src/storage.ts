@@ -94,14 +94,6 @@ function parsePayload<Type>(row: JsonRow | null, schema: PersistedSchema<Type>):
 	}
 }
 
-function parseRequiredPayload<Type>(row: JsonRow, schema: PersistedSchema<Type>): Type {
-	const parsed = parsePayload(row, schema)
-	if (parsed === null) {
-		throw new ApplicationError('CORRUPT_STATE', 'Stored row unexpectedly has no payload')
-	}
-	return parsed
-}
-
 function serialize(value: unknown): string {
 	return JSON.stringify(value)
 }
