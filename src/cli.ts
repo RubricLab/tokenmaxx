@@ -479,6 +479,14 @@ async function handTerminalBack(): Promise<void> {
 	process.stdin.pause()
 }
 
+function freshScreen(title: string): void {
+	const color =
+		process.stdout.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb'
+	const accent = (text: string) => (color ? `\x1b[38;2;90;176;255m${text}\x1b[0m` : text)
+	const dim = (text: string) => (color ? `\x1b[38;2;139;147;161m${text}\x1b[0m` : text)
+	process.stdout.write(`\x1b[2J\x1b[H${accent('tokenmaxx')} ${dim(`· ${title}`)}\n\n`)
+}
+
 async function ask(question: string): Promise<string> {
 	process.stdout.write(question)
 	for await (const line of console) {
