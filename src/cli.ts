@@ -3,9 +3,10 @@ import { closeSync, openSync } from 'node:fs'
 import { type FileHandle, mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline/promises'
 import { z } from 'zod'
-import { registerClaudeAccount } from './claude.ts'
-import { registerCodexAccount } from './codex.ts'
+import { registerClaudeAccount, registerClaudeApiKeyAccount } from './claude.ts'
+import { registerCodexAccount, registerOpenAiApiKeyAccount } from './codex.ts'
 import {
 	installClaudeConfig,
 	installCodexConfig,
@@ -21,6 +22,7 @@ import {
 	managerVersion,
 	readDashboard,
 	readProxyPort,
+	requestAccountRemove,
 	requestAccountSave,
 	requestSwitch,
 	startManagerServer
@@ -233,13 +235,18 @@ function help(): string {
 		`${head('Usage')}  tokenmaxx <command> [options]        ${dim('run with no command for the dashboard')}`,
 		'',
 		head('Setup'),
-		row('login <codex|claude>', 'sign in an account · re-run to re-auth'),
+		row(
+			'login <codex|claude>',
+			'sign in an account · re-run to re-auth',
+			'add --api-key to use an API key instead'
+		),
 		row('install', 'route codex & claude through tokenmaxx'),
 		row('uninstall', 'restore your original config'),
 		'',
 		head('Everyday'),
 		row('list', 'accounts, health, and live usage'),
 		row('switch <codex|claude> <email>', 'make an account active now'),
+		row('logout [codex|claude] <email>', 'sign out and delete the credential'),
 		row(
 			'auto <codex|claude|both> <on|off>',
 			'switch accounts at a usage threshold',
@@ -361,9 +368,16 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 			}
 			await Bun.sleep(500)
 		}
+		const logPath = join(context.paths.runtime, 'daemon.log')
+		const lastError = await readFile(logPath, 'utf8')
+			.then(log => log.trim().split('\n').at(-1) ?? '')
+			.catch(() => '')
 		throw new ApplicationError(
 			'DAEMON_START_FAILED',
-			`Manager did not start; inspect ${join(context.paths.runtime, 'daemon.log')}`
+			`Manager did not start${lastError === '' ? '' : ` — ${lastError.replace(/^tokenmaxx: /, '')}`}\n` +
+				'Your clients still route through tokenmaxx while it is down.\n' +
+				'Escape hatch: tokenmaxx uninstall  (codex and claude talk straight to the providers again)\n' +
+				`Then check tokenmaxx doctor, or the full log: ${logPath}`
 		)
 	} finally {
 		closeSync(logDescriptor)
@@ -453,17 +467,112 @@ function assertCliInstalled(provider: ProviderId): void {
 	}
 }
 
+async function handTerminalBack(): Promise<void> {
+	if (process.stdin.isTTY !== true) {
+		return
+	}
+	try {
+		Bun.spawnSync(['stty', 'sane'], { stderr: 'ignore', stdin: 'inherit', stdout: 'ignore' })
+	} catch {}
+	process.stdin.resume()
+	await Bun.sleep(50)
+	try {
+		while (process.stdin.read() !== null) {}
+	} catch {}
+	process.stdin.pause()
+}
+
+function freshScreen(title: string): void {
+	const color =
+		process.stdout.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb'
+	const accent = (text: string) => (color ? `\x1b[38;2;90;176;255m${text}\x1b[0m` : text)
+	const dim = (text: string) => (color ? `\x1b[38;2;139;147;161m${text}\x1b[0m` : text)
+	process.stdout.write(`\x1b[2J\x1b[H${accent('tokenmaxx')} ${dim(`· ${title}`)}\n\n`)
+}
+
+function skipEscapeSequence(line: string, start: number): number {
+	const kind = line[start + 1]
+	if (kind === '[') {
+		let index = start + 2
+		while (index < line.length && !/[a-zA-Z~]/.test(line[index] ?? '')) {
+			index += 1
+		}
+		return index + 1
+	}
+	if (kind === ']' || kind === 'P') {
+		let index = start + 2
+		while (index < line.length && line.charCodeAt(index) !== 7 && line.charCodeAt(index) !== 27) {
+			index += 1
+		}
+		return line.charCodeAt(index) === 27 ? index + 2 : index + 1
+	}
+	return start + 2
+}
+
+export function stripTerminalNoise(line: string): string {
+	let clean = ''
+	let index = 0
+	while (index < line.length) {
+		const code = line.charCodeAt(index)
+		if (code === 27) {
+			index = skipEscapeSequence(line, index)
+			continue
+		}
+		if (code >= 32 && code !== 127) {
+			clean += line[index]
+		}
+		index += 1
+	}
+	return clean.trim()
+}
+
+async function registerApiKeyAccount(
+	provider: 'openai' | 'anthropic',
+	keyArgument: string | undefined
+): Promise<Account> {
+	if (process.stdin.isTTY !== true && keyArgument === undefined) {
+		throw new ApplicationError(
+			'USAGE',
+			'Pass the key inline in non-interactive shells: tokenmaxx login <codex|claude> --api-key <key>'
+		)
+	}
+	await handTerminalBack()
+	const readline = createInterface({ input: process.stdin, output: process.stdout })
+	let key: string
+	let label: string
+	try {
+		key = keyArgument ?? stripTerminalNoise(await readline.question('Paste the API key: '))
+		label = stripTerminalNoise(
+			await readline.question('Name this account (shown in the dashboard): ')
+		)
+	} finally {
+		readline.close()
+	}
+	if (label.trim().length === 0) {
+		throw new ApplicationError('USAGE', 'The account needs a name')
+	}
+	const vault = createMacOsKeychainVault()
+	return provider === 'openai'
+		? registerOpenAiApiKeyAccount({ key, label: label.trim(), vault })
+		: registerClaudeApiKeyAccount({ key, label: label.trim(), vault })
+}
+
 async function login(
 	context: ApplicationContext,
-	providerArgument: string | undefined
+	providerArgument: string | undefined,
+	options: { apiKey: boolean; apiKeyValue?: string } = { apiKey: false }
 ): Promise<void> {
 	if (providerArgument === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude>')
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude> [--api-key [key]]')
 	}
 	const provider = providerFromCli(providerArgument)
-	assertCliInstalled(provider)
+	if (!options.apiKey) {
+		assertCliInstalled(provider)
+	}
 	await ensureDaemon(context)
-	const authenticated = await registerIsolatedAccount(provider)
+	const authenticated = options.apiKey
+		? await registerApiKeyAccount(provider, options.apiKeyValue)
+		: await registerIsolatedAccount(provider)
 	const existing = context.store
 		.listAccounts(provider)
 		.find(
@@ -567,6 +676,33 @@ function listAccounts(context: ApplicationContext): void {
 		}
 	}
 	process.stdout.write('\n● = active\n')
+}
+
+const providerWords = new Set(['codex', 'claude', 'openai', 'anthropic'])
+
+async function logout(context: ApplicationContext, arguments_: readonly string[]): Promise<void> {
+	const qualified = arguments_[0] !== undefined && providerWords.has(arguments_[0])
+	const provider = qualified ? providerFromCli(arguments_[0] as string) : undefined
+	const reference = qualified ? arguments_[1] : arguments_[0]
+	if (reference === undefined) {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx logout [codex|claude] <email-or-name>')
+	}
+	const matches = context.store
+		.listAccounts(provider)
+		.filter(account => account.id === reference || account.label === reference)
+	const account = matches[0]
+	if (account === undefined) {
+		throw new ApplicationError('ACCOUNT_NOT_FOUND', `No account matches ${reference}`)
+	}
+	if (matches.length > 1) {
+		throw new ApplicationError(
+			'ACCOUNT_AMBIGUOUS',
+			`${reference} is on both providers — say which: tokenmaxx logout codex ${reference}`
+		)
+	}
+	await ensureDaemon(context)
+	await requestAccountRemove(context.paths.managerSocket, account.id)
+	process.stdout.write(`Signed out ${account.label}; its credential is gone from the Keychain.\n`)
 }
 
 async function switchAccount(
@@ -786,11 +922,16 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 							routing: await readRouting()
 						})
 						alert = ''
+						await handTerminalBack()
 						if (action === undefined) {
 							break
 						}
-						if (action.kind === 'relogin' || action.kind === 'login') {
-							await login(context, action.provider === 'openai' ? 'codex' : 'claude').catch(error => {
+						if (action.kind === 'relogin' || action.kind === 'login' || action.kind === 'loginApiKey') {
+							const cli = action.provider === 'openai' ? 'codex' : 'claude'
+							freshScreen(action.kind === 'loginApiKey' ? `add a ${cli} api key` : `sign in with ${cli}`)
+							await login(context, cli, {
+								apiKey: action.kind === 'loginApiKey'
+							}).catch(error => {
 								alert = errorMessage(error)
 							})
 							continue
@@ -827,11 +968,19 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 			case '-h':
 				process.stdout.write(`${help()}\n`)
 				return 0
-			case 'login':
-				await login(context, arguments_[1])
+			case 'login': {
+				const flagIndex = arguments_.indexOf('--api-key')
+				await login(context, arguments_[1], {
+					apiKey: flagIndex >= 0,
+					apiKeyValue: flagIndex >= 0 ? arguments_[flagIndex + 1] : undefined
+				})
 				return 0
+			}
 			case 'switch':
 				await switchAccount(context, arguments_.slice(1))
+				return 0
+			case 'logout':
+				await logout(context, arguments_.slice(1))
 				return 0
 			case 'auto':
 				await configureAutomation(context, arguments_.slice(1))

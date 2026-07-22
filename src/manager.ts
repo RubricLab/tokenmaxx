@@ -373,6 +373,16 @@ export class AccountManager {
 			account.provider === 'anthropic'
 				? await probeClaude({ account, ...shared })
 				: await probeCodex({ account, ...shared })
+		if (account.auth === 'apiKey') {
+			const start = this.#dependencies.now().getTime() - 31 * 24 * 3_600_000
+			result.usage.measuredSpendUsd = this.#store
+				.accountTokens(account.id, start)
+				.reduce(
+					(total, row) =>
+						total + costUsd(row.model, row.input, row.output, row.cached, row.cacheCreation),
+					0
+				)
+		}
 		this.#store.saveUsage(result.usage)
 		this.#store.saveAccount(result.account)
 	}
@@ -404,6 +414,22 @@ export class AccountManager {
 			})
 			await this.probeAndSave(account).catch(() => undefined)
 			return outcome
+		})
+	}
+
+	public async removeAccount(accountId: string): Promise<void> {
+		const account = this.#store.findAccount(accountId)
+		if (account === null) {
+			throw new ApplicationError('ACCOUNT_NOT_FOUND', `Unknown account ${accountId}`)
+		}
+		return this.withProviderOperation(account.provider, async () => {
+			if (account.secretReference !== null) {
+				await this.#vault.remove(account.secretReference).catch(() => undefined)
+			}
+			if (account.provider === 'anthropic' && account.profilePath !== null) {
+				await removeClaudeProfile(account.profilePath).catch(() => undefined)
+			}
+			this.#store.removeAccount(account.id)
 		})
 	}
 
