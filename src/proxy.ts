@@ -8,6 +8,7 @@ export interface UpstreamInjection {
 	headers: Record<string, string>
 	appendHeaders?: Record<string, string>
 	stripHeaders?: readonly string[]
+	dialect?: 'chatgpt'
 }
 
 interface ProxyCredentialSource {
@@ -200,6 +201,50 @@ export async function proxyIdentity(port: number): Promise<'tokenmaxx' | 'foreig
 	}
 }
 
+interface ResponsesInputMessage {
+	role?: string
+	content?: { type?: string; text?: string }[]
+}
+
+function messageText(item: ResponsesInputMessage): string {
+	return (Array.isArray(item.content) ? item.content : [])
+		.map(part => part.text ?? '')
+		.filter(text => text.length > 0)
+		.join('\n')
+}
+
+// The ChatGPT codex backend rejects requests third-party harnesses send to a
+// standard Responses endpoint: system messages must ride in `instructions`
+// ("System messages are not allowed") and `max_output_tokens` is unsupported.
+export function adaptChatGptRequest(raw: string): string {
+	let parsed: { input?: unknown; instructions?: unknown; [key: string]: unknown }
+	try {
+		parsed = JSON.parse(raw) as typeof parsed
+	} catch {
+		return raw
+	}
+	if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.input)) {
+		return raw
+	}
+	const isSystem = (item: unknown): item is ResponsesInputMessage => {
+		const role = (item as ResponsesInputMessage | null)?.role
+		return role === 'system' || role === 'developer'
+	}
+	const lifted = parsed.input.filter(isSystem).map(messageText)
+	const instructions = [
+		...(typeof parsed.instructions === 'string' ? [parsed.instructions] : []),
+		...lifted
+	]
+		.filter(text => text.length > 0)
+		.join('\n\n')
+	const { max_output_tokens: _dropped, ...rest } = parsed
+	return JSON.stringify({
+		...rest,
+		input: parsed.input.filter(item => !isSystem(item)),
+		...(instructions.length > 0 ? { instructions } : {})
+	})
+}
+
 const strippedRequestHeaders = [
 	'host',
 	'connection',
@@ -288,7 +333,10 @@ function createProxyHandler(options: ProxyOptions): ProxyHandler {
 				request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer()
 			const send = (injection: UpstreamInjection): Promise<Response> =>
 				doFetch(`${injection.baseUrl.replace(/\/$/, '')}${route.rest}${url.search}`, {
-					body,
+					body:
+						injection.dialect === 'chatgpt' && body !== undefined
+							? adaptChatGptRequest(new TextDecoder().decode(body))
+							: body,
 					headers: forwardHeaders(request.headers, injection),
 					method: request.method,
 					redirect: 'manual',
