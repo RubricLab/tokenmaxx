@@ -1,4 +1,15 @@
-- [2026-07-22] the proxy lifts system prompts for the chatgpt backend
+- [2026-07-22] settings shows the harnesses and scrolls
+
+A harnesses box joins settings: green on when routed, warn off with an
+enter hint when installed but not routed, grey when the harness is not
+on the machine (binary or config detection). Enter installs or removes
+the providers inline — no CLI round-trip. The settings tab now windows
+its rows to the terminal height with more indicators, and the 2s
+background tick no longer holds the busy flag that was eating
+keypresses.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+- [2026-07-22] [the proxy lifts system prompts for the chatgpt backend
 
 Third-party harnesses send standard Responses requests: system messages
 in the input array and max_output_tokens set. The ChatGPT codex backend
@@ -7,7 +18,7 @@ and developer messages move into instructions, max_output_tokens drops)
 so openclaw, pi, and hermes work without harness-specific dialects.
 Also ships only gpt-5.6-sol — the one model the backend accepts.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>](https://github.com/RubricLab/tokenmaxx/commit/b8462fc888c18c3495c913cfb6376d4f865b221b)
 - [2026-07-22] install into openclaw, pi, and hermes, fixes #11
 - [2026-07-22] session reset time on analytics, fixes #9
 - [2026-07-22] logout

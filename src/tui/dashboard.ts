@@ -1,4 +1,11 @@
 import { Box, createCliRenderer, parseColor, type RGBA, Text } from '@opentui/core'
+import {
+	type HarnessStatus,
+	type HarnessTarget,
+	harnessStatus,
+	installHarnessConfig,
+	uninstallHarnessConfig
+} from '../config-install.ts'
 import type {
 	Account,
 	AnalyticsSnapshot,
@@ -20,6 +27,7 @@ import {
 	requestResetCredits,
 	requestSwitch
 } from '../ipc.ts'
+import { applicationPaths } from '../paths.ts'
 import { availableUpdate } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
 import {
@@ -762,12 +770,14 @@ function dwellLabel(milliseconds: number): string {
 	return minutes === 0 ? 'off' : `${minutes}m`
 }
 
-interface SettingRow {
-	provider: ProviderId
-	key: 'routing' | 'auto' | 'threshold' | 'dwell' | 'window'
-	windowId?: string
-	windowLabel?: string
-}
+type SettingRow =
+	| {
+			provider: ProviderId
+			key: 'routing' | 'auto' | 'threshold' | 'dwell' | 'window'
+			windowId?: string
+			windowLabel?: string
+	  }
+	| { key: 'harness'; provider?: undefined; target: HarnessTarget }
 
 function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): UsageWindow[] {
 	const seen = new Map<string, UsageWindow>()
@@ -784,19 +794,22 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 	)
 }
 
-function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
-	return providerOrder.flatMap(provider => [
-		{ key: 'routing' as const, provider },
-		{ key: 'auto' as const, provider },
-		{ key: 'threshold' as const, provider },
-		{ key: 'dwell' as const, provider },
-		...providerWindows(snapshot, provider).map(window => ({
-			key: 'window' as const,
-			provider,
-			windowId: window.id,
-			windowLabel: window.label
-		}))
-	])
+function buildSettingRows(snapshot: DashboardSnapshot, harnesses: HarnessStatus[]): SettingRow[] {
+	return [
+		...providerOrder.flatMap(provider => [
+			{ key: 'routing' as const, provider },
+			{ key: 'auto' as const, provider },
+			{ key: 'threshold' as const, provider },
+			{ key: 'dwell' as const, provider },
+			...providerWindows(snapshot, provider).map(window => ({
+				key: 'window' as const,
+				provider,
+				windowId: window.id,
+				windowLabel: window.label
+			}))
+		]),
+		...harnesses.map(status => ({ key: 'harness' as const, target: status.target }))
+	]
 }
 
 function settingsPanel(
@@ -804,11 +817,21 @@ function settingsPanel(
 	snapshot: DashboardSnapshot,
 	allRows: SettingRow[],
 	provider: ProviderId,
-	selected: number
+	selected: number,
+	visible: Set<number>
 ) {
 	const state = snapshot.providers.find(s => s.provider === provider)
 	const policy = state?.policy
-	const rows = allRows.map((row, index) => ({ index, row })).filter(e => e.row.provider === provider)
+	const rows = allRows
+		.map((row, index) => ({ index, row }))
+		.flatMap(e =>
+			e.row.key !== 'harness' && e.row.provider === provider && visible.has(e.index)
+				? [{ index: e.index, row: e.row }]
+				: []
+		)
+	if (rows.length === 0) {
+		return null
+	}
 	const lines = rows.map(entry => {
 		const { row } = entry
 		const isSelected = entry.index === selected
@@ -896,15 +919,118 @@ function settingsPanel(
 	)
 }
 
-function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[], selected: number) {
-	return column(
-		ctx,
-		[
-			settingsPanel(ctx, snapshot, rows, 'openai', selected),
-			settingsPanel(ctx, snapshot, rows, 'anthropic', selected)
-		],
-		78
+function harnessPanel(
+	ctx: Ctx,
+	statuses: HarnessStatus[],
+	allRows: SettingRow[],
+	selected: number,
+	visible: Set<number>
+) {
+	const entries = allRows
+		.map((row, index) => ({ index, row }))
+		.flatMap(e =>
+			e.row.key === 'harness' && visible.has(e.index) ? [{ index: e.index, target: e.row.target }] : []
+		)
+	if (entries.length === 0) {
+		return null
+	}
+	const lines = entries.map(entry => {
+		const status = statuses.find(s => s.target === entry.target)
+		const isSelected = entry.index === selected
+		const present = status?.present ?? false
+		const routed = status?.routed ?? false
+		const value = routed ? 'on' : present ? 'off' : '—'
+		const hint = routed
+			? 'requests route through tokenmaxx'
+			: present
+				? '⏎ routes it through tokenmaxx'
+				: 'not installed'
+		const valueColor = routed ? ctx.theme.good : present ? ctx.theme.warn : ctx.theme.faint
+		return Box(
+			{
+				backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
+				flexDirection: 'row',
+				width: '100%'
+			},
+			Text({ content: isSelected ? ' ▸ ' : '   ', fg: rgb(ctx.theme.accent) }),
+			Text({
+				content: pad(entry.target, 12),
+				fg: rgb(present ? (isSelected ? ctx.theme.fg : ctx.theme.dim) : ctx.theme.faint)
+			}),
+			Text({ attributes: 1, content: pad(value, 7), fg: rgb(valueColor) }),
+			Text({ content: pad(hint, 40), fg: rgb(ctx.theme.faint) })
+		)
+	})
+	return Box(
+		{
+			border: true,
+			borderColor: rgb(ctx.theme.border),
+			borderStyle: 'rounded',
+			flexDirection: 'column',
+			flexShrink: 0,
+			title: ' harnesses ',
+			titleColor: rgb(ctx.theme.dim),
+			width: '100%'
+		},
+		...lines
 	)
+}
+
+function settingsBody(
+	ctx: Ctx,
+	snapshot: DashboardSnapshot,
+	harnesses: HarnessStatus[],
+	rows: SettingRow[],
+	state: ViewState,
+	budget: number
+) {
+	const total = rows.length
+	const openaiCount = rows.filter(r => r.key !== 'harness' && r.provider === 'openai').length
+	const anthropicCount = rows.filter(r => r.key !== 'harness' && r.provider === 'anthropic').length
+	const panelOf = (index: number): number =>
+		index < openaiCount ? 0 : index < openaiCount + anthropicCount ? 1 : 2
+	// Rows cost one line each; entering a new panel adds its borders (and the
+	// column gap after the previous panel). Four lines stay reserved for the
+	// scroll indicators and their gaps.
+	const lastVisible = (scroll: number): number => {
+		let used = 4
+		let last = scroll
+		let lastPanel = -1
+		for (let index = scroll; index < total; index += 1) {
+			const cost = 1 + (panelOf(index) === lastPanel ? 0 : lastPanel === -1 ? 2 : 3)
+			if (used + cost > budget && index > scroll) {
+				break
+			}
+			used += cost
+			lastPanel = panelOf(index)
+			last = index
+		}
+		return last
+	}
+	state.settingsScroll = Math.max(0, Math.min(state.settingsScroll, total - 1))
+	if (state.settingsSelected < state.settingsScroll) {
+		state.settingsScroll = state.settingsSelected
+	}
+	while (
+		state.settingsScroll < state.settingsSelected &&
+		lastVisible(state.settingsScroll) < state.settingsSelected
+	) {
+		state.settingsScroll += 1
+	}
+	const start = state.settingsScroll
+	const end = lastVisible(start)
+	const visible = new Set<number>()
+	for (let index = start; index <= end; index += 1) {
+		visible.add(index)
+	}
+	const children = [
+		...(start > 0 ? [centered(Text({ content: '↑ more', fg: rgb(ctx.theme.faint) }))] : []),
+		settingsPanel(ctx, snapshot, rows, 'openai', state.settingsSelected, visible),
+		settingsPanel(ctx, snapshot, rows, 'anthropic', state.settingsSelected, visible),
+		harnessPanel(ctx, harnesses, rows, state.settingsSelected, visible),
+		...(end < total - 1 ? [centered(Text({ content: '↓ more', fg: rgb(ctx.theme.faint) }))] : [])
+	].filter(child => child !== null)
+	return column(ctx, children, 78)
 }
 
 function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], selected: number) {
@@ -1066,6 +1192,7 @@ interface ViewState {
 	tab: Tab
 	selected: number
 	settingsSelected: number
+	settingsScroll: number
 	timeframeIndex: number
 	analyticsView: AnalyticsView
 	modelScroll: number
@@ -1084,7 +1211,13 @@ type DashboardAction =
 	| { kind: 'routing'; provider: ProviderId; enable: boolean }
 	| { kind: 'update'; version: string }
 
-function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewState) {
+function view(
+	ctx: Ctx,
+	analytics: AnalyticsSnapshot,
+	rows: Row[],
+	harnesses: HarnessStatus[],
+	state: ViewState
+) {
 	const clock = new Date(ctx.now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 	const freshestMillis = analytics.snapshot.usage
 		.map(u => Date.parse(u.observedAt))
@@ -1173,8 +1306,16 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 				: settingsBody(
 						ctx,
 						analytics.snapshot,
-						buildSettingRows(analytics.snapshot),
-						state.settingsSelected
+						harnesses,
+						buildSettingRows(analytics.snapshot, harnesses),
+						state,
+						Math.max(
+							6,
+							ctx.rows -
+								8 -
+								(state.alert === '' ? 0 : 2) -
+								(state.updateAvailable !== null && !state.updateDismissed ? 2 : 0)
+						)
 					)
 	)
 	children.push(Box({ flexGrow: 1 }))
@@ -1228,6 +1369,13 @@ export async function runTuiDashboard(
 			? await readAnalytics(socketPath)
 			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
+	let harnesses: HarnessStatus[] = live
+		? await harnessStatus()
+		: [
+				{ present: true, routed: true, target: 'openclaw' },
+				{ present: true, routed: false, target: 'pi' },
+				{ present: false, routed: false, target: 'hermes' }
+			]
 	const state: ViewState = {
 		addConfirm: null,
 		alert: options.alert ?? '',
@@ -1236,6 +1384,7 @@ export async function runTuiDashboard(
 		note: '',
 		resetConfirm: null,
 		selected: 0,
+		settingsScroll: 0,
 		settingsSelected: 0,
 		tab: 'accounts',
 		timeframeIndex: 2,
@@ -1274,6 +1423,7 @@ export async function runTuiDashboard(
 				},
 				analytics,
 				rows,
+				harnesses,
 				state
 			)
 		} catch {
@@ -1304,15 +1454,29 @@ export async function runTuiDashboard(
 		}
 	}
 
-	const reload = (refresh: boolean) =>
-		withBusy(refresh ? 'refreshing…' : '', async () => {
-			if (refresh) {
-				await refreshUsage(socketPath)
-			}
+	const reload = () =>
+		withBusy('refreshing…', async () => {
+			await refreshUsage(socketPath)
 			analytics = await readAnalytics(socketPath)
 			rows = orderedRows(analytics.snapshot)
+			harnesses = await harnessStatus()
 			clampSelection()
 		})
+
+	// The background tick must never hold `busy` — a keypress landing during a
+	// held tick would be silently dropped.
+	const quietReload = async () => {
+		if (busy) {
+			return
+		}
+		try {
+			analytics = await readAnalytics(socketPath)
+			rows = orderedRows(analytics.snapshot)
+			harnesses = await harnessStatus()
+			clampSelection()
+			paint()
+		} catch {}
+	}
 
 	const needsLogin = (accountId: string): boolean => {
 		const account = analytics.snapshot.accounts.find(a => a.id === accountId)
@@ -1452,8 +1616,29 @@ export async function runTuiDashboard(
 	}
 
 	const adjustSetting = (delta: number) => {
-		const row = buildSettingRows(analytics.snapshot)[state.settingsSelected]
+		const row = buildSettingRows(analytics.snapshot, harnesses)[state.settingsSelected]
 		if (row === undefined) {
+			return
+		}
+		if (row.key === 'harness') {
+			const status = harnesses.find(s => s.target === row.target)
+			if (status === undefined || !status.present) {
+				return
+			}
+			void withBusy(
+				status.routed ? `unrouting ${row.target}…` : `routing ${row.target}…`,
+				async () => {
+					if (status.routed) {
+						await uninstallHarnessConfig(row.target)
+					} else {
+						const result = await installHarnessConfig(row.target, applicationPaths())
+						if (result.manual !== null) {
+							throw new Error(`${row.target} needs a manual edit — run: tokenmaxx install ${row.target}`)
+						}
+					}
+					harnesses = await harnessStatus()
+				}
+			)
 			return
 		}
 		const policy = currentPolicy(row.provider)
@@ -1486,7 +1671,7 @@ export async function runTuiDashboard(
 	await new Promise<void>(resolve => {
 		const tick = 250
 		const interval = live
-			? setInterval(() => void reload(false).catch(() => undefined), 2_000)
+			? setInterval(() => void quietReload(), 2_000)
 			: fixture.timewarp > 0
 				? setInterval(() => {
 						simulatedNow += tick * fixture.timewarp
@@ -1589,7 +1774,7 @@ export async function runTuiDashboard(
 					paint()
 				} else if (key.name === 'r') {
 					if (!(state.tab === 'accounts' && openResetConfirm()) && live) {
-						void reload(true)
+						void reload()
 					}
 				} else if (state.tab === 'analytics') {
 					if (key.name === 'left' || key.name === 'h') {
@@ -1612,7 +1797,7 @@ export async function runTuiDashboard(
 						}
 					}
 				} else if (state.tab === 'settings') {
-					const settingCount = buildSettingRows(analytics.snapshot).length
+					const settingCount = buildSettingRows(analytics.snapshot, harnesses).length
 					if (key.name === 'up' || key.name === 'k') {
 						state.settingsSelected = Math.max(0, state.settingsSelected - 1)
 						paint()

@@ -410,7 +410,12 @@ export interface HarnessStatus {
 	routed: boolean
 }
 
-export async function harnessStatus(): Promise<HarnessStatus[]> {
+// A harness counts as present when its binary is on PATH or its config
+// exists — someone who installed openclaw but never launched it has the
+// binary and no config dir.
+export async function harnessStatus(
+	which: (binary: string) => string | null = Bun.which
+): Promise<HarnessStatus[]> {
 	const entries: { target: HarnessTarget; path: string }[] = [
 		{ path: openclawConfigPath(), target: 'openclaw' },
 		{ path: piModelsPath(), target: 'pi' },
@@ -422,6 +427,7 @@ export async function harnessStatus(): Promise<HarnessStatus[]> {
 			const configDir = dirname(target === 'pi' ? dirname(path) : path)
 			const present =
 				raw !== null ||
+				which(target) !== null ||
 				(await stat(configDir).then(
 					() => true,
 					() => false
