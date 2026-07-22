@@ -464,6 +464,29 @@ function assertCliInstalled(provider: ProviderId): void {
 	}
 }
 
+async function handTerminalBack(): Promise<void> {
+	if (process.stdin.isTTY !== true) {
+		return
+	}
+	try {
+		Bun.spawnSync(['stty', 'sane'], { stderr: 'ignore', stdin: 'inherit', stdout: 'ignore' })
+	} catch {}
+	process.stdin.resume()
+	await Bun.sleep(50)
+	try {
+		while (process.stdin.read() !== null) {}
+	} catch {}
+	process.stdin.pause()
+}
+
+async function ask(question: string): Promise<string> {
+	process.stdout.write(question)
+	for await (const line of console) {
+		return line.trim()
+	}
+	return ''
+}
+
 async function registerApiKeyAccount(
 	provider: 'openai' | 'anthropic',
 	keyArgument: string | undefined
@@ -474,8 +497,8 @@ async function registerApiKeyAccount(
 			'Pass the key inline in non-interactive shells: tokenmaxx login <codex|claude> --api-key <key>'
 		)
 	}
-	const key = keyArgument ?? prompt('Paste the API key:') ?? ''
-	const label = prompt('Name this account (shown in the dashboard):') ?? ''
+	const key = keyArgument ?? (await ask('Paste the API key: '))
+	const label = await ask('Name this account (shown in the dashboard): ')
 	if (label.trim().length === 0) {
 		throw new ApplicationError('USAGE', 'The account needs a name')
 	}
