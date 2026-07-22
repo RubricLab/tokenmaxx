@@ -8,11 +8,15 @@ import { z } from 'zod'
 import { registerClaudeAccount, registerClaudeApiKeyAccount } from './claude.ts'
 import { registerCodexAccount, registerOpenAiApiKeyAccount } from './codex.ts'
 import {
+	type HarnessTarget,
+	harnessStatus,
 	installClaudeConfig,
 	installCodexConfig,
+	installHarnessConfig,
 	installStatus,
 	uninstallClaudeConfig,
-	uninstallCodexConfig
+	uninstallCodexConfig,
+	uninstallHarnessConfig
 } from './config-install.ts'
 import type { Account, ProviderId } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
@@ -240,7 +244,7 @@ function help(): string {
 			'sign in an account · re-run to re-auth',
 			'add --api-key to use an API key instead'
 		),
-		row('install', 'route codex & claude through tokenmaxx'),
+		row('install [openclaw|pi|hermes]', 'route codex & claude, or a harness'),
 		row('uninstall', 'restore your original config'),
 		'',
 		head('Everyday'),
@@ -771,8 +775,33 @@ async function configureAutomation(
 	}
 }
 
-async function installConfig(context: ApplicationContext): Promise<void> {
+const harnessTargets = new Set<HarnessTarget>(['openclaw', 'pi', 'hermes'])
+
+function harnessTarget(value: string | undefined): HarnessTarget | null {
+	return value !== undefined && harnessTargets.has(value as HarnessTarget)
+		? (value as HarnessTarget)
+		: null
+}
+
+async function installConfig(context: ApplicationContext, targetArgument?: string): Promise<void> {
+	const target = harnessTarget(targetArgument)
+	if (targetArgument !== undefined && target === null) {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx install [openclaw|pi|hermes]')
+	}
 	await ensureDaemon(context)
+	if (target !== null) {
+		const result = await installHarnessConfig(target, context.paths)
+		if (!result.applied) {
+			process.stdout.write(`Left ${result.path} alone: ${result.manual}\n`)
+			return
+		}
+		process.stdout.write(
+			`${target} now has tokenmaxx-anthropic and tokenmaxx-openai providers (${result.path}).\n` +
+				`Pick a tokenmaxx model inside ${target} and requests route through the proxy.\n` +
+				`Undo any time with: tokenmaxx uninstall ${target}\n`
+		)
+		return
+	}
 	await installCodexConfig(context.paths)
 	await installClaudeConfig(context.paths)
 	process.stdout.write(
@@ -782,7 +811,20 @@ async function installConfig(context: ApplicationContext): Promise<void> {
 	)
 }
 
-async function uninstallConfig(): Promise<void> {
+async function uninstallConfig(targetArgument?: string): Promise<void> {
+	const target = harnessTarget(targetArgument)
+	if (targetArgument !== undefined && target === null) {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx uninstall [openclaw|pi|hermes]')
+	}
+	if (target !== null) {
+		const result = await uninstallHarnessConfig(target)
+		process.stdout.write(
+			result.applied
+				? `Removed the tokenmaxx providers from ${result.path}.\n`
+				: (result.manual ?? `${target} was not routed; nothing to restore.`) + '\n'
+		)
+		return
+	}
 	const codex = await uninstallCodexConfig()
 	const claude = await uninstallClaudeConfig()
 	if (codex === null && claude === null) {
@@ -864,6 +906,18 @@ async function doctor(context: ApplicationContext): Promise<void> {
 				: 'not routed — run tokenmaxx install'
 		}\n`
 	)
+	for (const harness of await harnessStatus()) {
+		if (!harness.present) {
+			continue
+		}
+		process.stdout.write(
+			`${harness.routed ? 'ok     ' : 'note   '}  ${harness.target.padEnd(8)} ${
+				harness.routed
+					? 'has the tokenmaxx providers'
+					: `not routed — run tokenmaxx install ${harness.target}`
+			}\n`
+		)
+	}
 	process.stdout.write(`state     ${context.paths.database}\n`)
 	const legacyDirectories = [join(context.paths.root, 'codex'), join(context.paths.root, 'claude')]
 	const legacyDetected = await Promise.all(
@@ -1005,10 +1059,10 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				listAccounts(context)
 				return 0
 			case 'install':
-				await installConfig(context)
+				await installConfig(context, arguments_[1])
 				return 0
 			case 'uninstall':
-				await uninstallConfig()
+				await uninstallConfig(arguments_[1])
 				return 0
 			case 'daemon':
 				switch (arguments_[1]) {

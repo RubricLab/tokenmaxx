@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { ApplicationPaths } from './paths.ts'
@@ -190,4 +190,249 @@ export async function installStatus(): Promise<InstallStatus> {
 		claudeRouted = false
 	}
 	return { claudeRouted, codexRouted, codexStale }
+}
+
+export type HarnessTarget = 'openclaw' | 'pi' | 'hermes'
+
+export interface HarnessResult {
+	path: string
+	applied: boolean
+	manual: string | null
+}
+
+function openclawConfigPath(): string {
+	return process.env.OPENCLAW_CONFIG_PATH ?? join(homedir(), '.openclaw', 'openclaw.json')
+}
+
+function piModelsPath(): string {
+	return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'), 'models.json')
+}
+
+function hermesConfigPath(): string {
+	return join(process.env.HERMES_HOME ?? join(homedir(), '.hermes'), 'config.yaml')
+}
+
+const anthropicModels = [
+	{ contextWindow: 200_000, id: 'claude-opus-4-8', maxTokens: 32_000, name: 'Opus via tokenmaxx' },
+	{
+		contextWindow: 200_000,
+		id: 'claude-sonnet-4-6',
+		maxTokens: 32_000,
+		name: 'Sonnet via tokenmaxx'
+	}
+]
+// The ChatGPT codex backend accepts exactly this model id for subscription
+// accounts (probed 2026-07-22; gpt-5.6-codex and friends are all rejected).
+const openaiModels = [
+	{ contextWindow: 400_000, id: 'gpt-5.6-sol', maxTokens: 128_000, name: 'GPT via tokenmaxx' }
+]
+
+function openclawProviders(paths: ApplicationPaths): Record<string, unknown> {
+	const zeroCost = { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 }
+	const model = (entry: (typeof anthropicModels)[number]) => ({
+		contextWindow: entry.contextWindow,
+		cost: zeroCost,
+		id: entry.id,
+		input: ['text', 'image'],
+		maxTokens: entry.maxTokens,
+		name: entry.name,
+		reasoning: true
+	})
+	return {
+		'tokenmaxx-anthropic': {
+			api: 'anthropic-messages',
+			apiKey: dummyAuthToken,
+			baseUrl: proxyBaseUrl(paths, 'anthropic'),
+			models: anthropicModels.map(model)
+		},
+		'tokenmaxx-openai': {
+			api: 'openai-responses',
+			apiKey: dummyAuthToken,
+			baseUrl: proxyBaseUrl(paths, 'openai'),
+			models: openaiModels.map(model)
+		}
+	}
+}
+
+function piProviders(paths: ApplicationPaths): Record<string, unknown> {
+	return {
+		'tokenmaxx-anthropic': {
+			api: 'anthropic-messages',
+			apiKey: dummyAuthToken,
+			baseUrl: proxyBaseUrl(paths, 'anthropic'),
+			models: anthropicModels.map(entry => ({ id: entry.id, reasoning: true }))
+		},
+		'tokenmaxx-openai': {
+			api: 'openai-responses',
+			apiKey: dummyAuthToken,
+			baseUrl: proxyBaseUrl(paths, 'openai'),
+			models: openaiModels.map(entry => ({ id: entry.id, reasoning: true }))
+		}
+	}
+}
+
+function hermesManagedBlock(paths: ApplicationPaths): string {
+	return [
+		topBeginMarker,
+		'providers:',
+		'  tokenmaxx-anthropic:',
+		`    base_url: "${proxyBaseUrl(paths, 'anthropic')}"`,
+		`    api_key: "${dummyAuthToken}"`,
+		'    api_mode: "anthropic_messages"',
+		'  tokenmaxx-openai:',
+		`    base_url: "${proxyBaseUrl(paths, 'openai')}"`,
+		`    api_key: "${dummyAuthToken}"`,
+		'    api_mode: "codex_responses"',
+		topEndMarker
+	].join('\n')
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+	if (raw.trim().length === 0) {
+		return {}
+	}
+	try {
+		const parsed = JSON.parse(raw)
+		return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: null
+	} catch {
+		return null
+	}
+}
+
+async function writeJsonProviders(
+	path: string,
+	providersOf: (config: Record<string, unknown>) => Record<string, unknown>,
+	providers: Record<string, unknown> | null,
+	manual: string
+): Promise<HarnessResult> {
+	const raw = await readFileOrEmpty(path)
+	const config = parseJsonObject(raw)
+	if (config === null) {
+		return { applied: false, manual, path }
+	}
+	const bucket = providersOf(config)
+	for (const key of ['tokenmaxx-anthropic', 'tokenmaxx-openai']) {
+		delete bucket[key]
+	}
+	if (providers !== null) {
+		Object.assign(bucket, providers)
+	}
+	await mkdir(dirname(path), { recursive: true })
+	await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+	return { applied: true, manual: null, path }
+}
+
+function ensureObject(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+	const value = parent[key]
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		parent[key] = {}
+	}
+	return parent[key] as Record<string, unknown>
+}
+
+function openclawBucket(config: Record<string, unknown>): Record<string, unknown> {
+	return ensureObject(ensureObject(config, 'models'), 'providers')
+}
+
+function piBucket(config: Record<string, unknown>): Record<string, unknown> {
+	return ensureObject(config, 'providers')
+}
+
+export async function installHarnessConfig(
+	target: HarnessTarget,
+	paths: ApplicationPaths
+): Promise<HarnessResult> {
+	if (target === 'openclaw') {
+		return writeJsonProviders(
+			openclawConfigPath(),
+			openclawBucket,
+			openclawProviders(paths),
+			`could not parse it as JSON (JSON5 comments?) — add this under models.providers yourself:\n${JSON.stringify(openclawProviders(paths), null, 2)}`
+		)
+	}
+	if (target === 'pi') {
+		return writeJsonProviders(
+			piModelsPath(),
+			piBucket,
+			piProviders(paths),
+			`could not parse it as JSON — add this under providers yourself:\n${JSON.stringify(piProviders(paths), null, 2)}`
+		)
+	}
+	const path = hermesConfigPath()
+	const raw = await readFileOrEmpty(path)
+	const stripped = stripMarkedBlock(raw, topBeginMarker, topEndMarker).trimEnd()
+	if (/^providers\s*:/m.test(stripped)) {
+		return {
+			applied: false,
+			manual: `it already defines providers, and yaml duplicate keys silently override — merge this into that mapping yourself:\n${hermesManagedBlock(paths)}`,
+			path
+		}
+	}
+	await mkdir(dirname(path), { recursive: true })
+	await writeFile(
+		path,
+		`${stripped.length === 0 ? '' : `${stripped}\n\n`}${hermesManagedBlock(paths)}\n`,
+		{ mode: 0o600 }
+	)
+	return { applied: true, manual: null, path }
+}
+
+export async function uninstallHarnessConfig(target: HarnessTarget): Promise<HarnessResult> {
+	if (target === 'openclaw' || target === 'pi') {
+		const path = target === 'openclaw' ? openclawConfigPath() : piModelsPath()
+		const raw = await readFile(path, 'utf8').catch(() => null)
+		if (raw === null) {
+			return { applied: false, manual: null, path }
+		}
+		return writeJsonProviders(
+			path,
+			target === 'openclaw' ? openclawBucket : piBucket,
+			null,
+			'could not parse it as JSON — remove the tokenmaxx-anthropic and tokenmaxx-openai providers yourself'
+		)
+	}
+	const path = hermesConfigPath()
+	const raw = await readFile(path, 'utf8').catch(() => null)
+	if (raw === null || !raw.includes(topBeginMarker)) {
+		return { applied: false, manual: null, path }
+	}
+	await writeFile(path, `${stripMarkedBlock(raw, topBeginMarker, topEndMarker).trim()}\n`, {
+		mode: 0o600
+	})
+	return { applied: true, manual: null, path }
+}
+
+export interface HarnessStatus {
+	target: HarnessTarget
+	present: boolean
+	routed: boolean
+}
+
+// A harness counts as present when its binary is on PATH or its config
+// exists — someone who installed openclaw but never launched it has the
+// binary and no config dir.
+export async function harnessStatus(
+	which: (binary: string) => string | null = Bun.which
+): Promise<HarnessStatus[]> {
+	const entries: { target: HarnessTarget; path: string }[] = [
+		{ path: openclawConfigPath(), target: 'openclaw' },
+		{ path: piModelsPath(), target: 'pi' },
+		{ path: hermesConfigPath(), target: 'hermes' }
+	]
+	return Promise.all(
+		entries.map(async ({ target, path }) => {
+			const raw = await readFile(path, 'utf8').catch(() => null)
+			const configDir = dirname(target === 'pi' ? dirname(path) : path)
+			const present =
+				raw !== null ||
+				which(target) !== null ||
+				(await stat(configDir).then(
+					() => true,
+					() => false
+				))
+			return { present, routed: raw?.includes('tokenmaxx-anthropic') ?? false, target }
+		})
+	)
 }
