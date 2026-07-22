@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { type ClaudeOauth, refreshClaudeCredential, registerClaudeAccount } from './claude.ts'
+import {
+	type ClaudeOauth,
+	claudeUpstream,
+	refreshClaudeCredential,
+	registerClaudeAccount
+} from './claude.ts'
 import type { CredentialVault } from './vault.ts'
 
 function memoryVault(initial: Record<string, string>): CredentialVault & {
@@ -123,5 +128,35 @@ describe('refreshClaudeCredential', () => {
 		})
 		expect(exchanges).toBe(0)
 		expect(result.accessToken).toBe('rotated-access')
+	})
+})
+
+describe('api key accounts', () => {
+	test('an api key account injects x-api-key and strips the oauth header', async () => {
+		const vault = memoryVault({ 'claude-key:1': 'sk-ant-test' })
+		const injection = await claudeUpstream({
+			account: {
+				auth: 'apiKey',
+				createdAt: '2026-07-01T00:00:00.000Z',
+				enabled: true,
+				externalAccountId: null,
+				externalUserId: null,
+				health: 'ready',
+				id: '00000000-0000-4000-8000-000000000201',
+				identity: 'work api key',
+				label: 'work api key',
+				onThreshold: 'switch',
+				plan: 'api',
+				profilePath: null,
+				provider: 'anthropic',
+				secretReference: 'claude-key:1',
+				updatedAt: '2026-07-01T00:00:00.000Z'
+			},
+			forceRefresh: false,
+			vault
+		})
+		expect(injection.baseUrl).toBe('https://api.anthropic.com')
+		expect(injection.headers['x-api-key']).toBe('sk-ant-test')
+		expect(injection.stripHeaders).toContain('authorization')
 	})
 })

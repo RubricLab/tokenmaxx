@@ -373,6 +373,16 @@ export class AccountManager {
 			account.provider === 'anthropic'
 				? await probeClaude({ account, ...shared })
 				: await probeCodex({ account, ...shared })
+		if (account.auth === 'apiKey') {
+			const start = this.#dependencies.now().getTime() - 31 * 24 * 3_600_000
+			result.usage.measuredSpendUsd = this.#store
+				.accountTokens(account.id, start)
+				.reduce(
+					(total, row) =>
+						total + costUsd(row.model, row.input, row.output, row.cached, row.cacheCreation),
+					0
+				)
+		}
 		this.#store.saveUsage(result.usage)
 		this.#store.saveAccount(result.account)
 	}

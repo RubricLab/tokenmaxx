@@ -5,6 +5,7 @@ import { z } from 'zod'
 import {
 	type Account,
 	AccountEmailSchema,
+	type ExtraUsage,
 	type FetchImplementation,
 	type ProviderProbeResult,
 	type UsageSnapshot,
@@ -202,6 +203,69 @@ async function readClaudeCredential(
 	return ClaudeOauthSchema.parse(JSON.parse(serialized))
 }
 
+async function readApiKey(vault: CredentialVault, reference: string): Promise<string> {
+	const key = await vault.read(reference)
+	if (key === null) {
+		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
+	}
+	return key
+}
+
+const anthropicVersion = '2023-06-01'
+
+async function validateAnthropicApiKey(
+	key: string,
+	fetchImplementation: FetchImplementation
+): Promise<void> {
+	const response = await fetchImplementation('https://api.anthropic.com/v1/models?limit=1', {
+		headers: { 'anthropic-version': anthropicVersion, 'x-api-key': key },
+		signal: AbortSignal.timeout(10_000)
+	})
+	if (response.status === 401 || response.status === 403) {
+		throw new ApplicationError('ACCESS_TOKEN_REJECTED', 'Anthropic rejected this API key')
+	}
+	if (!response.ok && response.status !== 429) {
+		throw new ApplicationError(
+			'PROVIDER_UNREACHABLE',
+			`Anthropic API returned HTTP ${response.status}`
+		)
+	}
+}
+
+export async function registerClaudeApiKeyAccount(input: {
+	vault: CredentialVault
+	key: string
+	label: string
+	fetchImplementation?: FetchImplementation
+}): Promise<Account> {
+	const key = input.key.trim()
+	if (key.length === 0) {
+		throw new ApplicationError('USAGE', 'The API key is empty')
+	}
+	await validateAnthropicApiKey(key, input.fetchImplementation ?? fetch)
+	const id = crypto.randomUUID()
+	const secretReference = `claude-key:${id}`
+	await input.vault.write(secretReference, key)
+	const now = new Date().toISOString()
+	return {
+		auth: 'apiKey',
+		createdAt: now,
+		enabled: true,
+		externalAccountId: null,
+		externalUserId: null,
+		health: 'ready',
+		id,
+		identity: input.label,
+		label: input.label,
+		onThreshold: 'switch',
+		plan: null,
+		profilePath: null,
+		provider: 'anthropic',
+		secretReference,
+		updatedAt: now
+	}
+}
+
 export async function refreshClaudeCredential(input: {
 	reference: string
 	vault: CredentialVault
@@ -312,6 +376,7 @@ export async function registerClaudeAccount(input: {
 		await input.vault.write(secretReference, JSON.stringify(credential))
 		const now = new Date().toISOString()
 		return {
+			auth: 'oauth',
 			createdAt: now,
 			enabled: true,
 			externalAccountId: profile.accountId,
@@ -320,6 +385,7 @@ export async function registerClaudeAccount(input: {
 			id,
 			identity: email.data,
 			label: email.data,
+			onThreshold: 'switch',
 			plan: claudePlanTier(credential),
 			profilePath: null,
 			provider: 'anthropic',
@@ -368,6 +434,14 @@ export async function claudeUpstream(input: {
 			'CREDENTIAL_MISSING',
 			`${input.account.label} has no stored credential`
 		)
+	}
+	if (input.account.auth === 'apiKey') {
+		return {
+			accountId: input.account.id,
+			baseUrl: upstreamFor('anthropic'),
+			headers: { 'x-api-key': await readApiKey(input.vault, reference) },
+			stripHeaders: ['authorization']
+		}
 	}
 	let credential = await readClaudeCredential(input.vault, reference)
 	const now = input.now ?? (() => Date.now())
@@ -426,16 +500,66 @@ const LimitSchema = z
 	})
 	.passthrough()
 
+const MoneySchema = z
+	.object({
+		amount_minor: z.number(),
+		currency: z.string().nullish(),
+		exponent: z.number().int().nullish()
+	})
+	.passthrough()
+
+const ExtraUsageResponseSchema = z
+	.object({
+		is_enabled: z.boolean().nullish(),
+		monthly_limit: z.number().nullish(),
+		spend_limit_reached: z.boolean().nullish(),
+		used_credits: z.number().nullish(),
+		utilization: z.number().nullish()
+	})
+	.passthrough()
+
+const SpendResponseSchema = z
+	.object({
+		balance: MoneySchema.nullish(),
+		limit: MoneySchema.nullish(),
+		used: MoneySchema.nullish()
+	})
+	.passthrough()
+
 const UsageResponseSchema = z
 	.object({
+		extra_usage: ExtraUsageResponseSchema.nullish(),
 		five_hour: UsageWindowResponseSchema.nullish(),
 		limits: z.array(LimitSchema).nullish(),
 		seven_day: UsageWindowResponseSchema.nullish(),
 		seven_day_oauth_apps: UsageWindowResponseSchema.nullish(),
 		seven_day_opus: UsageWindowResponseSchema.nullish(),
-		seven_day_sonnet: UsageWindowResponseSchema.nullish()
+		seven_day_sonnet: UsageWindowResponseSchema.nullish(),
+		spend: SpendResponseSchema.nullish()
 	})
 	.passthrough()
+
+function moneyToUsd(money: z.infer<typeof MoneySchema> | null | undefined): number | null {
+	if (money == null) {
+		return null
+	}
+	return money.amount_minor / 10 ** (money.exponent ?? 2)
+}
+
+function claudeExtraUsage(body: z.infer<typeof UsageResponseSchema>): ExtraUsage | null {
+	const extra = body.extra_usage
+	if (extra == null) {
+		return null
+	}
+	return {
+		balanceUsd: moneyToUsd(body.spend?.balance),
+		enabled: extra.is_enabled === true,
+		exhausted: extra.spend_limit_reached === true,
+		limitUsd: moneyToUsd(body.spend?.limit),
+		spentUsd: moneyToUsd(body.spend?.used),
+		usedPercent: extra.utilization == null ? null : Math.min(100, normalizePercent(extra.utilization))
+	}
+}
 
 function resetTimestamp(value: string | number | null | undefined): string | null {
 	if (value == null) {
@@ -559,11 +683,13 @@ async function fetchClaudeUsage(input: {
 	}
 	return {
 		accountId: input.accountId,
+		extraUsage: claudeExtraUsage(body),
 		hardLimitReached:
 			windows.some(window => window.kind === 'hard' && window.usedPercent >= 100) ||
 			limits.some(
 				limit => limit.severity != null && exhaustedSeverities.has(limit.severity.toLowerCase())
 			),
+		measuredSpendUsd: null,
 		observedAt: new Date().toISOString(),
 		provider: 'anthropic',
 		source: 'claudeUsageEndpoint',
@@ -619,6 +745,22 @@ export async function probeClaude(input: {
 	const reference = account.secretReference
 	if (reference === null) {
 		throw new ApplicationError('CREDENTIAL_MISSING', `${account.label} has no stored credential`)
+	}
+	if (account.auth === 'apiKey') {
+		await validateAnthropicApiKey(await readApiKey(vault, reference), fetchImplementation)
+		return {
+			account: { ...account, health: 'ready', updatedAt: input.now().toISOString() },
+			usage: {
+				accountId: account.id,
+				extraUsage: null,
+				hardLimitReached: false,
+				measuredSpendUsd: null,
+				observedAt: input.now().toISOString(),
+				provider: 'anthropic',
+				source: 'apiKeyProbe',
+				windows: []
+			}
+		}
 	}
 	const refresh = (staleAccessToken: string) =>
 		refreshClaudeCredential({

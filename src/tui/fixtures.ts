@@ -3,6 +3,7 @@ import {
 	type AnalyticsSnapshot,
 	AnalyticsSnapshotSchema,
 	type AutomationPolicy,
+	type ExtraUsage,
 	type ProviderId,
 	type ProviderState,
 	TIMEFRAMES,
@@ -155,10 +156,14 @@ interface AccountSeed {
 	health?: Account['health']
 	windows?: WindowSpec[]
 	resetCredits?: { available: number; applicable: number }
+	extraUsage?: ExtraUsage
+	auth?: 'oauth' | 'apiKey'
+	measuredSpendUsd?: number
 }
 
 function account(seed: AccountSeed, now: number): Account {
 	const base = {
+		auth: seed.auth ?? 'oauth',
 		createdAt: new Date(now - 34 * DAY).toISOString(),
 		enabled: true,
 		externalAccountId:
@@ -169,6 +174,7 @@ function account(seed: AccountSeed, now: number): Account {
 		id: uuid(seed.n),
 		identity: seed.email,
 		label: seed.email,
+		onThreshold: 'switch',
 		plan: seed.plan,
 		updatedAt: new Date(now - 2 * MINUTE).toISOString()
 	} as const
@@ -193,7 +199,9 @@ function usage(seed: AccountSeed, now: number): UsageSnapshot {
 	const windows = (seed.windows ?? []).map(spec => toWindow(spec, now))
 	const base = {
 		accountId: uuid(seed.n),
+		extraUsage: seed.extraUsage ?? null,
 		hardLimitReached: windows.some(window => window.usedPercent >= 100),
+		measuredSpendUsd: seed.measuredSpendUsd ?? null,
 		observedAt: new Date(
 			now - 8_000 - Math.round(Math.abs(noise(Math.floor(now / (5 * MINUTE)))) * 16_000)
 		).toISOString(),
@@ -311,6 +319,14 @@ const cruising: ScenarioBuilder = now =>
 		[
 			{
 				email: 'dexter@rubriclabs.com',
+				extraUsage: {
+					balanceUsd: 18.5,
+					enabled: true,
+					exhausted: false,
+					limitUsd: null,
+					spentUsd: null,
+					usedPercent: null
+				},
 				n: 1,
 				plan: 'pro',
 				provider: 'openai',
@@ -326,6 +342,14 @@ const cruising: ScenarioBuilder = now =>
 			},
 			{
 				email: 'dexter@rubriclabs.com',
+				extraUsage: {
+					balanceUsd: null,
+					enabled: true,
+					exhausted: false,
+					limitUsd: 50,
+					spentUsd: 12.4,
+					usedPercent: 25
+				},
 				n: 3,
 				plan: 'claude_max_20x',
 				provider: 'anthropic',
@@ -337,6 +361,14 @@ const cruising: ScenarioBuilder = now =>
 				plan: 'claude_max_5x',
 				provider: 'anthropic',
 				windows: [claudeSession(18, 0.24, 32), weekly(22, 0.4, 42), fable(12, 0.2, 52)]
+			},
+			{
+				auth: 'apiKey',
+				email: 'anthropic api · prod',
+				measuredSpendUsd: 23.71,
+				n: 5,
+				plan: null,
+				provider: 'anthropic'
 			}
 		],
 		[

@@ -187,6 +187,7 @@ export async function registerCodexAccount(input: {
 		await input.vault.write(secretReference, JSON.stringify(auth))
 		const now = new Date().toISOString()
 		return {
+			auth: 'oauth',
 			createdAt: now,
 			enabled: true,
 			externalAccountId: identity.accountId,
@@ -195,6 +196,7 @@ export async function registerCodexAccount(input: {
 			id,
 			identity: email.data,
 			label: email.data,
+			onThreshold: 'switch',
 			plan: identity.plan,
 			profilePath: null,
 			provider: 'openai',
@@ -264,6 +266,66 @@ async function refreshCodexCredential(input: {
 	})
 }
 
+async function readApiKey(vault: CredentialVault, reference: string): Promise<string> {
+	const key = await vault.read(reference)
+	if (key === null) {
+		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
+	}
+	return key
+}
+
+const openAiApiBase = 'https://api.openai.com/v1'
+
+async function validateOpenAiApiKey(
+	key: string,
+	fetchImplementation: FetchImplementation
+): Promise<void> {
+	const response = await fetchImplementation(`${openAiApiBase}/models`, {
+		headers: { Authorization: `Bearer ${key}` },
+		signal: AbortSignal.timeout(10_000)
+	})
+	if (response.status === 401 || response.status === 403) {
+		throw new ApplicationError('ACCESS_TOKEN_REJECTED', 'OpenAI rejected this API key')
+	}
+	if (!response.ok && response.status !== 429) {
+		throw new ApplicationError('PROVIDER_UNREACHABLE', `OpenAI API returned HTTP ${response.status}`)
+	}
+}
+
+export async function registerOpenAiApiKeyAccount(input: {
+	vault: CredentialVault
+	key: string
+	label: string
+	fetchImplementation?: FetchImplementation
+}): Promise<Account> {
+	const key = input.key.trim()
+	if (key.length === 0) {
+		throw new ApplicationError('USAGE', 'The API key is empty')
+	}
+	await validateOpenAiApiKey(key, input.fetchImplementation ?? fetch)
+	const id = crypto.randomUUID()
+	const secretReference = `codex-key:${id}`
+	await input.vault.write(secretReference, key)
+	const now = new Date().toISOString()
+	return {
+		auth: 'apiKey',
+		createdAt: now,
+		enabled: true,
+		externalAccountId: null,
+		externalUserId: null,
+		health: 'ready',
+		id,
+		identity: input.label,
+		label: input.label,
+		onThreshold: 'switch',
+		plan: null,
+		profilePath: null,
+		provider: 'openai',
+		secretReference,
+		updatedAt: now
+	}
+}
+
 const refreshMarginMilliseconds = 120_000
 
 export async function codexUpstream(input: {
@@ -274,6 +336,14 @@ export async function codexUpstream(input: {
 	forceRefresh: boolean
 }): Promise<UpstreamInjection> {
 	const reference = input.account.secretReference
+	if (input.account.auth === 'apiKey') {
+		return {
+			accountId: input.account.id,
+			baseUrl: openAiApiBase,
+			headers: { authorization: `Bearer ${await readApiKey(input.vault, reference)}` },
+			stripHeaders: ['chatgpt-account-id']
+		}
+	}
 	let auth = await readCodexCredential(input.vault, reference)
 	const now = input.now ?? (() => Date.now())
 	const expiresAt = codexIdentity(auth).accessExpiresAt
@@ -324,6 +394,15 @@ const AdditionalLimitSchema = z
 const UsageResponseSchema = z
 	.object({
 		additional_rate_limits: z.array(AdditionalLimitSchema).nullish(),
+		credits: z
+			.object({
+				balance: z.union([z.string(), z.number()]).nullish(),
+				has_credits: z.boolean().nullish(),
+				overage_limit_reached: z.boolean().nullish(),
+				unlimited: z.boolean().nullish()
+			})
+			.passthrough()
+			.nullish(),
 		rate_limit: LimitDetailsSchema.nullish(),
 		rate_limit_reached_type: z.unknown().nullish(),
 		rate_limit_reset_credits: z
@@ -394,8 +473,21 @@ function normalizeResponse(accountId: string, body: UsageResponse): UsageSnapsho
 			additional.rate_limit
 		)
 	}
+	const credits = body.credits
+	const balance = credits?.balance == null ? Number.NaN : Number(credits.balance)
 	return {
 		accountId,
+		extraUsage:
+			credits == null
+				? null
+				: {
+						balanceUsd: Number.isFinite(balance) ? balance : null,
+						enabled: credits.has_credits === true || credits.unlimited === true,
+						exhausted: credits.overage_limit_reached === true,
+						limitUsd: null,
+						spentUsd: null,
+						usedPercent: null
+					},
 		hardLimitReached:
 			body.rate_limit?.limit_reached === true ||
 			body.rate_limit?.allowed === false ||
@@ -404,6 +496,7 @@ function normalizeResponse(accountId: string, body: UsageResponse): UsageSnapsho
 				additional =>
 					additional.rate_limit?.limit_reached === true || additional.rate_limit?.allowed === false
 			),
+		measuredSpendUsd: null,
 		observedAt: new Date().toISOString(),
 		provider: 'openai',
 		resetCredits:
@@ -560,6 +653,23 @@ export async function probeCodex(input: {
 	now(): Date
 }): Promise<ProviderProbeResult> {
 	const { account, vault, fetchImplementation } = input
+	if (account.auth === 'apiKey') {
+		await validateOpenAiApiKey(await readApiKey(vault, account.secretReference), fetchImplementation)
+		return {
+			account: { ...account, health: 'ready', updatedAt: input.now().toISOString() },
+			usage: {
+				accountId: account.id,
+				extraUsage: null,
+				hardLimitReached: false,
+				measuredSpendUsd: null,
+				observedAt: input.now().toISOString(),
+				provider: 'openai',
+				resetCredits: null,
+				source: 'apiKeyProbe',
+				windows: []
+			}
+		}
+	}
 	let credential = await readCodexCredential(vault, account.secretReference)
 	let identity = codexIdentity(credential)
 	if (account.externalAccountId !== null && account.externalAccountId !== identity.accountId) {
