@@ -3,7 +3,7 @@ name: Release Package
 on:
  push:
   branches:
-   - main
+   - '**'
 
 permissions:
  contents: read
@@ -12,5 +12,38 @@ permissions:
 
 jobs:
  release:
+  if: github.ref == 'refs/heads/main'
   uses: rubriclab/package/.github/workflows/release-package.yml@main
   secrets: inherit
+
+ alpha:
+  if: github.ref != 'refs/heads/main'
+  runs-on: ubuntu-latest
+  permissions:
+   contents: read
+   packages: write
+   id-token: write
+   pull-requests: write
+  steps:
+   - uses: actions/checkout@v4
+   - uses: oven-sh/setup-bun@v2
+     with:
+      bun-version: latest
+   - run: bun install --frozen-lockfile
+   - name: version the prerelease
+     run: |
+      VERSION="$(bun -e 'console.log(require("./package.json").version)')-alpha.${{ github.run_number }}"
+      npm pkg set version="$VERSION"
+      echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+   - run: bun run build
+   - run: bun install -g npm@latest
+   - run: npm publish --provenance --tag alpha
+   - name: point the pr at the build
+     env:
+      GH_TOKEN: ${{ github.token }}
+     run: |
+      PR=$(gh pr list --head "$GITHUB_REF_NAME" --json number --jq '.[0].number')
+      if [ -n "$PR" ] && [ "$PR" != "null" ]; then
+       BODY="try this branch: \`bun add -g tokenmaxx@$VERSION\`"
+       gh pr comment "$PR" --edit-last --body "$BODY" || gh pr comment "$PR" --body "$BODY"
+      fi
