@@ -62,6 +62,10 @@ export interface StateStore {
 		timeframes: readonly { key: string; ms: number }[]
 	): TokenTimeframeAggregate[]
 	tokensBetween(startMillis: number, endMillis: number): number
+	accountTokens(
+		accountId: string,
+		startMillis: number
+	): { model: string; input: number; output: number; cached: number; cacheCreation: number }[]
 }
 
 interface JsonRow {
@@ -565,6 +569,24 @@ export function createStateStore(databasePath: string): StateStore {
 		})
 	}
 
+	function accountTokens(accountId: string, startMillis: number) {
+		return database
+			.query<
+				{
+					model: string | null
+					input: number
+					output: number
+					cached: number
+					cacheCreation: number
+				},
+				[string, number]
+			>(
+				'SELECT model, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached, SUM(cache_creation_tokens) AS cacheCreation FROM token_events WHERE account_id = ? AND at >= ? GROUP BY model'
+			)
+			.all(accountId, startMillis)
+			.map(row => ({ ...row, model: row.model ?? 'unknown' }))
+	}
+
 	function tokensBetween(startMillis: number, endMillis: number): number {
 		const row = database
 			.query<{ tokens: number | null }, [number, number]>(
@@ -575,6 +597,7 @@ export function createStateStore(databasePath: string): StateStore {
 	}
 
 	return {
+		accountTokens,
 		close: () => database.close(),
 		commitSwitch,
 		dashboard,

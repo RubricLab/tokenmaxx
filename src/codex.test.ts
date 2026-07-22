@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { probeCodex, probeCodexResetCredits, redeemCodexResetCredit } from './codex.ts'
+import {
+	codexUpstream,
+	probeCodex,
+	probeCodexResetCredits,
+	redeemCodexResetCredit
+} from './codex.ts'
 import type { Account } from './domain.ts'
 import type { CredentialVault } from './vault.ts'
 
@@ -40,6 +45,7 @@ const credential = JSON.stringify({
 })
 
 const account: Extract<Account, { provider: 'openai' }> = {
+	auth: 'oauth',
 	createdAt: '2026-07-01T00:00:00.000Z',
 	enabled: true,
 	externalAccountId: 'acct-1',
@@ -48,6 +54,7 @@ const account: Extract<Account, { provider: 'openai' }> = {
 	id: '00000000-0000-4000-8000-000000000001',
 	identity: 'dexter@rubriclabs.com',
 	label: 'dexter@rubriclabs.com',
+	onThreshold: 'switch',
 	plan: 'pro',
 	profilePath: null,
 	provider: 'openai',
@@ -62,6 +69,14 @@ describe('codex reset credits on the wire', () => {
 			fetchImplementation: async () =>
 				Response.json({
 					additional_rate_limits: [],
+					credits: {
+						approx_cloud_messages: [0, 0],
+						approx_local_messages: [0, 0],
+						balance: '12.5',
+						has_credits: true,
+						overage_limit_reached: false,
+						unlimited: false
+					},
 					rate_limit: {
 						allowed: true,
 						limit_reached: false,
@@ -83,6 +98,26 @@ describe('codex reset credits on the wire', () => {
 			applicable: 0,
 			available: 3
 		})
+		expect(result.usage.extraUsage).toEqual({
+			balanceUsd: 12.5,
+			enabled: true,
+			exhausted: false,
+			limitUsd: null,
+			spentUsd: null,
+			usedPercent: null
+		})
+	})
+
+	test('an api key account routes to the platform api with its key', async () => {
+		const vault = memoryVault({ 'codex-key:1': 'sk-test-123' })
+		const injection = await codexUpstream({
+			account: { ...account, auth: 'apiKey', secretReference: 'codex-key:1' },
+			forceRefresh: false,
+			vault
+		})
+		expect(injection.baseUrl).toBe('https://api.openai.com/v1')
+		expect(injection.headers.authorization).toBe('Bearer sk-test-123')
+		expect(injection.stripHeaders).toContain('chatgpt-account-id')
 	})
 
 	test('the credits list keeps only available credits, soonest expiry first', async () => {

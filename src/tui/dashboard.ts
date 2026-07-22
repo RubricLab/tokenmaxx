@@ -14,6 +14,7 @@ import type {
 import {
 	readAnalytics,
 	refreshUsage,
+	requestAccountSave,
 	requestConsumeReset,
 	requestPolicy,
 	requestResetCredits,
@@ -134,6 +135,35 @@ function panelResetColumn(snapshot: DashboardSnapshot, provider: ProviderId): nu
 		)
 }
 
+function spendCell(
+	account: Account,
+	usage: UsageSnapshot | undefined
+): { label: string; value: string } | null {
+	if (account.auth !== 'apiKey') {
+		return null
+	}
+	return { label: ' spend ', value: `${moneyUsd(usage?.measuredSpendUsd ?? 0)} · 31d` }
+}
+
+function extraCell(
+	account: Account,
+	usage: UsageSnapshot | undefined
+): { label: string; value: string; usedPercent: number | null } | null {
+	const extra = usage?.extraUsage
+	if (account.auth === 'apiKey' || extra?.enabled !== true) {
+		return null
+	}
+	const value =
+		extra.usedPercent !== null
+			? percentLabel(extra.usedPercent)
+			: extra.balanceUsd !== null
+				? moneyUsd(extra.balanceUsd)
+				: extra.spentUsd !== null
+					? moneyUsd(extra.spentUsd)
+					: 'on'
+	return { label: ' extra ', usedPercent: extra.usedPercent, value }
+}
+
 function panelBadgeColumn(ctx: Ctx, snapshot: DashboardSnapshot, provider: ProviderId): number {
 	return snapshot.accounts.some(
 		account => account.provider === provider && healthBadge(ctx.theme, account) !== null
@@ -158,9 +188,15 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 			panelResetColumn(snapshot, account.provider) +
 			panelBadgeColumn(ctx, snapshot, account.provider) +
 			1
-		const body = visible
-			.slice(0, windowsShown(ctx))
-			.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
+		const spend = spendCell(account, usage)
+		const extra = extraCell(account, usage)
+		const body =
+			(spend === null
+				? visible
+						.slice(0, windowsShown(ctx))
+						.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
+				: spend.label.length + spend.value.length) +
+			(extra === null ? 0 : extra.label.length + extra.value.length)
 		widest = Math.max(widest, base + body)
 	}
 	return Math.min(CONTENT_MAX, ctx.columns - 2, widest + 2)
@@ -295,12 +331,31 @@ function accountLine(
 		})
 	]
 	const visible = visibleWindows(usage?.windows ?? [], hiddenIds)
-	if (visible.length === 0) {
+	const spend = spendCell(account, usage)
+	if (spend !== null) {
+		children.push(
+			Text({ content: spend.label, fg: rgb(ctx.theme.dim) }),
+			Text({ content: spend.value, fg: rgb(ctx.theme.fg) })
+		)
+	} else if (visible.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
 	} else {
 		for (const window of visible.slice(0, windowsShown(ctx))) {
 			children.push(...windowCell(ctx, window, BAR[ctx.tier], true))
 		}
+	}
+	const extra = extraCell(account, usage)
+	if (extra !== null) {
+		children.push(
+			Text({
+				content: extra.label,
+				fg: rgb(account.onThreshold === 'spill' ? ctx.theme.accent : ctx.theme.dim)
+			}),
+			Text({
+				content: extra.value,
+				fg: rgb(extra.usedPercent === null ? ctx.theme.fg : pressureColor(ctx.theme, extra.usedPercent))
+			})
+		)
 	}
 	return Box(
 		{
@@ -936,17 +991,21 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const refreshed = freshestMillis === 0 ? '—' : `${relativeAge(freshestMillis, ctx.now)} ago`
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const selectedRow = rows[state.selected]
+	const selectedUsage =
+		selectedRow === undefined
+			? undefined
+			: analytics.snapshot.usage.find(u => u.accountId === selectedRow.accountId)
 	const resettable =
 		state.tab === 'accounts' &&
 		selectedRow !== undefined &&
 		selectedRow.accountId !== ADD_ROW &&
-		(accountResetCredits(analytics.snapshot.usage.find(u => u.accountId === selectedRow.accountId))
-			?.available ?? 0) > 0
+		(accountResetCredits(selectedUsage)?.available ?? 0) > 0
+	const spillable = state.tab === 'accounts' && selectedUsage?.extraUsage?.enabled === true
 	const footer =
 		state.resetConfirm !== null
 			? '⏎ use one reset · esc keep it banked'
 			: state.tab === 'accounts'
-				? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''} · tab next`
+				? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''}${spillable ? ' · e spill' : ''} · tab next`
 				: state.tab === 'analytics'
 					? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
 					: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
@@ -1439,6 +1498,29 @@ export async function runTuiDashboard(
 					const row = rows[state.selected]
 					if (row !== undefined && row.accountId !== ADD_ROW) {
 						toggleAuto(row.provider)
+					}
+				} else if (key.name === 'e' && live) {
+					const row = rows[state.selected]
+					const account =
+						row === undefined ? undefined : analytics.snapshot.accounts.find(a => a.id === row.accountId)
+					const usage =
+						row === undefined
+							? undefined
+							: analytics.snapshot.usage.find(u => u.accountId === row.accountId)
+					if (account !== undefined && usage?.extraUsage?.enabled === true) {
+						const onThreshold = account.onThreshold === 'spill' ? 'switch' : 'spill'
+						void withBusy(
+							onThreshold === 'spill' ? 'spilling into extra usage…' : 'switching at threshold…',
+							async () => {
+								await requestAccountSave(
+									socketPath,
+									{ ...account, onThreshold, updatedAt: new Date().toISOString() },
+									{ profilePath: null, secretReference: null }
+								)
+								analytics = await readAnalytics(socketPath)
+								rows = orderedRows(analytics.snapshot)
+							}
+						)
 					}
 				}
 			} catch {}

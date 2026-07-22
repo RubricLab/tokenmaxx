@@ -4,8 +4,8 @@ import { type FileHandle, mkdir, open, readFile, rm, stat } from 'node:fs/promis
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { registerClaudeAccount } from './claude.ts'
-import { registerCodexAccount } from './codex.ts'
+import { registerClaudeAccount, registerClaudeApiKeyAccount } from './claude.ts'
+import { registerCodexAccount, registerOpenAiApiKeyAccount } from './codex.ts'
 import {
 	installClaudeConfig,
 	installCodexConfig,
@@ -233,7 +233,11 @@ function help(): string {
 		`${head('Usage')}  tokenmaxx <command> [options]        ${dim('run with no command for the dashboard')}`,
 		'',
 		head('Setup'),
-		row('login <codex|claude>', 'sign in an account · re-run to re-auth'),
+		row(
+			'login <codex|claude>',
+			'sign in an account · re-run to re-auth',
+			'add --api-key to use an API key instead'
+		),
 		row('install', 'route codex & claude through tokenmaxx'),
 		row('uninstall', 'restore your original config'),
 		'',
@@ -453,17 +457,43 @@ function assertCliInstalled(provider: ProviderId): void {
 	}
 }
 
+async function registerApiKeyAccount(
+	provider: 'openai' | 'anthropic',
+	keyArgument: string | undefined
+): Promise<Account> {
+	if (process.stdin.isTTY !== true && keyArgument === undefined) {
+		throw new ApplicationError(
+			'USAGE',
+			'Pass the key inline in non-interactive shells: tokenmaxx login <codex|claude> --api-key <key>'
+		)
+	}
+	const key = keyArgument ?? prompt('Paste the API key:') ?? ''
+	const label = prompt('Name this account (shown in the dashboard):') ?? ''
+	if (label.trim().length === 0) {
+		throw new ApplicationError('USAGE', 'The account needs a name')
+	}
+	const vault = createMacOsKeychainVault()
+	return provider === 'openai'
+		? registerOpenAiApiKeyAccount({ key, label: label.trim(), vault })
+		: registerClaudeApiKeyAccount({ key, label: label.trim(), vault })
+}
+
 async function login(
 	context: ApplicationContext,
-	providerArgument: string | undefined
+	providerArgument: string | undefined,
+	options: { apiKey: boolean; apiKeyValue?: string } = { apiKey: false }
 ): Promise<void> {
 	if (providerArgument === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude>')
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude> [--api-key [key]]')
 	}
 	const provider = providerFromCli(providerArgument)
-	assertCliInstalled(provider)
+	if (!options.apiKey) {
+		assertCliInstalled(provider)
+	}
 	await ensureDaemon(context)
-	const authenticated = await registerIsolatedAccount(provider)
+	const authenticated = options.apiKey
+		? await registerApiKeyAccount(provider, options.apiKeyValue)
+		: await registerIsolatedAccount(provider)
 	const existing = context.store
 		.listAccounts(provider)
 		.find(
@@ -827,9 +857,14 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 			case '-h':
 				process.stdout.write(`${help()}\n`)
 				return 0
-			case 'login':
-				await login(context, arguments_[1])
+			case 'login': {
+				const flagIndex = arguments_.indexOf('--api-key')
+				await login(context, arguments_[1], {
+					apiKey: flagIndex >= 0,
+					apiKeyValue: flagIndex >= 0 ? arguments_[flagIndex + 1] : undefined
+				})
 				return 0
+			}
 			case 'switch':
 				await switchAccount(context, arguments_.slice(1))
 				return 0

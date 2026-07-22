@@ -9,6 +9,7 @@ export const ProviderIdSchema = z.enum(['openai', 'anthropic'])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 export const AccountEmailSchema = z.string().trim().toLowerCase().email()
+const AccountNameSchema = z.string().trim().min(1)
 
 const HealthStateSchema = z.enum([
 	'unchecked',
@@ -24,13 +25,15 @@ const HealthStateSchema = z.enum([
 ])
 
 const AccountFieldsSchema = z.object({
+	auth: z.enum(['oauth', 'apiKey']).default('oauth'),
 	createdAt: z.iso.datetime(),
 	enabled: z.boolean(),
 	externalAccountId: z.string().trim().min(1).nullable(),
 	health: HealthStateSchema,
 	id: z.uuid(),
-	identity: AccountEmailSchema,
-	label: AccountEmailSchema,
+	identity: AccountNameSchema,
+	label: AccountNameSchema,
+	onThreshold: z.enum(['switch', 'spill']).default('switch'),
 	plan: z.string().trim().min(1).nullish(),
 	updatedAt: z.iso.datetime()
 })
@@ -51,9 +54,16 @@ export const AccountSchema = z
 		}).strict()
 	])
 	.refine(account => account.label === account.identity, {
-		message: 'Account label must equal its authenticated email identity',
+		message: 'Account label must equal its identity',
 		path: ['label']
 	})
+	.refine(
+		account => account.auth === 'apiKey' || AccountEmailSchema.safeParse(account.identity).success,
+		{
+			message: 'Signed-in accounts are identified by their authenticated email',
+			path: ['identity']
+		}
+	)
 export type Account = z.infer<typeof AccountSchema>
 
 const UsageWindowSchema = z
@@ -82,15 +92,31 @@ export const ResetCreditCountsSchema = z
 	.strict()
 export type ResetCreditCounts = z.infer<typeof ResetCreditCountsSchema>
 
+export const ExtraUsageSchema = z
+	.object({
+		balanceUsd: z.number().nullable(),
+		enabled: z.boolean(),
+		exhausted: z.boolean(),
+		limitUsd: z.number().nullable(),
+		spentUsd: z.number().nullable(),
+		usedPercent: z.number().min(0).max(100).nullable()
+	})
+	.strict()
+export type ExtraUsage = z.infer<typeof ExtraUsageSchema>
+
 export const UsageSnapshotSchema = z.discriminatedUnion('provider', [
 	UsageSnapshotFieldsSchema.extend({
+		extraUsage: ExtraUsageSchema.nullish().default(null),
+		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
 		provider: z.literal('openai'),
 		resetCredits: ResetCreditCountsSchema.nullish().default(null),
-		source: z.enum(['codexUsageEndpoint', 'proxyResponseHeaders'])
+		source: z.enum(['codexUsageEndpoint', 'proxyResponseHeaders', 'apiKeyProbe'])
 	}).strict(),
 	UsageSnapshotFieldsSchema.extend({
+		extraUsage: ExtraUsageSchema.nullish().default(null),
+		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
 		provider: z.literal('anthropic'),
-		source: z.enum(['claudeUsageEndpoint', 'proxyResponseHeaders'])
+		source: z.enum(['claudeUsageEndpoint', 'proxyResponseHeaders', 'apiKeyProbe'])
 	}).strict()
 ])
 export type UsageSnapshot = z.infer<typeof UsageSnapshotSchema>
