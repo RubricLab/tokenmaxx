@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { installCodexConfig, installStatus, uninstallCodexConfig } from './config-install.ts'
+import {
+	installCodexConfig,
+	installHarnessConfig,
+	installStatus,
+	uninstallCodexConfig,
+	uninstallHarnessConfig
+} from './config-install.ts'
 import { applicationPaths } from './paths.ts'
 
 const legacyBrokenConfig = `model = "gpt-5.6-sol"
@@ -107,5 +113,69 @@ describe('installCodexConfig', () => {
 		expect(parsed.model).toBe('gpt-5.6-sol')
 		expect(parsed.service_tier).toBe('fast')
 		expect(parsed.model_provider).toBe('tokenmaxx')
+	})
+})
+
+describe('harness installs', () => {
+	test('openclaw providers merge in and back out without touching the rest', async () => {
+		process.env.OPENCLAW_CONFIG_PATH = join(home, 'openclaw.json')
+		await writeFile(
+			process.env.OPENCLAW_CONFIG_PATH,
+			JSON.stringify({ agents: { defaults: { model: { primary: 'anthropic/claude-opus-4-8' } } } })
+		)
+		const installed = await installHarnessConfig('openclaw', applicationPaths())
+		expect(installed.applied).toBe(true)
+		const config = JSON.parse(await readFile(installed.path, 'utf8'))
+		expect(config.models.providers['tokenmaxx-anthropic'].api).toBe('anthropic-messages')
+		expect(config.models.providers['tokenmaxx-openai'].baseUrl).toContain('/openai')
+		expect(config.agents.defaults.model.primary).toBe('anthropic/claude-opus-4-8')
+		const removed = await uninstallHarnessConfig('openclaw')
+		expect(removed.applied).toBe(true)
+		const restored = JSON.parse(await readFile(installed.path, 'utf8'))
+		expect(restored.models.providers['tokenmaxx-anthropic']).toBeUndefined()
+		delete process.env.OPENCLAW_CONFIG_PATH
+	})
+
+	test('a json5 openclaw config is left alone with manual instructions', async () => {
+		process.env.OPENCLAW_CONFIG_PATH = join(home, 'openclaw.json')
+		await writeFile(process.env.OPENCLAW_CONFIG_PATH, '{\n  // my settings\n  models: {},\n}\n')
+		const result = await installHarnessConfig('openclaw', applicationPaths())
+		expect(result.applied).toBe(false)
+		expect(result.manual).toContain('models.providers')
+		expect(await readFile(result.path, 'utf8')).toContain('// my settings')
+		delete process.env.OPENCLAW_CONFIG_PATH
+	})
+
+	test('pi models.json gains and loses the providers cleanly', async () => {
+		process.env.PI_CODING_AGENT_DIR = join(home, 'pi-agent')
+		const installed = await installHarnessConfig('pi', applicationPaths())
+		expect(installed.applied).toBe(true)
+		const config = JSON.parse(await readFile(installed.path, 'utf8'))
+		expect(config.providers['tokenmaxx-anthropic'].baseUrl).toContain('/anthropic')
+		const removed = await uninstallHarnessConfig('pi')
+		expect(removed.applied).toBe(true)
+		expect(JSON.parse(await readFile(installed.path, 'utf8')).providers).toEqual({})
+		delete process.env.PI_CODING_AGENT_DIR
+	})
+
+	test('hermes gets a marked block that round-trips, and defers when providers exist', async () => {
+		process.env.HERMES_HOME = join(home, 'hermes')
+		await mkdir(process.env.HERMES_HOME, { recursive: true })
+		const configPath = join(process.env.HERMES_HOME, 'config.yaml')
+		await writeFile(configPath, 'model:\n  default: "claude-opus-4-8"\n')
+		const installed = await installHarnessConfig('hermes', applicationPaths())
+		expect(installed.applied).toBe(true)
+		const written = await readFile(configPath, 'utf8')
+		expect(written).toContain('api_mode: "codex_responses"')
+		expect(written).toContain('model:')
+		const removed = await uninstallHarnessConfig('hermes')
+		expect(removed.applied).toBe(true)
+		expect(await readFile(configPath, 'utf8')).not.toContain('tokenmaxx-anthropic')
+
+		await writeFile(configPath, 'providers:\n  mine:\n    base_url: "https://example.com"\n')
+		const deferred = await installHarnessConfig('hermes', applicationPaths())
+		expect(deferred.applied).toBe(false)
+		expect(await readFile(configPath, 'utf8')).not.toContain('tokenmaxx')
+		delete process.env.HERMES_HOME
 	})
 })

@@ -1,4 +1,5 @@
-- [2026-07-22] alpha channel
+- [2026-07-22] install into openclaw, pi, and hermes, fixes #11
+- [2026-07-22] [alpha channel](https://github.com/RubricLab/tokenmaxx/commit/5e106a78a47a6265b37dbd3713cbe17635458372)
 - [2026-07-21] follow claude's profile email rename
 - [2026-07-21] [failed logins say why](https://github.com/RubricLab/tokenmaxx/commit/e28f1472327450ca8e7640ca7ab5c3b945790a31)
 - [2026-07-20] [readme](https://github.com/RubricLab/tokenmaxx/commit/e2d9002286227126cb529961d6bad9ca4bc36f6c)
