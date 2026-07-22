@@ -417,6 +417,22 @@ export class AccountManager {
 		})
 	}
 
+	public async removeAccount(accountId: string): Promise<void> {
+		const account = this.#store.findAccount(accountId)
+		if (account === null) {
+			throw new ApplicationError('ACCOUNT_NOT_FOUND', `Unknown account ${accountId}`)
+		}
+		return this.withProviderOperation(account.provider, async () => {
+			if (account.secretReference !== null) {
+				await this.#vault.remove(account.secretReference).catch(() => undefined)
+			}
+			if (account.provider === 'anthropic' && account.profilePath !== null) {
+				await removeClaudeProfile(account.profilePath).catch(() => undefined)
+			}
+			this.#store.removeAccount(account.id)
+		})
+	}
+
 	public async switchAccount(
 		provider: ProviderId,
 		targetAccountId: string,

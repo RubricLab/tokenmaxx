@@ -22,6 +22,7 @@ import {
 	managerVersion,
 	readDashboard,
 	readProxyPort,
+	requestAccountRemove,
 	requestAccountSave,
 	requestSwitch,
 	startManagerServer
@@ -245,6 +246,7 @@ function help(): string {
 		head('Everyday'),
 		row('list', 'accounts, health, and live usage'),
 		row('switch <codex|claude> <email>', 'make an account active now'),
+		row('logout [codex|claude] <email>', 'sign out and delete the credential'),
 		row(
 			'auto <codex|claude|both> <on|off>',
 			'switch accounts at a usage threshold',
@@ -676,6 +678,33 @@ function listAccounts(context: ApplicationContext): void {
 	process.stdout.write('\n● = active\n')
 }
 
+const providerWords = new Set(['codex', 'claude', 'openai', 'anthropic'])
+
+async function logout(context: ApplicationContext, arguments_: readonly string[]): Promise<void> {
+	const qualified = arguments_[0] !== undefined && providerWords.has(arguments_[0])
+	const provider = qualified ? providerFromCli(arguments_[0] as string) : undefined
+	const reference = qualified ? arguments_[1] : arguments_[0]
+	if (reference === undefined) {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx logout [codex|claude] <email-or-name>')
+	}
+	const matches = context.store
+		.listAccounts(provider)
+		.filter(account => account.id === reference || account.label === reference)
+	const account = matches[0]
+	if (account === undefined) {
+		throw new ApplicationError('ACCOUNT_NOT_FOUND', `No account matches ${reference}`)
+	}
+	if (matches.length > 1) {
+		throw new ApplicationError(
+			'ACCOUNT_AMBIGUOUS',
+			`${reference} is on both providers — say which: tokenmaxx logout codex ${reference}`
+		)
+	}
+	await ensureDaemon(context)
+	await requestAccountRemove(context.paths.managerSocket, account.id)
+	process.stdout.write(`Signed out ${account.label}; its credential is gone from the Keychain.\n`)
+}
+
 async function switchAccount(
 	context: ApplicationContext,
 	arguments_: readonly string[]
@@ -949,6 +978,9 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 			}
 			case 'switch':
 				await switchAccount(context, arguments_.slice(1))
+				return 0
+			case 'logout':
+				await logout(context, arguments_.slice(1))
 				return 0
 			case 'auto':
 				await configureAutomation(context, arguments_.slice(1))

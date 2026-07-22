@@ -111,6 +111,10 @@ async function dispatch(
 			await manager.saveAccount(parsed)
 			return { saved: true }
 		}
+		case 'account/remove': {
+			await manager.removeAccount(ResetParamsSchema.parse(params).accountId)
+			return { removed: true }
+		}
 		case 'codex/resetCredits':
 			return manager.codexResetCredits(ResetParamsSchema.parse(params).accountId)
 		case 'codex/consumeReset':
@@ -312,6 +316,16 @@ export function requestSwitch(
 		schema: DashboardSnapshotSchema,
 		socketPath,
 		timeoutMilliseconds: 30_000
+	})
+}
+
+export function requestAccountRemove(socketPath: string, accountId: string): Promise<unknown> {
+	return managerRequest({
+		method: 'account/remove',
+		params: { accountId },
+		schema: z.unknown(),
+		socketPath,
+		timeoutMilliseconds: 20_000
 	})
 }
 
