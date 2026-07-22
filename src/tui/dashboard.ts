@@ -494,32 +494,28 @@ function sessionResets(ctx: Ctx, snapshot: DashboardSnapshot): string | null {
 		if (state?.activeAccountId == null) {
 			return []
 		}
+		const account = snapshot.accounts.find(a => a.id === state.activeAccountId)
 		const windows = snapshot.usage.find(u => u.accountId === state.activeAccountId)?.windows ?? []
 		const reset = shortReset(windows.find(isFiveHour)?.resetAt ?? null, ctx.now)
-		return reset === null ? [] : [`${providerCli[provider]} ${reset}`]
+		if (account === undefined || reset === null) {
+			return []
+		}
+		const label = account.label.length <= 22 ? account.label : `${account.label.slice(0, 21)}…`
+		return [`${providerCli[provider]} · ${label} · ↻ ${reset}`]
 	})
-	return parts.length === 0 ? null : `↻ session · ${parts.join(' · ')}`
+	return parts.length === 0 ? null : parts.join('    ')
 }
 
-function analyticsBar(
-	ctx: Ctx,
-	snapshot: DashboardSnapshot,
-	timeframe: Timeframe,
-	view: AnalyticsView
-) {
+function analyticsBar(ctx: Ctx, timeframe: Timeframe, view: AnalyticsView) {
 	const ranges = TIMEFRAMES.flatMap((option, index) => [
 		...(index === 0 ? [] : [Text({ content: ' ', fg: rgb(ctx.theme.faint) })]),
 		pill(ctx, option.label, option.key === timeframe.key)
 	])
-	const resets = sessionResets(ctx, snapshot)
 	return Box(
 		{ flexDirection: 'row', width: '100%' },
 		Text({ content: 'range  ', fg: rgb(ctx.theme.dim) }),
 		...ranges,
 		Box({ flexGrow: 1 }),
-		...(resets === null || ctx.tier === 'compact'
-			? []
-			: [Text({ content: resets, fg: rgb(ctx.theme.dim) }), Box({ flexGrow: 1 })]),
 		Text({
 			attributes: view === 'chart' ? 1 : 0,
 			content: 'chart',
@@ -753,11 +749,9 @@ function analyticsBody(
 	return column(
 		ctx,
 		[
-			analyticsBar(ctx, analytics.snapshot, timeframe, state.analyticsView),
+			analyticsBar(ctx, timeframe, state.analyticsView),
 			card,
-			...(resets === null || ctx.tier !== 'compact'
-				? []
-				: [centered(Text({ content: resets, fg: rgb(ctx.theme.dim) }))])
+			...(resets === null ? [] : [centered(Text({ content: resets, fg: rgb(ctx.theme.dim) }))])
 		],
 		150
 	)
