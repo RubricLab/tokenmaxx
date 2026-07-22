@@ -23,6 +23,7 @@ const RotationDecisionSchema = z.discriminatedUnion('rotate', [
 			'activeUsageUnknown',
 			'activeUsageStale',
 			'belowThreshold',
+			'spillingIntoExtraUsage',
 			'minimumDwell',
 			'noEligibleCandidate'
 		]),
@@ -82,6 +83,14 @@ export function selectRotation(input: RotationInput): RotationDecision {
 	const activeSnapshot = snapshotByAccount.get(input.state.activeAccountId)
 	if (activeSnapshot === undefined) {
 		return { reason: 'activeUsageUnknown', rotate: false }
+	}
+	const activeAccount = input.accounts.find(account => account.id === input.state.activeAccountId)
+	if (
+		activeAccount?.onThreshold === 'spill' &&
+		activeSnapshot.extraUsage?.enabled === true &&
+		!activeSnapshot.extraUsage.exhausted
+	) {
+		return { reason: 'spillingIntoExtraUsage', rotate: false }
 	}
 	if (!isFresh(activeSnapshot, input.now, policy.maximumSnapshotAgeMilliseconds)) {
 		return { reason: 'activeUsageStale', rotate: false }

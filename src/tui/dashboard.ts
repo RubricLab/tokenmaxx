@@ -14,6 +14,7 @@ import type {
 import {
 	readAnalytics,
 	refreshUsage,
+	requestAccountSave,
 	requestConsumeReset,
 	requestPolicy,
 	requestResetCredits,
@@ -134,6 +135,42 @@ function panelResetColumn(snapshot: DashboardSnapshot, provider: ProviderId): nu
 		)
 }
 
+function spendCell(
+	tier: Tier,
+	account: Account,
+	usage: UsageSnapshot | undefined
+): { label: string; bar: string; value: string; pad: string } | null {
+	if (account.auth !== 'apiKey') {
+		return null
+	}
+	const money = moneyUsd(usage?.measuredSpendUsd ?? 0)
+	return {
+		bar: '┄'.repeat(BAR[tier]),
+		label: '31d ',
+		pad: ''.padEnd(6),
+		value: ` ${money.padStart(4)}`
+	}
+}
+
+function extraCell(
+	account: Account,
+	usage: UsageSnapshot | undefined
+): { label: string; value: string; usedPercent: number | null } | null {
+	const extra = usage?.extraUsage
+	if (account.auth === 'apiKey' || extra?.enabled !== true) {
+		return null
+	}
+	const value =
+		extra.usedPercent !== null
+			? percentLabel(extra.usedPercent)
+			: extra.balanceUsd !== null
+				? moneyUsd(extra.balanceUsd)
+				: extra.spentUsd !== null
+					? moneyUsd(extra.spentUsd)
+					: 'on'
+	return { label: ' extra ', usedPercent: extra.usedPercent, value }
+}
+
 function panelBadgeColumn(ctx: Ctx, snapshot: DashboardSnapshot, provider: ProviderId): number {
 	return snapshot.accounts.some(
 		account => account.provider === provider && healthBadge(ctx.theme, account) !== null
@@ -158,9 +195,15 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 			panelResetColumn(snapshot, account.provider) +
 			panelBadgeColumn(ctx, snapshot, account.provider) +
 			1
-		const body = visible
-			.slice(0, windowsShown(ctx))
-			.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
+		const spend = spendCell(ctx.tier, account, usage)
+		const extra = extraCell(account, usage)
+		const body =
+			(spend === null
+				? visible
+						.slice(0, windowsShown(ctx))
+						.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
+				: spend.label.length + spend.bar.length + spend.value.length + spend.pad.length) +
+			(extra === null ? 0 : extra.label.length + extra.value.length)
 		widest = Math.max(widest, base + body)
 	}
 	return Math.min(CONTENT_MAX, ctx.columns - 2, widest + 2)
@@ -295,12 +338,33 @@ function accountLine(
 		})
 	]
 	const visible = visibleWindows(usage?.windows ?? [], hiddenIds)
-	if (visible.length === 0) {
+	const spend = spendCell(ctx.tier, account, usage)
+	if (spend !== null) {
+		children.push(
+			Text({ content: spend.label, fg: rgb(ctx.theme.dim) }),
+			Text({ content: spend.bar, fg: rgb(ctx.theme.faint) }),
+			Text({ content: spend.value, fg: rgb(ctx.theme.fg) }),
+			Text({ content: spend.pad, fg: rgb(ctx.theme.faint) })
+		)
+	} else if (visible.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
 	} else {
 		for (const window of visible.slice(0, windowsShown(ctx))) {
 			children.push(...windowCell(ctx, window, BAR[ctx.tier], true))
 		}
+	}
+	const extra = extraCell(account, usage)
+	if (extra !== null) {
+		children.push(
+			Text({
+				content: extra.label,
+				fg: rgb(account.onThreshold === 'spill' ? ctx.theme.accent : ctx.theme.dim)
+			}),
+			Text({
+				content: extra.value,
+				fg: rgb(extra.usedPercent === null ? ctx.theme.fg : pressureColor(ctx.theme, extra.usedPercent))
+			})
+		)
 	}
 	return Box(
 		{
@@ -834,6 +898,69 @@ interface ResetConfirm {
 	credits: ResetCreditsView
 }
 
+interface AddConfirm {
+	provider: ProviderId
+	choice: 'oauth' | 'apiKey'
+}
+
+function addConfirmBody(ctx: Ctx, confirm: AddConfirm) {
+	const cli = providerCli[confirm.provider]
+	const installed = ctx.cliPresent[confirm.provider]
+	const line = (...children: ReturnType<typeof Text>[]) =>
+		Box(
+			{ flexDirection: 'row', width: '100%' },
+			Text({ content: '  ', fg: rgb(ctx.theme.bg) }),
+			...children
+		)
+	const option = (selected: boolean, title: string, note: string | null, details: string[]) => [
+		line(
+			Text({
+				content: selected ? '▸ ' : '○ ',
+				fg: rgb(selected ? ctx.theme.accent : ctx.theme.faint)
+			}),
+			Text({
+				attributes: selected ? 1 : 0,
+				content: title,
+				fg: rgb(selected ? ctx.theme.fg : ctx.theme.dim)
+			}),
+			Text({ content: note === null ? '' : ` · ${note}`, fg: rgb(ctx.theme.warn) })
+		),
+		...details.map(detail => line(Text({ content: `  ${detail}`, fg: rgb(ctx.theme.dim) })))
+	]
+	const card = Box(
+		{
+			border: true,
+			borderColor: rgb(ctx.theme.accent),
+			borderStyle: 'rounded',
+			flexDirection: 'column',
+			title: ` Add a ${providerShort[confirm.provider]} account `,
+			titleColor: rgb(ctx.theme.accent),
+			width: '100%'
+		},
+		blankRow(ctx),
+		...option(
+			confirm.choice === 'oauth',
+			`sign in with ${cli}`,
+			installed ? null : `install ${cli} first`,
+			['your subscription account; its rate-limit windows meter here']
+		),
+		blankRow(ctx),
+		...option(confirm.choice === 'apiKey', 'add an api key', null, [
+			'bills per token at api rates; account limits do not apply',
+			'finishes in the terminal: paste the key, name the account'
+		]),
+		blankRow(ctx),
+		line(
+			Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' ⏎ ', fg: rgb(ctx.theme.fg) }),
+			Text({ content: ' continue      ', fg: rgb(ctx.theme.dim) }),
+			Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' esc ', fg: rgb(ctx.theme.fg) }),
+			Text({ content: ' back', fg: rgb(ctx.theme.dim) })
+		),
+		blankRow(ctx)
+	)
+	return column(ctx, [card], 70)
+}
+
 function resetNote(outcome: ResetOutcome): string {
 	switch (outcome.code) {
 		case 'reset':
@@ -916,6 +1043,7 @@ interface ViewState {
 	modelScroll: number
 	note: string
 	alert: string
+	addConfirm: AddConfirm | null
 	resetConfirm: ResetConfirm | null
 	updateAvailable: string | null
 	updateDismissed: boolean
@@ -924,6 +1052,7 @@ interface ViewState {
 type DashboardAction =
 	| { kind: 'relogin'; provider: ProviderId }
 	| { kind: 'login'; provider: ProviderId }
+	| { kind: 'loginApiKey'; provider: ProviderId }
 	| { kind: 'routing'; provider: ProviderId; enable: boolean }
 	| { kind: 'update'; version: string }
 
@@ -936,20 +1065,26 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	const refreshed = freshestMillis === 0 ? '—' : `${relativeAge(freshestMillis, ctx.now)} ago`
 	const timeframe = TIMEFRAMES[state.timeframeIndex] ?? fallbackTimeframe
 	const selectedRow = rows[state.selected]
+	const selectedUsage =
+		selectedRow === undefined
+			? undefined
+			: analytics.snapshot.usage.find(u => u.accountId === selectedRow.accountId)
 	const resettable =
 		state.tab === 'accounts' &&
 		selectedRow !== undefined &&
 		selectedRow.accountId !== ADD_ROW &&
-		(accountResetCredits(analytics.snapshot.usage.find(u => u.accountId === selectedRow.accountId))
-			?.available ?? 0) > 0
+		(accountResetCredits(selectedUsage)?.available ?? 0) > 0
+	const spillable = state.tab === 'accounts' && selectedUsage?.extraUsage?.enabled === true
 	const footer =
-		state.resetConfirm !== null
-			? '⏎ use one reset · esc keep it banked'
-			: state.tab === 'accounts'
-				? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''} · tab next`
-				: state.tab === 'analytics'
-					? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
-					: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
+		state.addConfirm !== null
+			? '↑↓ choose · ⏎ continue · esc back'
+			: state.resetConfirm !== null
+				? '⏎ use one reset · esc keep it banked'
+				: state.tab === 'accounts'
+					? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''}${spillable ? ' · e spill' : ''} · tab next`
+					: state.tab === 'analytics'
+						? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
+						: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
 	const header = Box(
 		{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
 		Box(
@@ -1000,9 +1135,11 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	}
 	children.push(
 		state.tab === 'accounts'
-			? state.resetConfirm !== null
-				? resetConfirmBody(ctx, analytics.snapshot, state.resetConfirm)
-				: accountsBody(ctx, analytics.snapshot, rows, state.selected)
+			? state.addConfirm !== null
+				? addConfirmBody(ctx, state.addConfirm)
+				: state.resetConfirm !== null
+					? resetConfirmBody(ctx, analytics.snapshot, state.resetConfirm)
+					: accountsBody(ctx, analytics.snapshot, rows, state.selected)
 			: state.tab === 'analytics'
 				? analyticsBody(ctx, analytics, timeframe, state)
 				: settingsBody(
@@ -1047,6 +1184,9 @@ export async function runTuiDashboard(
 ): Promise<DashboardAction | undefined> {
 	const fixture = options.fixture
 	const live = fixture === undefined
+	try {
+		process.stdin.setRawMode?.(true)
+	} catch {}
 	const cliPresent: Record<ProviderId, boolean> = live
 		? { anthropic: Bun.which('claude') !== null, openai: Bun.which('codex') !== null }
 		: { anthropic: true, openai: true }
@@ -1061,6 +1201,7 @@ export async function runTuiDashboard(
 			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
 	const state: ViewState = {
+		addConfirm: null,
 		alert: options.alert ?? '',
 		analyticsView: 'chart',
 		modelScroll: 0,
@@ -1160,7 +1301,11 @@ export async function runTuiDashboard(
 			return
 		}
 		if (row.accountId === ADD_ROW) {
-			finish({ kind: 'login', provider: row.provider })
+			state.addConfirm = {
+				choice: cliPresent[row.provider] ? 'oauth' : 'apiKey',
+				provider: row.provider
+			}
+			paint()
 			return
 		}
 		if (needsLogin(row.accountId)) {
@@ -1358,6 +1503,32 @@ export async function runTuiDashboard(
 					state.alert = ''
 					paint()
 				}
+				if (state.addConfirm !== null) {
+					const confirm = state.addConfirm
+					if (key.ctrl && key.name === 'c') {
+						finish()
+					} else if (key.name === 'up' || key.name === 'down' || key.name === 'k' || key.name === 'j') {
+						state.addConfirm = {
+							...confirm,
+							choice: confirm.choice === 'oauth' ? 'apiKey' : 'oauth'
+						}
+						paint()
+					} else if (key.name === 'return') {
+						state.addConfirm = null
+						if (live) {
+							finish({
+								kind: confirm.choice === 'apiKey' ? 'loginApiKey' : 'login',
+								provider: confirm.provider
+							})
+						} else {
+							paint()
+						}
+					} else if (key.name === 'escape' || key.name === 'q') {
+						state.addConfirm = null
+						paint()
+					}
+					return
+				}
 				if (state.resetConfirm !== null) {
 					if (key.ctrl && key.name === 'c') {
 						finish()
@@ -1433,12 +1604,44 @@ export async function runTuiDashboard(
 				} else if (key.name === 'down' || key.name === 'j') {
 					state.selected = Math.max(0, Math.min(rows.length - 1, state.selected + 1))
 					paint()
-				} else if (key.name === 'return' && live) {
-					switchToSelected()
+				} else if (key.name === 'return') {
+					const row = rows[state.selected]
+					if (row !== undefined && row.accountId === ADD_ROW) {
+						state.addConfirm = {
+							choice: cliPresent[row.provider] ? 'oauth' : 'apiKey',
+							provider: row.provider
+						}
+						paint()
+					} else if (live) {
+						switchToSelected()
+					}
 				} else if (key.name === 'a' && live) {
 					const row = rows[state.selected]
 					if (row !== undefined && row.accountId !== ADD_ROW) {
 						toggleAuto(row.provider)
+					}
+				} else if (key.name === 'e' && live) {
+					const row = rows[state.selected]
+					const account =
+						row === undefined ? undefined : analytics.snapshot.accounts.find(a => a.id === row.accountId)
+					const usage =
+						row === undefined
+							? undefined
+							: analytics.snapshot.usage.find(u => u.accountId === row.accountId)
+					if (account !== undefined && usage?.extraUsage?.enabled === true) {
+						const onThreshold = account.onThreshold === 'spill' ? 'switch' : 'spill'
+						void withBusy(
+							onThreshold === 'spill' ? 'spilling into extra usage…' : 'switching at threshold…',
+							async () => {
+								await requestAccountSave(
+									socketPath,
+									{ ...account, onThreshold, updatedAt: new Date().toISOString() },
+									{ profilePath: null, secretReference: null }
+								)
+								analytics = await readAnalytics(socketPath)
+								rows = orderedRows(analytics.snapshot)
+							}
+						)
 					}
 				}
 			} catch {}

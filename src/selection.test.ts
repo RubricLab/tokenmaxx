@@ -6,6 +6,7 @@ const NOW = new Date('2026-07-16T17:30:00.000Z')
 
 function account(n: number, health: Account['health'] = 'ready'): Account {
 	return {
+		auth: 'oauth',
 		createdAt: '2026-06-01T00:00:00.000Z',
 		enabled: true,
 		externalAccountId: `acct_${n}`,
@@ -14,6 +15,7 @@ function account(n: number, health: Account['health'] = 'ready'): Account {
 		id: `00000000-0000-4000-8000-${n.toString().padStart(12, '0')}`,
 		identity: `user${n}@example.com`,
 		label: `user${n}@example.com`,
+		onThreshold: 'switch',
 		plan: 'max',
 		profilePath: `/tmp/profiles/${n}`,
 		provider: 'anthropic',
@@ -29,7 +31,9 @@ function usage(
 ): UsageSnapshot {
 	return {
 		accountId: account(n).id,
+		extraUsage: null,
 		hardLimitReached: options.hardLimitReached ?? false,
+		measuredSpendUsd: null,
 		observedAt: new Date(NOW.getTime() - (options.ageMs ?? 10_000)).toISOString(),
 		provider: 'anthropic',
 		source: 'proxyResponseHeaders',
@@ -139,5 +143,38 @@ describe('selectRotation', () => {
 			usage: [usage(1, 99, { ageMs: 10 * 60_000 }), usage(2, 5)]
 		})
 		expect(decision).toEqual({ reason: 'activeUsageStale', rotate: false })
+	})
+})
+
+describe('extra usage spill', () => {
+	const extra = (exhausted: boolean) => ({
+		balanceUsd: 20,
+		enabled: true,
+		exhausted,
+		limitUsd: null,
+		spentUsd: null,
+		usedPercent: null
+	})
+
+	test('an account set to spill holds through the threshold while credits remain', () => {
+		const spiller = { ...account(1), onThreshold: 'spill' as const }
+		const decision = selectRotation({
+			accounts: [spiller, account(2)],
+			now: NOW,
+			state: state(1),
+			usage: [{ ...usage(1, 96), extraUsage: extra(false) }, usage(2, 10)]
+		})
+		expect(decision).toEqual({ reason: 'spillingIntoExtraUsage', rotate: false })
+	})
+
+	test('exhausted credits end the spill and rotation resumes', () => {
+		const spiller = { ...account(1), onThreshold: 'spill' as const }
+		const decision = selectRotation({
+			accounts: [spiller, account(2)],
+			now: NOW,
+			state: state(1),
+			usage: [{ ...usage(1, 96), extraUsage: extra(true) }, usage(2, 10)]
+		})
+		expect(decision.rotate).toBe(true)
 	})
 })

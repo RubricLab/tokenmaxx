@@ -78,6 +78,7 @@ tokenmaxx login <codex|claude>             sign in; isolated, idempotent
 tokenmaxx install                          route native codex & claude
 tokenmaxx uninstall                        restore native config
 tokenmaxx switch <codex|claude> <email>    make an account active
+tokenmaxx logout [codex|claude] <email>    sign out; the credential is deleted
 tokenmaxx auto <both|codex|claude> <on|off> [--threshold N]
 tokenmaxx list | status | refresh | doctor
 ```
