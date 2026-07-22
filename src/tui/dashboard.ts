@@ -136,13 +136,20 @@ function panelResetColumn(snapshot: DashboardSnapshot, provider: ProviderId): nu
 }
 
 function spendCell(
+	tier: Tier,
 	account: Account,
 	usage: UsageSnapshot | undefined
-): { label: string; value: string } | null {
+): { label: string; bar: string; value: string; pad: string } | null {
 	if (account.auth !== 'apiKey') {
 		return null
 	}
-	return { label: ' 31d spend ', value: moneyUsd(usage?.measuredSpendUsd ?? 0) }
+	const money = moneyUsd(usage?.measuredSpendUsd ?? 0)
+	return {
+		bar: '┄'.repeat(BAR[tier]),
+		label: ' 1m ',
+		pad: ''.padEnd(6),
+		value: ` ${money.padStart(4)}`
+	}
 }
 
 function extraCell(
@@ -188,14 +195,14 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 			panelResetColumn(snapshot, account.provider) +
 			panelBadgeColumn(ctx, snapshot, account.provider) +
 			1
-		const spend = spendCell(account, usage)
+		const spend = spendCell(ctx.tier, account, usage)
 		const extra = extraCell(account, usage)
 		const body =
 			(spend === null
 				? visible
 						.slice(0, windowsShown(ctx))
 						.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
-				: spend.label.length + spend.value.length) +
+				: spend.label.length + spend.bar.length + spend.value.length + spend.pad.length) +
 			(extra === null ? 0 : extra.label.length + extra.value.length)
 		widest = Math.max(widest, base + body)
 	}
@@ -331,11 +338,13 @@ function accountLine(
 		})
 	]
 	const visible = visibleWindows(usage?.windows ?? [], hiddenIds)
-	const spend = spendCell(account, usage)
+	const spend = spendCell(ctx.tier, account, usage)
 	if (spend !== null) {
 		children.push(
 			Text({ content: spend.label, fg: rgb(ctx.theme.dim) }),
-			Text({ content: spend.value, fg: rgb(ctx.theme.fg) })
+			Text({ content: spend.bar, fg: rgb(ctx.theme.faint) }),
+			Text({ content: spend.value, fg: rgb(ctx.theme.fg) }),
+			Text({ content: spend.pad, fg: rgb(ctx.theme.faint) })
 		)
 	} else if (visible.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
