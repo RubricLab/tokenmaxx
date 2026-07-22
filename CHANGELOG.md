@@ -1,4 +1,11 @@
-- [2026-07-22] settings shows the harnesses and scrolls
+- [2026-07-22] clipped settings panels stay open
+
+A panel cut off by scrolling keeps its title but drops its bottom
+border, so it reads as continuing into the more line instead of
+finished.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+- [2026-07-22] [settings shows the harnesses and scrolls
 
 A harnesses box joins settings: green on when routed, warn off with an
 enter hint when installed but not routed, grey when the harness is not
@@ -8,7 +15,7 @@ its rows to the terminal height with more indicators, and the 2s
 background tick no longer holds the busy flag that was eating
 keypresses.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>](https://github.com/RubricLab/tokenmaxx/commit/89ba154b91d73db4059f9a44704633141497e0a0)
 - [2026-07-22] [the proxy lifts system prompts for the chatgpt backend
 
 Third-party harnesses send standard Responses requests: system messages

@@ -1,4 +1,11 @@
-import { Box, createCliRenderer, parseColor, type RGBA, Text } from '@opentui/core'
+import {
+	type BorderSides,
+	Box,
+	createCliRenderer,
+	parseColor,
+	type RGBA,
+	Text
+} from '@opentui/core'
 import {
 	type HarnessStatus,
 	type HarnessTarget,
@@ -812,13 +819,18 @@ function buildSettingRows(snapshot: DashboardSnapshot, harnesses: HarnessStatus[
 	]
 }
 
+// A panel clipped by scrolling keeps its title but loses its bottom border,
+// so it reads as continuing into the "↓ more" line instead of complete.
+const openBottomBorder: BorderSides[] = ['top', 'left', 'right']
+
 function settingsPanel(
 	ctx: Ctx,
 	snapshot: DashboardSnapshot,
 	allRows: SettingRow[],
 	provider: ProviderId,
 	selected: number,
-	visible: Set<number>
+	visible: Set<number>,
+	openBottom: boolean
 ) {
 	const state = snapshot.providers.find(s => s.provider === provider)
 	const policy = state?.policy
@@ -904,7 +916,7 @@ function settingsPanel(
 	const auto = policy?.enabled ? `⟳ auto ${policy.thresholdPercent}%` : 'auto off'
 	return Box(
 		{
-			border: true,
+			border: openBottom ? openBottomBorder : true,
 			borderColor: rgb(routed ? ctx.theme.border : ctx.theme.warn),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
@@ -924,7 +936,8 @@ function harnessPanel(
 	statuses: HarnessStatus[],
 	allRows: SettingRow[],
 	selected: number,
-	visible: Set<number>
+	visible: Set<number>,
+	openBottom: boolean
 ) {
 	const entries = allRows
 		.map((row, index) => ({ index, row }))
@@ -963,7 +976,7 @@ function harnessPanel(
 	})
 	return Box(
 		{
-			border: true,
+			border: openBottom ? openBottomBorder : true,
 			borderColor: rgb(ctx.theme.border),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
@@ -1023,11 +1036,28 @@ function settingsBody(
 	for (let index = start; index <= end; index += 1) {
 		visible.add(index)
 	}
+	const clippedBelow = (lastRow: number): boolean => end < lastRow
 	const children = [
 		...(start > 0 ? [centered(Text({ content: '↑ more', fg: rgb(ctx.theme.faint) }))] : []),
-		settingsPanel(ctx, snapshot, rows, 'openai', state.settingsSelected, visible),
-		settingsPanel(ctx, snapshot, rows, 'anthropic', state.settingsSelected, visible),
-		harnessPanel(ctx, harnesses, rows, state.settingsSelected, visible),
+		settingsPanel(
+			ctx,
+			snapshot,
+			rows,
+			'openai',
+			state.settingsSelected,
+			visible,
+			clippedBelow(openaiCount - 1)
+		),
+		settingsPanel(
+			ctx,
+			snapshot,
+			rows,
+			'anthropic',
+			state.settingsSelected,
+			visible,
+			clippedBelow(openaiCount + anthropicCount - 1)
+		),
+		harnessPanel(ctx, harnesses, rows, state.settingsSelected, visible, clippedBelow(total - 1)),
 		...(end < total - 1 ? [centered(Text({ content: '↓ more', fg: rgb(ctx.theme.faint) }))] : [])
 	].filter(child => child !== null)
 	return column(ctx, children, 78)
