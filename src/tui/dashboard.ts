@@ -901,8 +901,7 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 		ctx,
 		[
 			settingsPanel(ctx, snapshot, rows, 'openai', selected),
-			settingsPanel(ctx, snapshot, rows, 'anthropic', selected),
-			Box({ flexDirection: 'row' }, Text({ content: 'changes apply live', fg: rgb(ctx.theme.faint) }))
+			settingsPanel(ctx, snapshot, rows, 'anthropic', selected)
 		],
 		78
 	)
