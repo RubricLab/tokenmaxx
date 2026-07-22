@@ -819,8 +819,10 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						if (action === undefined) {
 							break
 						}
-						if (action.kind === 'relogin' || action.kind === 'login') {
-							await login(context, action.provider === 'openai' ? 'codex' : 'claude').catch(error => {
+						if (action.kind === 'relogin' || action.kind === 'login' || action.kind === 'loginApiKey') {
+							await login(context, action.provider === 'openai' ? 'codex' : 'claude', {
+								apiKey: action.kind === 'loginApiKey'
+							}).catch(error => {
 								alert = errorMessage(error)
 							})
 							continue

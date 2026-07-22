@@ -142,7 +142,7 @@ function spendCell(
 	if (account.auth !== 'apiKey') {
 		return null
 	}
-	return { label: ' spend ', value: `${moneyUsd(usage?.measuredSpendUsd ?? 0)} · 31d` }
+	return { label: ' 31d spend ', value: moneyUsd(usage?.measuredSpendUsd ?? 0) }
 }
 
 function extraCell(
@@ -889,6 +889,69 @@ interface ResetConfirm {
 	credits: ResetCreditsView
 }
 
+interface AddConfirm {
+	provider: ProviderId
+	choice: 'oauth' | 'apiKey'
+}
+
+function addConfirmBody(ctx: Ctx, confirm: AddConfirm) {
+	const cli = providerCli[confirm.provider]
+	const installed = ctx.cliPresent[confirm.provider]
+	const line = (...children: ReturnType<typeof Text>[]) =>
+		Box(
+			{ flexDirection: 'row', width: '100%' },
+			Text({ content: '  ', fg: rgb(ctx.theme.bg) }),
+			...children
+		)
+	const option = (selected: boolean, title: string, note: string | null, details: string[]) => [
+		line(
+			Text({
+				content: selected ? '▸ ' : '○ ',
+				fg: rgb(selected ? ctx.theme.accent : ctx.theme.faint)
+			}),
+			Text({
+				attributes: selected ? 1 : 0,
+				content: title,
+				fg: rgb(selected ? ctx.theme.fg : ctx.theme.dim)
+			}),
+			Text({ content: note === null ? '' : ` · ${note}`, fg: rgb(ctx.theme.warn) })
+		),
+		...details.map(detail => line(Text({ content: `  ${detail}`, fg: rgb(ctx.theme.dim) })))
+	]
+	const card = Box(
+		{
+			border: true,
+			borderColor: rgb(ctx.theme.accent),
+			borderStyle: 'rounded',
+			flexDirection: 'column',
+			title: ` Add a ${providerShort[confirm.provider]} account `,
+			titleColor: rgb(ctx.theme.accent),
+			width: '100%'
+		},
+		blankRow(ctx),
+		...option(
+			confirm.choice === 'oauth',
+			`sign in with ${cli}`,
+			installed ? null : `install ${cli} first`,
+			['your subscription account; its rate-limit windows meter here']
+		),
+		blankRow(ctx),
+		...option(confirm.choice === 'apiKey', 'add an api key', null, [
+			'bills per token at api rates; account limits do not apply',
+			'finishes in the terminal: paste the key, name the account'
+		]),
+		blankRow(ctx),
+		line(
+			Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' ⏎ ', fg: rgb(ctx.theme.fg) }),
+			Text({ content: ' continue      ', fg: rgb(ctx.theme.dim) }),
+			Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' esc ', fg: rgb(ctx.theme.fg) }),
+			Text({ content: ' back', fg: rgb(ctx.theme.dim) })
+		),
+		blankRow(ctx)
+	)
+	return column(ctx, [card], 70)
+}
+
 function resetNote(outcome: ResetOutcome): string {
 	switch (outcome.code) {
 		case 'reset':
@@ -971,6 +1034,7 @@ interface ViewState {
 	modelScroll: number
 	note: string
 	alert: string
+	addConfirm: AddConfirm | null
 	resetConfirm: ResetConfirm | null
 	updateAvailable: string | null
 	updateDismissed: boolean
@@ -979,6 +1043,7 @@ interface ViewState {
 type DashboardAction =
 	| { kind: 'relogin'; provider: ProviderId }
 	| { kind: 'login'; provider: ProviderId }
+	| { kind: 'loginApiKey'; provider: ProviderId }
 	| { kind: 'routing'; provider: ProviderId; enable: boolean }
 	| { kind: 'update'; version: string }
 
@@ -1002,13 +1067,15 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 		(accountResetCredits(selectedUsage)?.available ?? 0) > 0
 	const spillable = state.tab === 'accounts' && selectedUsage?.extraUsage?.enabled === true
 	const footer =
-		state.resetConfirm !== null
-			? '⏎ use one reset · esc keep it banked'
-			: state.tab === 'accounts'
-				? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''}${spillable ? ' · e spill' : ''} · tab next`
-				: state.tab === 'analytics'
-					? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
-					: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
+		state.addConfirm !== null
+			? '↑↓ choose · ⏎ continue · esc back'
+			: state.resetConfirm !== null
+				? '⏎ use one reset · esc keep it banked'
+				: state.tab === 'accounts'
+					? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''}${spillable ? ' · e spill' : ''} · tab next`
+					: state.tab === 'analytics'
+						? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
+						: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
 	const header = Box(
 		{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
 		Box(
@@ -1059,9 +1126,11 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	}
 	children.push(
 		state.tab === 'accounts'
-			? state.resetConfirm !== null
-				? resetConfirmBody(ctx, analytics.snapshot, state.resetConfirm)
-				: accountsBody(ctx, analytics.snapshot, rows, state.selected)
+			? state.addConfirm !== null
+				? addConfirmBody(ctx, state.addConfirm)
+				: state.resetConfirm !== null
+					? resetConfirmBody(ctx, analytics.snapshot, state.resetConfirm)
+					: accountsBody(ctx, analytics.snapshot, rows, state.selected)
 			: state.tab === 'analytics'
 				? analyticsBody(ctx, analytics, timeframe, state)
 				: settingsBody(
@@ -1120,6 +1189,7 @@ export async function runTuiDashboard(
 			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
 	const state: ViewState = {
+		addConfirm: null,
 		alert: options.alert ?? '',
 		analyticsView: 'chart',
 		modelScroll: 0,
@@ -1219,7 +1289,11 @@ export async function runTuiDashboard(
 			return
 		}
 		if (row.accountId === ADD_ROW) {
-			finish({ kind: 'login', provider: row.provider })
+			state.addConfirm = {
+				choice: cliPresent[row.provider] ? 'oauth' : 'apiKey',
+				provider: row.provider
+			}
+			paint()
 			return
 		}
 		if (needsLogin(row.accountId)) {
@@ -1417,6 +1491,32 @@ export async function runTuiDashboard(
 					state.alert = ''
 					paint()
 				}
+				if (state.addConfirm !== null) {
+					const confirm = state.addConfirm
+					if (key.ctrl && key.name === 'c') {
+						finish()
+					} else if (key.name === 'up' || key.name === 'down' || key.name === 'k' || key.name === 'j') {
+						state.addConfirm = {
+							...confirm,
+							choice: confirm.choice === 'oauth' ? 'apiKey' : 'oauth'
+						}
+						paint()
+					} else if (key.name === 'return') {
+						state.addConfirm = null
+						if (live) {
+							finish({
+								kind: confirm.choice === 'apiKey' ? 'loginApiKey' : 'login',
+								provider: confirm.provider
+							})
+						} else {
+							paint()
+						}
+					} else if (key.name === 'escape' || key.name === 'q') {
+						state.addConfirm = null
+						paint()
+					}
+					return
+				}
 				if (state.resetConfirm !== null) {
 					if (key.ctrl && key.name === 'c') {
 						finish()
@@ -1492,8 +1592,17 @@ export async function runTuiDashboard(
 				} else if (key.name === 'down' || key.name === 'j') {
 					state.selected = Math.max(0, Math.min(rows.length - 1, state.selected + 1))
 					paint()
-				} else if (key.name === 'return' && live) {
-					switchToSelected()
+				} else if (key.name === 'return') {
+					const row = rows[state.selected]
+					if (row !== undefined && row.accountId === ADD_ROW) {
+						state.addConfirm = {
+							choice: cliPresent[row.provider] ? 'oauth' : 'apiKey',
+							provider: row.provider
+						}
+						paint()
+					} else if (live) {
+						switchToSelected()
+					}
 				} else if (key.name === 'a' && live) {
 					const row = rows[state.selected]
 					if (row !== undefined && row.accountId !== ADD_ROW) {
