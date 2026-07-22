@@ -551,7 +551,7 @@ function centered(...children: ReturnType<typeof Text>[]) {
 }
 
 function throughputChart(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width: number) {
-	const height = Math.max(4, Math.min(10, ctx.rows - 15))
+	const height = Math.max(4, Math.min(10, ctx.rows - 18))
 	const body: ReturnType<typeof Box>[] = []
 	const axisTop = `${compactNumber(tokens.peakPerHour)}/h`
 	const gutter = Math.max(6, axisTop.length)
@@ -697,9 +697,11 @@ function chartView(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width
 		)
 	}
 	body.push(centered(...headline))
-	body.push(
-		centered(Text({ content: 'press m for the full pricing breakdown', fg: rgb(ctx.theme.faint) }))
-	)
+	if (ctx.rows >= 28) {
+		body.push(
+			centered(Text({ content: 'press m for the full pricing breakdown', fg: rgb(ctx.theme.faint) }))
+		)
+	}
 	return body
 }
 
