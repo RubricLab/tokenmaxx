@@ -146,7 +146,7 @@ function spendCell(
 	const money = moneyUsd(usage?.measuredSpendUsd ?? 0)
 	return {
 		bar: '┄'.repeat(BAR[tier]),
-		label: ' 1m ',
+		label: '31d ',
 		pad: ''.padEnd(6),
 		value: ` ${money.padStart(4)}`
 	}
