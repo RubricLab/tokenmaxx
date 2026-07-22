@@ -84,13 +84,13 @@ function parsePayload<Type>(row: JsonRow | null, schema: PersistedSchema<Type>):
 	if (row === null) {
 		return null
 	}
-
 	try {
 		return schema.parse(JSON.parse(row.payload))
-	} catch (error) {
-		throw new ApplicationError('CORRUPT_STATE', 'Stored state failed schema validation', {
-			cause: error
-		})
+	} catch {
+		process.stderr.write(
+			`[${new Date().toISOString()}] skipping a stored row this build cannot read (newer or older schema); it stays on disk untouched\n`
+		)
+		return null
 	}
 }
 
@@ -130,7 +130,10 @@ function migratePolicyDefaults(database: Database): void {
 		'SELECT provider, payload FROM provider_states'
 	)
 	for (const row of rows.all()) {
-		const state = parseRequiredPayload(row, ProviderStateSchema)
+		const state = parsePayload(row, ProviderStateSchema)
+		if (state === null) {
+			continue
+		}
 		const policy = { ...state.policy }
 		if (policy.maximumSnapshotAgeMilliseconds === 120_000) {
 			policy.maximumSnapshotAgeMilliseconds = 420_000
@@ -244,7 +247,10 @@ function migrate(database: Database): void {
 			'UPDATE accounts SET label = ?, external_account_id = ?, external_user_id = ? WHERE id = ?'
 		)
 		for (const row of migrationRows) {
-			const account = parseRequiredPayload(row, AccountSchema)
+			const account = parsePayload(row, AccountSchema)
+			if (account === null) {
+				continue
+			}
 			updateMigratedAccount.run(
 				account.label,
 				account.externalAccountId,
@@ -305,7 +311,10 @@ export function createStateStore(databasePath: string): StateStore {
 		return database
 			.query<JsonRow, (string | number)[]>(sql)
 			.all(...params)
-			.map(row => parseRequiredPayload(row, schema))
+			.flatMap(row => {
+				const parsed = parsePayload(row, schema)
+				return parsed === null ? [] : [parsed]
+			})
 	}
 
 	function listAccounts(provider?: ProviderId): Account[] {
@@ -426,10 +435,7 @@ export function createStateStore(databasePath: string): StateStore {
 			.query<JsonRow, [ProviderId]>('SELECT payload FROM provider_states WHERE provider = ?')
 			.get(parsedProvider)
 		const state = parsePayload(row, ProviderStateSchema)
-		if (state === null) {
-			throw new ApplicationError('STATE_NOT_FOUND', `Missing ${provider} provider state`)
-		}
-		return state
+		return state ?? initialProviderState(parsedProvider)
 	}
 
 	function saveProviderState(state: ProviderState): void {

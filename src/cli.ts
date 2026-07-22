@@ -365,9 +365,16 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 			}
 			await Bun.sleep(500)
 		}
+		const logPath = join(context.paths.runtime, 'daemon.log')
+		const lastError = await readFile(logPath, 'utf8')
+			.then(log => log.trim().split('\n').at(-1) ?? '')
+			.catch(() => '')
 		throw new ApplicationError(
 			'DAEMON_START_FAILED',
-			`Manager did not start; inspect ${join(context.paths.runtime, 'daemon.log')}`
+			`Manager did not start${lastError === '' ? '' : ` — ${lastError.replace(/^tokenmaxx: /, '')}`}\n` +
+				'Your clients still route through tokenmaxx while it is down.\n' +
+				'Escape hatch: tokenmaxx uninstall  (codex and claude talk straight to the providers again)\n' +
+				`Then check tokenmaxx doctor, or the full log: ${logPath}`
 		)
 	} finally {
 		closeSync(logDescriptor)
