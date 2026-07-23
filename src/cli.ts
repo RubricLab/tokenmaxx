@@ -33,7 +33,7 @@ import { proxyIdentity } from './proxy.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
 import { createMacOsKeychainVault } from './vault.ts'
-import { availableUpdate, VERSION } from './version.ts'
+import { availableUpdate, installedVersion, VERSION } from './version.ts'
 
 const DaemonLockSchema = z
 	.object({
@@ -925,6 +925,12 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						await handTerminalBack()
 						if (action === undefined) {
 							break
+						}
+						// A dashboard from before an update still runs the old code; never
+						// let it write config or credentials.
+						if ((await installedVersion()) !== VERSION) {
+							alert = 'this dashboard is out of date — quit and run tokenmaxx again'
+							continue
 						}
 						if (action.kind === 'relogin' || action.kind === 'login' || action.kind === 'loginApiKey') {
 							const cli = action.provider === 'openai' ? 'codex' : 'claude'

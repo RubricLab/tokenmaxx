@@ -20,7 +20,7 @@ import {
 	requestResetCredits,
 	requestSwitch
 } from '../ipc.ts'
-import { availableUpdate } from '../version.ts'
+import { availableUpdate, installedVersion, VERSION } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
 import {
 	brailleArea,
@@ -1075,6 +1075,7 @@ interface ViewState {
 	resetConfirm: ResetConfirm | null
 	updateAvailable: string | null
 	updateDismissed: boolean
+	staleVersion: string | null
 }
 
 type DashboardAction =
@@ -1144,7 +1145,21 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 			)
 		)
 	)
-	if (state.updateAvailable !== null && !state.updateDismissed) {
+	if (state.staleVersion !== null) {
+		children.push(
+			Box(
+				{ flexDirection: 'row', gap: 1, justifyContent: 'center', width: '100%' },
+				Text({
+					attributes: 1,
+					bg: rgb(ctx.theme.warn),
+					content: ` ⟳ v${state.staleVersion} is installed — this dashboard is out of date `,
+					fg: rgb(ctx.theme.bg)
+				}),
+				Text({ attributes: 1, bg: rgb(ctx.theme.selected), content: ' q ', fg: rgb(ctx.theme.fg) }),
+				Text({ content: 'quit, then run tokenmaxx', fg: rgb(ctx.theme.dim) })
+			)
+		)
+	} else if (state.updateAvailable !== null && !state.updateDismissed) {
 		children.push(
 			Box(
 				{ flexDirection: 'row', gap: 1, justifyContent: 'center', width: '100%' },
@@ -1237,6 +1252,7 @@ export async function runTuiDashboard(
 		resetConfirm: null,
 		selected: 0,
 		settingsSelected: 0,
+		staleVersion: live ? null : (process.env.TOKENMAXX_FAKE_STALE ?? null),
 		tab: 'accounts',
 		timeframeIndex: 2,
 		updateAvailable: live ? null : (process.env.TOKENMAXX_FAKE_UPDATE ?? null),
@@ -1486,7 +1502,15 @@ export async function runTuiDashboard(
 	await new Promise<void>(resolve => {
 		const tick = 250
 		const interval = live
-			? setInterval(() => void reload(false).catch(() => undefined), 2_000)
+			? setInterval(() => {
+					void reload(false).catch(() => undefined)
+					void installedVersion().then(version => {
+						if (version !== VERSION && state.staleVersion !== version) {
+							state.staleVersion = version
+							paint()
+						}
+					})
+				}, 2_000)
 			: fixture.timewarp > 0
 				? setInterval(() => {
 						simulatedNow += tick * fixture.timewarp
@@ -1572,6 +1596,7 @@ export async function runTuiDashboard(
 					finish()
 				} else if (
 					key.name === 'u' &&
+					state.staleVersion === null &&
 					state.updateAvailable !== null &&
 					!state.updateDismissed &&
 					live
