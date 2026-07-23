@@ -1,3 +1,4 @@
+- [2026-07-23] claude routing keeps the native login, fixes #15
 - [2026-07-22] session reset time on analytics, fixes #9
 - [2026-07-22] logout
 - [2026-07-22] api keys and extra usage, fixes #10
