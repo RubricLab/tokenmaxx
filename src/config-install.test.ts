@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { installCodexConfig, installStatus, uninstallCodexConfig } from './config-install.ts'
+import {
+	installClaudeConfig,
+	installCodexConfig,
+	installStatus,
+	uninstallClaudeConfig,
+	uninstallCodexConfig
+} from './config-install.ts'
 import { applicationPaths } from './paths.ts'
 
 const legacyBrokenConfig = `model = "gpt-5.6-sol"
@@ -107,5 +113,87 @@ describe('installCodexConfig', () => {
 		expect(parsed.model).toBe('gpt-5.6-sol')
 		expect(parsed.service_tier).toBe('fast')
 		expect(parsed.model_provider).toBe('tokenmaxx')
+	})
+})
+
+interface ClaudeSettingsFile {
+	env?: Record<string, string>
+	[key: string]: unknown
+}
+
+async function writeClaudeSettings(settings: ClaudeSettingsFile): Promise<void> {
+	await writeFile(
+		join(process.env.CLAUDE_CONFIG_DIR ?? '', 'settings.json'),
+		JSON.stringify(settings, null, 2)
+	)
+}
+
+async function readClaudeSettings(): Promise<ClaudeSettingsFile> {
+	return JSON.parse(
+		await readFile(join(process.env.CLAUDE_CONFIG_DIR ?? '', 'settings.json'), 'utf8')
+	) as ClaudeSettingsFile
+}
+
+describe('installClaudeConfig', () => {
+	test('sets only the base URL so the native claude.ai login stays active', async () => {
+		await writeClaudeSettings({ model: 'fable[1m]' })
+		await installClaudeConfig(paths())
+		const settings = await readClaudeSettings()
+		expect(settings.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8459/anthropic')
+		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+		expect(settings.model).toBe('fable[1m]')
+	})
+
+	test('an earlier install left the dummy token behind; reinstall clears it', async () => {
+		await writeClaudeSettings({
+			env: {
+				ANTHROPIC_AUTH_TOKEN: 'managed-by-tokenmaxx',
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:8459/anthropic',
+				OTHER: 'kept'
+			}
+		})
+		await installClaudeConfig(paths())
+		const settings = await readClaudeSettings()
+		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+		expect(settings.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8459/anthropic')
+		expect(settings.env?.OTHER).toBe('kept')
+	})
+
+	test('a token the user set themselves is not touched', async () => {
+		await writeClaudeSettings({ env: { ANTHROPIC_AUTH_TOKEN: 'users-own-token' } })
+		await installClaudeConfig(paths())
+		const settings = await readClaudeSettings()
+		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBe('users-own-token')
+		expect(settings.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8459/anthropic')
+	})
+
+	test('installStatus reports claude routing after install', async () => {
+		await installClaudeConfig(paths())
+		expect((await installStatus()).claudeRouted).toBe(true)
+	})
+
+	test('uninstall removes the routing but keeps a token the user set themselves', async () => {
+		await writeClaudeSettings({
+			env: { ANTHROPIC_AUTH_TOKEN: 'users-own-token' },
+			model: 'fable[1m]'
+		})
+		await installClaudeConfig(paths())
+		await uninstallClaudeConfig()
+		const settings = await readClaudeSettings()
+		expect(settings.env?.ANTHROPIC_BASE_URL).toBeUndefined()
+		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBe('users-own-token')
+		expect(settings.model).toBe('fable[1m]')
+	})
+
+	test('uninstall after a legacy dummy-token install leaves no env behind', async () => {
+		await writeClaudeSettings({
+			env: {
+				ANTHROPIC_AUTH_TOKEN: 'managed-by-tokenmaxx',
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:8459/anthropic'
+			}
+		})
+		await uninstallClaudeConfig()
+		const settings = await readClaudeSettings()
+		expect(settings.env).toBeUndefined()
 	})
 })

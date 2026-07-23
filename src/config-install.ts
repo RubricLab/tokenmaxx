@@ -114,10 +114,11 @@ export async function installClaudeConfig(paths: ApplicationPaths): Promise<stri
 			settings = {}
 		}
 	}
-	settings.env = {
-		...settings.env,
-		ANTHROPIC_AUTH_TOKEN: dummyAuthToken,
-		ANTHROPIC_BASE_URL: proxyBaseUrl(paths, 'anthropic')
+	// Base URL only: any set ANTHROPIC_AUTH_TOKEN switches Claude Code off its
+	// claude.ai login, losing connectors and MCP; the proxy injects credentials itself.
+	settings.env = { ...settings.env, ANTHROPIC_BASE_URL: proxyBaseUrl(paths, 'anthropic') }
+	if (legacyDummyTokens.includes(settings.env.ANTHROPIC_AUTH_TOKEN ?? '')) {
+		delete settings.env.ANTHROPIC_AUTH_TOKEN
 	}
 	await mkdir(dirname(path), { recursive: true })
 	await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 })
@@ -145,6 +146,9 @@ export async function uninstallClaudeConfig(): Promise<string | null> {
 		(ANTHROPIC_BASE_URL?.includes('127.0.0.1') ?? false)
 	if (!managed) {
 		return null
+	}
+	if (ANTHROPIC_AUTH_TOKEN !== undefined && !legacyDummyTokens.includes(ANTHROPIC_AUTH_TOKEN)) {
+		rest.ANTHROPIC_AUTH_TOKEN = ANTHROPIC_AUTH_TOKEN
 	}
 	if (Object.keys(rest).length === 0) {
 		settings.env = undefined
