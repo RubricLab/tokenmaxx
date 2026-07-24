@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { ApplicationPaths } from './paths.ts'
 import { proxyBaseUrl } from './paths.ts'
+import { VERSION } from './version.ts'
 
 const providerName = 'tokenmaxx'
 const topBeginMarker = '# >>> tokenmaxx managed (do not edit) >>>'
@@ -194,4 +195,27 @@ export async function installStatus(): Promise<InstallStatus> {
 		claudeRouted = false
 	}
 	return { claudeRouted, codexRouted, codexStale }
+}
+
+// Configs written by an older version stay stale after an update (#17): re-apply
+// install for whatever is currently routed, once per version change. Never adds
+// routing — a harness the user uninstalled or never installed stays untouched.
+export async function healInstalledConfigs(paths: ApplicationPaths): Promise<string[]> {
+	const stampPath = join(paths.root, 'healed-version')
+	if ((await readFileOrEmpty(stampPath)).trim() === VERSION) {
+		return []
+	}
+	const { claudeRouted, codexRouted } = await installStatus()
+	const healed: string[] = []
+	if (codexRouted) {
+		await installCodexConfig(paths)
+		healed.push('codex')
+	}
+	if (claudeRouted) {
+		await installClaudeConfig(paths)
+		healed.push('claude')
+	}
+	await mkdir(paths.root, { recursive: true })
+	await writeFile(stampPath, `${VERSION}\n`)
+	return healed
 }
