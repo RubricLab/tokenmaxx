@@ -85,6 +85,8 @@ tokenmaxx list | status | refresh | doctor
 
 Env: `TOKENMAXX_HOME`, `TOKENMAXX_PROXY_PORT`, `TOKENMAXX_THEME`.
 
+The dashboard asks your terminal for its colors (OSC 4/10/11) and uses them, so it matches the theme you already run. Terminals that don't answer get a built-in dark or light palette instead. Settings → Display switches between `auto`, `dark` and `light` and stores the choice in `~/.tokenmaxx/preferences.json`. `TOKENMAXX_THEME` pins any of the three for one run and beats the stored choice.
+
 ## Intended use
 
 tokenmaxx is for one person with accounts they pay for themselves. No account gets bigger limits, no limit gets bypassed, and your credentials stay between your Keychain and the provider. Don't share accounts, don't pool them, don't resell access. Provider terms change, and it's on you to check that yours allow this kind of switching. The software is provided as is, with no warranty.

@@ -45,11 +45,14 @@ const lightTheme: Theme = {
 export type ThemeName = 'dark' | 'light'
 export const themes: Record<ThemeName, Theme> = { dark: darkTheme, light: lightTheme }
 
+export type ThemePreference = 'auto' | ThemeName
+
+export function themeOverride(environment: NodeJS.ProcessEnv): ThemePreference | null {
+	const value = environment.TOKENMAXX_THEME?.trim().toLowerCase()
+	return value === 'light' || value === 'dark' || value === 'auto' ? value : null
+}
+
 export function detectThemeName(environment: NodeJS.ProcessEnv): ThemeName {
-	const override = environment.TOKENMAXX_THEME?.toLowerCase()
-	if (override === 'light' || override === 'dark') {
-		return override
-	}
 	const colorFgBg = environment.COLORFGBG
 	if (colorFgBg !== undefined) {
 		const background = Number(colorFgBg.split(';').pop())
@@ -58,6 +61,142 @@ export function detectThemeName(environment: NodeJS.ProcessEnv): ThemeName {
 		}
 	}
 	return 'dark'
+}
+
+export interface TerminalPaletteColors {
+	palette: readonly (string | null)[]
+	defaultForeground: string | null
+	defaultBackground: string | null
+}
+
+type Rgb = readonly [number, number, number]
+
+// Plenty of terminal themes put their mid-tones almost on top of the background, so derived colors
+// get pushed back toward the foreground until they clear these ratios or the text disappears.
+const MIN_BASE_CONTRAST = 2.5
+const MIN_DIM_CONTRAST = 3.5
+const MIN_FAINT_CONTRAST = 2.2
+const MIN_SEMANTIC_CONTRAST = 2.6
+const CONTRAST_STEP = 0.08
+const BLEND = { border: 0.22, dim: 0.65, faint: 0.4, panel: 0.05, selected: 0.12 } as const
+// Slots 8-15 are a brighter take on 0-7 only by convention; Solarized reuses them as greys. Trust a
+// bright slot only while it keeps its base hue, or `good` comes out grey.
+const GREY_CHROMA = 0.1
+const MAX_HUE_DRIFT = 45
+
+function parseHex(value: string | null | undefined): Rgb | null {
+	const match = value?.trim().match(/^#?([0-9a-f]{6})$/i)
+	if (match?.[1] === undefined) {
+		return null
+	}
+	const packed = Number.parseInt(match[1], 16)
+	return [(packed >> 16) & 0xff, (packed >> 8) & 0xff, packed & 0xff]
+}
+
+function toHex([red, green, blue]: Rgb): string {
+	return `#${((red << 16) | (green << 8) | blue).toString(16).padStart(6, '0')}`
+}
+
+function mix(from: Rgb, to: Rgb, weight: number): Rgb {
+	const at = (index: 0 | 1 | 2) => Math.round(from[index] + (to[index] - from[index]) * weight)
+	return [at(0), at(1), at(2)]
+}
+
+function luminance([red, green, blue]: Rgb): number {
+	const channel = (value: number) => {
+		const ratio = value / 255
+		return ratio <= 0.04045 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4
+	}
+	return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+}
+
+function contrastRatio(left: Rgb, right: Rgb): number {
+	const a = luminance(left)
+	const b = luminance(right)
+	return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+}
+
+function chroma([red, green, blue]: Rgb): number {
+	return (Math.max(red, green, blue) - Math.min(red, green, blue)) / 255
+}
+
+function hue(color: Rgb): number {
+	const [red, green, blue] = color
+	const span = chroma(color) * 255
+	if (span === 0) {
+		return 0
+	}
+	const max = Math.max(red, green, blue)
+	const degrees =
+		max === red
+			? ((green - blue) / span) % 6
+			: max === green
+				? (blue - red) / span + 2
+				: (red - green) / span + 4
+	return (degrees * 60 + 360) % 360
+}
+
+function hueDistance(left: Rgb, right: Rgb): number {
+	const delta = Math.abs(hue(left) - hue(right))
+	return Math.min(delta, 360 - delta)
+}
+
+function keepsMeaning(base: Rgb, bright: Rgb): boolean {
+	if (chroma(base) < GREY_CHROMA) {
+		return true
+	}
+	return chroma(bright) >= GREY_CHROMA && hueDistance(base, bright) <= MAX_HUE_DRIFT
+}
+
+function ensureContrast(color: Rgb, background: Rgb, foreground: Rgb, minimum: number): Rgb {
+	let candidate = color
+	for (let weight = CONTRAST_STEP; weight <= 1; weight += CONTRAST_STEP) {
+		if (contrastRatio(candidate, background) >= minimum) {
+			return candidate
+		}
+		candidate = mix(color, foreground, weight)
+	}
+	return foreground
+}
+
+export function themeFromTerminal(colors: TerminalPaletteColors | null | undefined): Theme | null {
+	const bg = parseHex(colors?.defaultBackground)
+	const fg = parseHex(colors?.defaultForeground)
+	if (bg === null || fg === null || contrastRatio(fg, bg) < MIN_BASE_CONTRAST) {
+		return null
+	}
+	const builtIn = themes[luminance(bg) > 0.5 ? 'light' : 'dark']
+	const blend = (weight: number) => mix(bg, fg, weight)
+	const semantic = (normalIndex: number, brightIndex: number, fallback: Rgb): string => {
+		const normal = parseHex(colors?.palette[normalIndex])
+		const bright = parseHex(colors?.palette[brightIndex])
+		const candidates =
+			normal === null
+				? bright === null
+					? [fallback]
+					: [bright]
+				: bright !== null && keepsMeaning(normal, bright)
+					? [normal, bright]
+					: [normal]
+		const [best = fallback] = candidates.sort(
+			(left, right) => contrastRatio(right, bg) - contrastRatio(left, bg)
+		)
+		return toHex(ensureContrast(best, bg, fg, MIN_SEMANTIC_CONTRAST))
+	}
+	const builtInColor = (value: string): Rgb => parseHex(value) ?? fg
+	return {
+		accent: semantic(4, 12, builtInColor(builtIn.accent)),
+		bad: semantic(1, 9, builtInColor(builtIn.bad)),
+		bg: toHex(bg),
+		border: toHex(blend(BLEND.border)),
+		dim: toHex(ensureContrast(blend(BLEND.dim), bg, fg, MIN_DIM_CONTRAST)),
+		faint: toHex(ensureContrast(blend(BLEND.faint), bg, fg, MIN_FAINT_CONTRAST)),
+		fg: toHex(fg),
+		good: semantic(2, 10, builtInColor(builtIn.good)),
+		panel: toHex(blend(BLEND.panel)),
+		selected: toHex(blend(BLEND.selected)),
+		warn: semantic(3, 11, builtInColor(builtIn.warn))
+	}
 }
 
 export function pressureColor(theme: Theme, usedPercent: number | null): string {

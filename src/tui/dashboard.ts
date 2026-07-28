@@ -20,6 +20,7 @@ import {
 	requestResetCredits,
 	requestSwitch
 } from '../ipc.ts'
+import { readPreferences, writePreferences } from '../preferences.ts'
 import { availableUpdate, installedVersion, VERSION } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
 import {
@@ -37,8 +38,11 @@ import {
 	shortWindow,
 	type Theme,
 	type ThemeName,
+	type ThemePreference,
 	TIMEFRAMES,
 	type Timeframe,
+	themeFromTerminal,
+	themeOverride,
 	themes,
 	throughputColumns
 } from './format.ts'
@@ -85,6 +89,9 @@ interface Ctx {
 	routing: Record<ProviderId, boolean>
 	cliPresent: Record<ProviderId, boolean>
 	switchFlagMs: number
+	themePreference: ThemePreference
+	themePinnedByEnvironment: boolean
+	themeFromTerminalActive: boolean
 }
 
 function labelWidth(ctx: Ctx): number {
@@ -762,12 +769,17 @@ function dwellLabel(milliseconds: number): string {
 	return minutes === 0 ? 'off' : `${minutes}m`
 }
 
-interface SettingRow {
-	provider: ProviderId
-	key: 'routing' | 'auto' | 'threshold' | 'dwell' | 'window'
-	windowId?: string
-	windowLabel?: string
-}
+type SettingRow =
+	| {
+			scope: 'provider'
+			provider: ProviderId
+			key: 'routing' | 'auto' | 'threshold' | 'dwell' | 'window'
+			windowId?: string
+			windowLabel?: string
+	  }
+	| { scope: 'display'; key: 'theme' }
+
+const THEME_CYCLE: readonly ThemePreference[] = ['auto', 'dark', 'light']
 
 function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): UsageWindow[] {
 	const seen = new Map<string, UsageWindow>()
@@ -785,18 +797,49 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 }
 
 function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
-	return providerOrder.flatMap(provider => [
-		{ key: 'routing' as const, provider },
-		{ key: 'auto' as const, provider },
-		{ key: 'threshold' as const, provider },
-		{ key: 'dwell' as const, provider },
-		...providerWindows(snapshot, provider).map(window => ({
-			key: 'window' as const,
-			provider,
-			windowId: window.id,
-			windowLabel: window.label
-		}))
-	])
+	return [
+		...providerOrder.flatMap(provider => [
+			{ key: 'routing' as const, provider, scope: 'provider' as const },
+			{ key: 'auto' as const, provider, scope: 'provider' as const },
+			{ key: 'threshold' as const, provider, scope: 'provider' as const },
+			{ key: 'dwell' as const, provider, scope: 'provider' as const },
+			...providerWindows(snapshot, provider).map(window => ({
+				key: 'window' as const,
+				provider,
+				scope: 'provider' as const,
+				windowId: window.id,
+				windowLabel: window.label
+			}))
+		]),
+		{ key: 'theme' as const, scope: 'display' as const }
+	]
+}
+
+type ProviderSettingRow = Extract<SettingRow, { scope: 'provider' }>
+
+interface SettingLine {
+	isSelected: boolean
+	label: string
+	value: string
+	valueColor: string
+	hint: string
+}
+
+function settingLine(ctx: Ctx, line: SettingLine) {
+	return Box(
+		{
+			backgroundColor: line.isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
+			flexDirection: 'row',
+			width: '100%'
+		},
+		Text({ content: line.isSelected ? ' ▸ ' : '   ', fg: rgb(ctx.theme.accent) }),
+		Text({
+			content: pad(line.label, 12),
+			fg: rgb(line.isSelected ? ctx.theme.fg : ctx.theme.dim)
+		}),
+		Text({ attributes: 1, content: pad(line.value, 7), fg: rgb(line.valueColor) }),
+		Text({ content: pad(line.hint, 40), fg: rgb(ctx.theme.faint) })
+	)
 }
 
 function settingsPanel(
@@ -808,7 +851,12 @@ function settingsPanel(
 ) {
 	const state = snapshot.providers.find(s => s.provider === provider)
 	const policy = state?.policy
-	const rows = allRows.map((row, index) => ({ index, row })).filter(e => e.row.provider === provider)
+	const rows = allRows
+		.map((row, index) => ({ index, row }))
+		.filter(
+			(entry): entry is { index: number; row: ProviderSettingRow } =>
+				entry.row.scope === 'provider' && entry.row.provider === provider
+		)
 	const lines = rows.map(entry => {
 		const { row } = entry
 		const isSelected = entry.index === selected
@@ -865,17 +913,7 @@ function settingsPanel(
 						? ctx.theme.good
 						: ctx.theme.dim
 					: ctx.theme.fg
-		return Box(
-			{
-				backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
-				flexDirection: 'row',
-				width: '100%'
-			},
-			Text({ content: isSelected ? ' ▸ ' : '   ', fg: rgb(ctx.theme.accent) }),
-			Text({ content: pad(label, 12), fg: rgb(isSelected ? ctx.theme.fg : ctx.theme.dim) }),
-			Text({ attributes: 1, content: pad(value, 7), fg: rgb(valueColor) }),
-			Text({ content: pad(hint, 40), fg: rgb(ctx.theme.faint) })
-		)
+		return settingLine(ctx, { hint, isSelected, label, value, valueColor })
 	})
 	const routed = ctx.routing[provider]
 	const auto = policy?.enabled ? `⟳ auto ${policy.thresholdPercent}%` : 'auto off'
@@ -896,12 +934,41 @@ function settingsPanel(
 	)
 }
 
+function displayPanel(ctx: Ctx, allRows: SettingRow[], selected: number) {
+	const index = allRows.findIndex(row => row.scope === 'display' && row.key === 'theme')
+	const pinned = ctx.themePinnedByEnvironment
+	return Box(
+		{
+			border: true,
+			borderColor: rgb(ctx.theme.border),
+			borderStyle: 'rounded',
+			flexDirection: 'column',
+			flexShrink: 0,
+			title: ' Display ',
+			titleColor: rgb(ctx.theme.dim),
+			width: '100%'
+		},
+		settingLine(ctx, {
+			hint: pinned
+				? 'pinned by TOKENMAXX_THEME'
+				: ctx.themeFromTerminalActive
+					? 'following your terminal colors'
+					: 'auto follows your terminal colors',
+			isSelected: index === selected,
+			label: 'theme',
+			value: ctx.themePreference,
+			valueColor: pinned ? ctx.theme.dim : ctx.theme.fg
+		})
+	)
+}
+
 function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[], selected: number) {
 	return column(
 		ctx,
 		[
 			settingsPanel(ctx, snapshot, rows, 'openai', selected),
-			settingsPanel(ctx, snapshot, rows, 'anthropic', selected)
+			settingsPanel(ctx, snapshot, rows, 'anthropic', selected),
+			displayPanel(ctx, rows, selected)
 		],
 		78
 	)
@@ -1235,8 +1302,21 @@ export async function runTuiDashboard(
 		: { anthropic: true, openai: true }
 	const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
 	await renderer.waitForThemeMode(400).catch(() => null)
+	const themeEnvironmentOverride = themeOverride(process.env)
 	const envFallback: ThemeName = detectThemeName(process.env)
-	const currentTheme = (): Theme => themes[live ? (renderer.themeMode ?? envFallback) : envFallback]
+	// Fixtures pin a built-in palette so recorded screenshots do not drift with whatever terminal
+	// renders them. TOKENMAXX_THEME=auto opts a fixture run back into terminal colors.
+	let preference: ThemePreference =
+		themeEnvironmentOverride ?? (live ? (await readPreferences()).theme : envFallback)
+	// Fetched even when a built-in palette is pinned, so switching back to auto needs no restart.
+	const terminalTheme =
+		live || preference === 'auto'
+			? themeFromTerminal(await renderer.getPalette({ size: 16, timeout: 400 }).catch(() => null))
+			: null
+	const currentTheme = (): Theme =>
+		preference === 'auto'
+			? (terminalTheme ?? themes[live ? (renderer.themeMode ?? envFallback) : envFallback])
+			: themes[preference]
 	let simulatedNow = fixture?.now ?? Date.now()
 	let analytics =
 		fixture === undefined
@@ -1286,6 +1366,9 @@ export async function runTuiDashboard(
 					rows: process.stdout.rows ?? 24,
 					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 24 * 60_000 : 120_000,
 					theme: currentTheme(),
+					themeFromTerminalActive: preference === 'auto' && terminalTheme !== null,
+					themePinnedByEnvironment: themeEnvironmentOverride !== null,
+					themePreference: preference,
 					tier: tierFor(columns)
 				},
 				analytics,
@@ -1470,6 +1553,22 @@ export async function runTuiDashboard(
 	const adjustSetting = (delta: number) => {
 		const row = buildSettingRows(analytics.snapshot)[state.settingsSelected]
 		if (row === undefined) {
+			return
+		}
+		if (row.scope === 'display') {
+			if (themeEnvironmentOverride !== null) {
+				state.note = 'theme is pinned by TOKENMAXX_THEME'
+				paint()
+				return
+			}
+			const position = THEME_CYCLE.indexOf(preference)
+			preference = THEME_CYCLE[(position + delta + THEME_CYCLE.length) % THEME_CYCLE.length] ?? 'auto'
+			state.note = `theme ${preference}`
+			paint()
+			void writePreferences({ theme: preference }).catch(() => {
+				state.note = 'theme not saved; check ~/.tokenmaxx is writable'
+				paint()
+			})
 			return
 		}
 		const policy = currentPolicy(row.provider)
