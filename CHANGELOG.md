@@ -3,6 +3,7 @@
 - [2026-08-18] settings shows pi
 - [2026-08-18] tokenmaxx install pi routes pi through the proxy
 - [2026-08-18] terminal themes prefer the bright ansi slots when they stay readable
+- [2026-08-06] claude login reads the shared keychain entry when the CLI doesn't namespace the config dir
 - [2026-07-28] the dashboard follows the terminal's own colors
 - [2026-07-23] an update re-applies routed configs on the next daemon start, fixes #17
 - [2026-07-23] an out-of-date dashboard says restart and refuses changes

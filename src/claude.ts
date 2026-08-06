@@ -119,10 +119,32 @@ function currentUser(): string {
 	return process.env.USER ?? userInfo().username
 }
 
+// The shared, un-namespaced service the Claude CLI writes on macOS. Current
+// Claude Code versions store the login here regardless of CLAUDE_CONFIG_DIR.
+const sharedKeychainService = 'Claude Code-credentials'
+
+// Older Claude CLIs namespaced the Keychain service by CLAUDE_CONFIG_DIR; this
+// reproduces that name so an isolated profile can still be read on those builds.
 function cliKeychainService(profilePath: string): string {
 	const canonical = normalize(resolve(profilePath)).normalize('NFC')
 	const digest = new Bun.CryptoHasher('sha256').update(canonical).digest('hex')
 	return `Claude Code-credentials-${digest.slice(0, 8)}`
+}
+
+async function readKeychainCredential(
+	dependencies: ClaudeLoginDependencies,
+	service: string
+): Promise<string | null> {
+	const keychain = await dependencies.captured([
+		'security',
+		'find-generic-password',
+		'-a',
+		currentUser(),
+		'-s',
+		service,
+		'-w'
+	])
+	return keychain.exitCode === 0 ? decodeSecurityOutput(keychain.stdout) : null
 }
 
 function decodeSecurityOutput(output: string): string {
@@ -140,19 +162,13 @@ async function importCliCredential(
 	profilePath: string,
 	dependencies: ClaudeLoginDependencies
 ): Promise<ClaudeOauth> {
-	const keychain = await dependencies.captured([
-		'security',
-		'find-generic-password',
-		'-a',
-		currentUser(),
-		'-s',
-		cliKeychainService(profilePath),
-		'-w'
-	])
+	// Read whichever store the CLI actually wrote: the config-dir-namespaced
+	// service (old CLIs), then the shared service (current CLIs, which ignore
+	// CLAUDE_CONFIG_DIR for Keychain storage), then the on-disk fallback.
 	const serialized =
-		keychain.exitCode === 0
-			? decodeSecurityOutput(keychain.stdout)
-			: await readFile(join(profilePath, '.credentials.json'), 'utf8').catch(() => null)
+		(await readKeychainCredential(dependencies, cliKeychainService(profilePath))) ??
+		(await readKeychainCredential(dependencies, sharedKeychainService)) ??
+		(await readFile(join(profilePath, '.credentials.json'), 'utf8').catch(() => null))
 	if (serialized === null) {
 		throw new ApplicationError(
 			'CREDENTIAL_MISSING',
@@ -181,6 +197,9 @@ export async function removeClaudeProfile(
 	profilePath: string,
 	dependencies: ClaudeLoginDependencies = defaultClaudeLoginDependencies()
 ): Promise<void> {
+	// Only delete the namespaced service tokenmaxx may have created. Never touch
+	// the shared `Claude Code-credentials` entry: on current CLIs that is the
+	// user's own Claude Code login, which the isolated `claude auth login` wrote.
 	await dependencies.captured([
 		'security',
 		'delete-generic-password',
