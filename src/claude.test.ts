@@ -67,6 +67,31 @@ describe('registerClaudeAccount', () => {
 		expect(account.externalAccountId).toBe('account-uuid')
 		expect(vault.items.get(account.secretReference ?? '')).toBe(JSON.stringify(stored))
 	})
+
+	test('falls back to the shared keychain service when the CLI does not namespace by config dir', async () => {
+		const vault = memoryVault({})
+		const account = await registerClaudeAccount({
+			dependencies: {
+				captured: async command => {
+					if (command[1] !== 'find-generic-password') {
+						return { exitCode: 0, stdout: '' }
+					}
+					// Current Claude Code writes the shared, un-namespaced service and
+					// leaves no config-dir-namespaced entry; the namespaced lookup misses.
+					const service = command[command.indexOf('-s') + 1]
+					return service === 'Claude Code-credentials'
+						? { exitCode: 0, stdout: JSON.stringify({ claudeAiOauth: stored }) }
+						: { exitCode: 44, stdout: '' }
+				},
+				interactive: async () => ({ exitCode: 0, stderr: '' })
+			},
+			fetchImplementation: async () =>
+				Response.json({ account: { email: 'Lennard@Example.com', uuid: 'account-uuid' } }),
+			vault
+		})
+		expect(account.externalAccountId).toBe('account-uuid')
+		expect(vault.items.get(account.secretReference ?? '')).toBe(JSON.stringify(stored))
+	})
 })
 
 describe('refreshClaudeCredential', () => {
