@@ -1,0 +1,46 @@
+{
+	"author": "Quotanaut contributors",
+	"bin": {
+		"quotanaut": "dist/launcher.cjs"
+	},
+	"dependencies": {
+		"zod": "^4.0.0"
+	},
+	"description": "Live Codex account switching and automatic quota rotation for Linux.",
+	"devDependencies": {
+		"@biomejs/biome": "^2.0.0",
+		"@types/bun": "^1.2.0",
+		"typescript": "^5.8.0"
+	},
+	"engines": {
+		"bun": ">=1.2.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"keywords": [
+		"cli",
+		"codex",
+		"linux",
+		"proxy",
+		"quota",
+		"rate-limits",
+		"switching"
+	],
+	"license": "SEE LICENSE IN LICENSE",
+	"main": "dist/index.js",
+	"name": "quotanaut",
+	"preferGlobal": true,
+	"scripts": {
+		"build": "bun run clean && bun build ./src/index.ts --target bun --outdir dist && cp bin/launcher.cjs dist/launcher.cjs && chmod 755 dist/index.js dist/launcher.cjs",
+		"check": "bun run typecheck && bun x biome check . && bun test",
+		"clean": "rm -rf dist",
+		"dev": "bun run src/index.ts",
+		"format": "bun x biome check --write .",
+		"typecheck": "tsc --noEmit"
+	},
+	"type": "module",
+	"version": "0.1.0"
+}
