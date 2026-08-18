@@ -1,3 +1,4 @@
+- [2026-08-18] settings shows pi
 - [2026-08-18] tokenmaxx install pi routes pi through the proxy
 - [2026-08-18] terminal themes prefer the bright ansi slots when they stay readable
 - [2026-07-28] the dashboard follows the terminal's own colors

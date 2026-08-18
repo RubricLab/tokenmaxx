@@ -1,4 +1,5 @@
 import { Box, createCliRenderer, parseColor, type RGBA, Text } from '@opentui/core'
+import { installPiConfig, type PiStatus, piStatus, uninstallPiConfig } from '../config-install.ts'
 import type {
 	Account,
 	AnalyticsSnapshot,
@@ -20,6 +21,7 @@ import {
 	requestResetCredits,
 	requestSwitch
 } from '../ipc.ts'
+import { applicationPaths } from '../paths.ts'
 import { readPreferences, writePreferences } from '../preferences.ts'
 import { availableUpdate, installedVersion, VERSION } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
@@ -93,6 +95,7 @@ interface Ctx {
 	themePreference: ThemePreference
 	themePinnedByEnvironment: boolean
 	themeFromTerminalActive: boolean
+	pi: PiStatus
 }
 
 function labelWidth(ctx: Ctx): number {
@@ -767,6 +770,7 @@ type SettingRow =
 			windowLabel?: string
 	  }
 	| { scope: 'display'; key: 'theme' }
+	| { scope: 'harness'; key: 'pi' }
 
 const THEME_CYCLE: readonly ThemePreference[] = ['auto', 'dark', 'light']
 
@@ -800,7 +804,8 @@ function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
 				windowLabel: window.label
 			}))
 		]),
-		{ key: 'theme' as const, scope: 'display' as const }
+		{ key: 'theme' as const, scope: 'display' as const },
+		{ key: 'pi' as const, scope: 'harness' as const }
 	]
 }
 
@@ -951,13 +956,42 @@ function displayPanel(ctx: Ctx, allRows: SettingRow[], selected: number) {
 	)
 }
 
+function harnessPanel(ctx: Ctx, allRows: SettingRow[], selected: number) {
+	const index = allRows.findIndex(row => row.scope === 'harness' && row.key === 'pi')
+	const { present, routed } = ctx.pi
+	return Box(
+		{
+			border: true,
+			borderColor: rgb(ctx.theme.border),
+			borderStyle: 'rounded',
+			flexDirection: 'column',
+			flexShrink: 0,
+			title: ' Harnesses ',
+			titleColor: rgb(ctx.theme.dim),
+			width: '100%'
+		},
+		settingLine(ctx, {
+			hint: routed
+				? 'requests route through tokenmaxx'
+				: present
+					? '⏎ routes it through tokenmaxx'
+					: 'not installed',
+			isSelected: index === selected,
+			label: 'pi',
+			value: routed ? 'on' : present ? 'off' : '—',
+			valueColor: routed ? ctx.theme.good : present ? ctx.theme.warn : ctx.theme.faint
+		})
+	)
+}
+
 function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[], selected: number) {
 	return column(
 		ctx,
 		[
 			settingsPanel(ctx, snapshot, rows, 'openai', selected),
 			settingsPanel(ctx, snapshot, rows, 'anthropic', selected),
-			displayPanel(ctx, rows, selected)
+			displayPanel(ctx, rows, selected),
+			harnessPanel(ctx, rows, selected)
 		],
 		78
 	)
@@ -1312,6 +1346,7 @@ export async function runTuiDashboard(
 			? await readAnalytics(socketPath)
 			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
+	let pi: PiStatus = live ? await piStatus() : { present: true, routed: true }
 	const state: ViewState = {
 		addConfirm: null,
 		alert: options.alert ?? '',
@@ -1351,6 +1386,7 @@ export async function runTuiDashboard(
 					cliPresent,
 					columns,
 					now: live ? Date.now() : simulatedNow,
+					pi,
 					routing: options.routing,
 					rows: process.stdout.rows ?? 24,
 					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 24 * 60_000 : 120_000,
@@ -1399,6 +1435,7 @@ export async function runTuiDashboard(
 			}
 			analytics = await readAnalytics(socketPath)
 			rows = orderedRows(analytics.snapshot)
+			pi = await piStatus()
 			clampSelection()
 		})
 
@@ -1542,6 +1579,30 @@ export async function runTuiDashboard(
 	const adjustSetting = (delta: number) => {
 		const row = buildSettingRows(analytics.snapshot)[state.settingsSelected]
 		if (row === undefined) {
+			return
+		}
+		if (row.scope === 'harness') {
+			if (!pi.present) {
+				state.note = 'pi is not installed'
+				paint()
+				return
+			}
+			if (!live) {
+				pi = { ...pi, routed: !pi.routed }
+				paint()
+				return
+			}
+			void withBusy(pi.routed ? 'unrouting pi…' : 'routing pi…', async () => {
+				if (pi.routed) {
+					await uninstallPiConfig()
+				} else {
+					const result = await installPiConfig(applicationPaths())
+					if (result.manual !== null) {
+						throw new Error('models.json needs a manual edit — run: tokenmaxx install pi')
+					}
+				}
+				pi = await piStatus()
+			})
 			return
 		}
 		if (row.scope === 'display') {
