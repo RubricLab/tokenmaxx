@@ -11,9 +11,12 @@ import {
 	healInstalledConfigs,
 	installClaudeConfig,
 	installCodexConfig,
+	installPiConfig,
 	installStatus,
+	piStatus,
 	uninstallClaudeConfig,
-	uninstallCodexConfig
+	uninstallCodexConfig,
+	uninstallPiConfig
 } from './config-install.ts'
 import type { Account, ProviderId } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
@@ -241,8 +244,8 @@ function help(): string {
 			'sign in an account · re-run to re-auth',
 			'add --api-key to use an API key instead'
 		),
-		row('install', 'route codex & claude through tokenmaxx'),
-		row('uninstall', 'restore your original config'),
+		row('install [pi]', 'route codex & claude, or pi, through tokenmaxx'),
+		row('uninstall [pi]', 'restore your original config'),
 		'',
 		head('Everyday'),
 		row('list', 'accounts, health, and live usage'),
@@ -785,8 +788,24 @@ async function configureAutomation(
 	}
 }
 
-async function installConfig(context: ApplicationContext): Promise<void> {
+async function installConfig(context: ApplicationContext, targetArgument?: string): Promise<void> {
+	if (targetArgument !== undefined && targetArgument !== 'pi') {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx install [pi]')
+	}
 	await ensureDaemon(context)
+	if (targetArgument === 'pi') {
+		const result = await installPiConfig(context.paths)
+		if (!result.applied) {
+			process.stdout.write(`Left ${result.path} alone: ${result.manual}\n`)
+			return
+		}
+		process.stdout.write(
+			`pi now has tokenmaxx-anthropic and tokenmaxx-openai providers (${result.path}).\n` +
+				'Pick a tokenmaxx model with /model and requests route through the proxy.\n' +
+				'Undo any time with: tokenmaxx uninstall pi\n'
+		)
+		return
+	}
 	await installCodexConfig(context.paths)
 	await installClaudeConfig(context.paths)
 	process.stdout.write(
@@ -796,7 +815,19 @@ async function installConfig(context: ApplicationContext): Promise<void> {
 	)
 }
 
-async function uninstallConfig(): Promise<void> {
+async function uninstallConfig(targetArgument?: string): Promise<void> {
+	if (targetArgument !== undefined && targetArgument !== 'pi') {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx uninstall [pi]')
+	}
+	if (targetArgument === 'pi') {
+		const result = await uninstallPiConfig()
+		process.stdout.write(
+			result.applied
+				? `Removed the tokenmaxx providers from ${result.path}.\n`
+				: `${result.manual === null ? 'pi was not routed; nothing to restore.' : `Left ${result.path} alone: ${result.manual}`}\n`
+		)
+		return
+	}
 	const codex = await uninstallCodexConfig()
 	const claude = await uninstallClaudeConfig()
 	if (codex === null && claude === null) {
@@ -878,6 +909,14 @@ async function doctor(context: ApplicationContext): Promise<void> {
 				: 'not routed — run tokenmaxx install'
 		}\n`
 	)
+	const pi = await piStatus()
+	if (pi.present) {
+		process.stdout.write(
+			`${pi.routed ? 'ok     ' : 'note   '}  pi       ${
+				pi.routed ? 'models.json has the tokenmaxx providers' : 'not routed — run tokenmaxx install pi'
+			}\n`
+		)
+	}
 	process.stdout.write(`state     ${context.paths.database}\n`)
 	const legacyDirectories = [join(context.paths.root, 'codex'), join(context.paths.root, 'claude')]
 	const legacyDetected = await Promise.all(
@@ -1025,10 +1064,10 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				listAccounts(context)
 				return 0
 			case 'install':
-				await installConfig(context)
+				await installConfig(context, arguments_[1])
 				return 0
 			case 'uninstall':
-				await uninstallConfig()
+				await uninstallConfig(arguments_[1])
 				return 0
 			case 'daemon':
 				switch (arguments_[1]) {

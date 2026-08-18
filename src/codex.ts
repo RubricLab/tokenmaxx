@@ -359,6 +359,7 @@ export async function codexUpstream(input: {
 	return {
 		accountId: input.account.id,
 		baseUrl: upstreamFor('openai'),
+		dialect: 'chatgpt',
 		headers: {
 			authorization: `Bearer ${auth.tokens.access_token}`,
 			'chatgpt-account-id': codexIdentity(auth).accountId
