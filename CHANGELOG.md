@@ -1,3 +1,4 @@
+- [2026-08-18] meter clients that hang up early
 - [2026-08-18] reclaim bare provider tables
 - [2026-08-18] settings shows pi
 - [2026-08-18] tokenmaxx install pi routes pi through the proxy

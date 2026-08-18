@@ -200,3 +200,57 @@ describe('proxyIdentity', () => {
 		expect(await proxyIdentity(port)).toBe(null)
 	})
 })
+
+describe('metering', () => {
+	test('records usage when the client hangs up before the stream ends', async () => {
+		type Recorded = { inputTokens: number; outputTokens: number; model: string | null }
+		let recorded = null as Recorded | null
+		const upstream = Bun.serve({
+			fetch: () =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.enqueue(
+								new TextEncoder().encode(
+									'data: {"type":"response.completed","response":{"model":"gpt-5.6-sol","usage":{"input_tokens":11,"output_tokens":3}}}\n\n'
+								)
+							)
+							// The connection stays open, codex-style: the client reads the
+							// final event and hangs up without waiting for EOF.
+						}
+					}),
+					{ headers: { 'content-type': 'text/event-stream' } }
+				),
+			hostname: '127.0.0.1',
+			port: 0
+		})
+		const proxy = startProxy({
+			record: event => {
+				recorded = {
+					inputTokens: event.inputTokens,
+					model: event.model,
+					outputTokens: event.outputTokens
+				}
+			},
+			source: {
+				refresh: async () => undefined,
+				resolve: async () => ({
+					accountId: 'acct-1',
+					baseUrl: `http://127.0.0.1:${upstream.port}`,
+					headers: {}
+				})
+			}
+		})
+		const response = await fetch(`http://127.0.0.1:${proxy.port}/openai/responses`, {
+			body: '{}',
+			method: 'POST'
+		})
+		const reader = response.body?.getReader()
+		await reader?.read()
+		await reader?.cancel()
+		await new Promise(resolve => setTimeout(resolve, 100))
+		expect(recorded).toEqual({ inputTokens: 11, model: 'gpt-5.6-sol', outputTokens: 3 })
+		await proxy.stop()
+		await upstream.stop(true)
+	})
+})

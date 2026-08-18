@@ -131,22 +131,28 @@ export function createUsageObserver(
 		}
 	}
 
+	let reportedOnce = false
+	const report = (): void => {
+		if (reportedOnce) {
+			return
+		}
+		reportedOnce = true
+		consumeLine(lineBuffer.trim())
+		if (!saw && !sawSseData && raw.trim().length > 0) {
+			consume(raw.trim())
+		}
+		if (saw && input + output + cacheRead + cacheCreation > 0) {
+			onUsage({
+				cacheCreationTokens: cacheCreation,
+				cacheReadTokens: cacheRead,
+				inputTokens: input,
+				model: model && model.length > 0 ? model : null,
+				outputTokens: output
+			})
+		}
+	}
 	return {
-		finish(): void {
-			consumeLine(lineBuffer.trim())
-			if (!saw && !sawSseData && raw.trim().length > 0) {
-				consume(raw.trim())
-			}
-			if (saw && input + output + cacheRead + cacheCreation > 0) {
-				onUsage({
-					cacheCreationTokens: cacheCreation,
-					cacheReadTokens: cacheRead,
-					inputTokens: input,
-					model: model && model.length > 0 ? model : null,
-					outputTokens: output
-				})
-			}
-		},
+		finish: report,
 		push(chunk: Uint8Array): void {
 			const text = decoder.decode(chunk, { stream: true })
 			if (raw.length < maxBuffered) {
@@ -159,6 +165,12 @@ export function createUsageObserver(
 				lineBuffer = lineBuffer.slice(newline + 1)
 				newline = lineBuffer.indexOf('\n')
 			}
+			// The openai stream carries usage exactly once, in the terminal
+			// response.completed event. Report the moment it appears: codex hangs
+			// up right after that event, and an abandoned stream never flushes.
+			if (provider === 'openai' && saw) {
+				report()
+			}
 			if (lineBuffer.length > maxBuffered) {
 				lineBuffer = ''
 			}
@@ -166,25 +178,36 @@ export function createUsageObserver(
 	}
 }
 
+// A manual pump rather than pipeThrough: TransformStream only flushes when the
+// source ends, and codex hangs up right after the final SSE event, so usage
+// seen mid-stream must also be reported when the reader cancels.
 function observeStream(
 	body: ReadableStream<Uint8Array>,
 	observer: ReturnType<typeof createUsageObserver>
 ): ReadableStream<Uint8Array> {
-	return body.pipeThrough(
-		new TransformStream<Uint8Array, Uint8Array>({
-			flush() {
+	const reader = body.getReader()
+	return new ReadableStream<Uint8Array>({
+		cancel(reason) {
+			try {
+				observer.finish()
+			} catch {}
+			return reader.cancel(reason)
+		},
+		async pull(controller) {
+			const { done, value } = await reader.read()
+			if (done) {
 				try {
 					observer.finish()
 				} catch {}
-			},
-			transform(chunk, controller) {
-				controller.enqueue(chunk)
-				try {
-					observer.push(chunk)
-				} catch {}
+				controller.close()
+				return
 			}
-		})
-	)
+			controller.enqueue(value)
+			try {
+				observer.push(value)
+			} catch {}
+		}
+	})
 }
 
 const proxyFingerprint = 'tokenmaxx proxy'
