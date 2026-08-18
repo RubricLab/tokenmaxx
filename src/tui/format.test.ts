@@ -122,10 +122,13 @@ describe('themeFromTerminal', () => {
 		expect(theme?.accent).toBe('#83a598')
 	})
 
-	test('picks the palette entry with more contrast against the background', () => {
+	test('prefers the bright slot when it keeps the hue and stays readable', () => {
 		const theme = themeFromTerminal(solarizedLight)
+		// Bright red (#cb4b16) holds the hue and clears the floor, so it wins;
+		// the bright green slot is one of Solarized's greys, so good keeps the
+		// normal slot instead of turning grey.
+		expect(theme?.bad).toBe('#cb4b16')
 		expect(theme?.good).toBe('#859900')
-		expect(theme?.bad).toBe('#dc322f')
 	})
 
 	test('produces every field as a six digit hex string', () => {

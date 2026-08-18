@@ -1,3 +1,4 @@
+- [2026-08-18] terminal themes prefer the bright ansi slots when they stay readable
 - [2026-07-28] the dashboard follows the terminal's own colors
 - [2026-07-23] an update re-applies routed configs on the next daemon start, fixes #17
 - [2026-07-23] an out-of-date dashboard says restart and refuses changes

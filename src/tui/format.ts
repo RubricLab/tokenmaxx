@@ -167,15 +167,24 @@ export function themeFromTerminal(colors: TerminalPaletteColors | null | undefin
 	}
 	const builtIn = themes[luminance(bg) > 0.5 ? 'light' : 'dark']
 	const blend = (weight: number) => mix(bg, fg, weight)
+	// Bright slots (8-15) are usually the theme's prettier, more saturated take
+	// on the base hue, so prefer them whenever they keep that hue and stay
+	// readable; everything else falls back to the contrast-ranked pick, which
+	// still shields against Solarized-style grey bright slots and bright
+	// colors that wash out on light backgrounds.
 	const semantic = (normalIndex: number, brightIndex: number, fallback: Rgb): string => {
 		const normal = parseHex(colors?.palette[normalIndex])
 		const bright = parseHex(colors?.palette[brightIndex])
+		const brightKeepsMeaning = bright !== null && (normal === null || keepsMeaning(normal, bright))
+		if (bright !== null && brightKeepsMeaning && contrastRatio(bright, bg) >= MIN_SEMANTIC_CONTRAST) {
+			return toHex(bright)
+		}
 		const candidates =
 			normal === null
 				? bright === null
 					? [fallback]
 					: [bright]
-				: bright !== null && keepsMeaning(normal, bright)
+				: brightKeepsMeaning && bright !== null
 					? [normal, bright]
 					: [normal]
 		const [best = fallback] = candidates.sort(
