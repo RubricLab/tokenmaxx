@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { registerClaudeAccount, registerClaudeApiKeyAccount } from './claude.ts'
 import { registerCodexAccount, registerOpenAiApiKeyAccount } from './codex.ts'
 import {
+	healInstalledConfigs,
 	installClaudeConfig,
 	installCodexConfig,
 	installStatus,
@@ -297,6 +298,19 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 	try {
 		if (await managerAvailable(context.paths.managerSocket)) {
 			throw new ApplicationError('DAEMON_RUNNING', 'The manager daemon is already running')
+		}
+		// ensureDaemon restarts the daemon on a version change, so this runs on the
+		// first start after every update; a failure must not keep the daemon down.
+		const healed = await healInstalledConfigs(context.paths).catch(error => {
+			process.stderr.write(
+				`[${new Date().toISOString()}] config heal failed: ${errorMessage(error)}\n`
+			)
+			return []
+		})
+		if (healed.length > 0) {
+			process.stdout.write(
+				`[${new Date().toISOString()}] re-applied ${healed.join(' and ')} routing for v${VERSION}\n`
+			)
 		}
 		const manager = new AccountManager({
 			paths: context.paths,

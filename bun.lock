@@ -10,7 +10,7 @@
       "devDependencies": {
         "@biomejs/biome": "^2.0.0",
         "@rubriclab/config": "*",
-        "@rubriclab/package": "^0.0.125",
+        "@rubriclab/package": "*",
         "@types/bun": "^1.2.0",
         "typescript": "^5.8.0",
       },

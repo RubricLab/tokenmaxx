@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+	healInstalledConfigs,
 	installClaudeConfig,
 	installCodexConfig,
 	installStatus,
@@ -195,5 +196,39 @@ describe('installClaudeConfig', () => {
 		await uninstallClaudeConfig()
 		const settings = await readClaudeSettings()
 		expect(settings.env).toBeUndefined()
+	})
+})
+
+describe('healInstalledConfigs', () => {
+	test('re-applies every routed config, healing what an older version wrote', async () => {
+		await installCodexConfig(paths())
+		await writeClaudeSettings({
+			env: {
+				ANTHROPIC_AUTH_TOKEN: 'managed-by-tokenmaxx',
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:8459/anthropic'
+			}
+		})
+		expect(await healInstalledConfigs(paths())).toEqual(['codex', 'claude'])
+		const settings = await readClaudeSettings()
+		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+		expect(settings.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8459/anthropic')
+	})
+
+	test('never adds routing to an unrouted harness', async () => {
+		expect(await healInstalledConfigs(paths())).toEqual([])
+		await expect(readClaudeSettings()).rejects.toThrow()
+		expect((await installStatus()).codexRouted).toBe(false)
+	})
+
+	test('runs once per version, not on every start', async () => {
+		await healInstalledConfigs(paths())
+		await writeClaudeSettings({
+			env: {
+				ANTHROPIC_AUTH_TOKEN: 'managed-by-tokenmaxx',
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:8459/anthropic'
+			}
+		})
+		expect(await healInstalledConfigs(paths())).toEqual([])
+		expect((await readClaudeSettings()).env?.ANTHROPIC_AUTH_TOKEN).toBe('managed-by-tokenmaxx')
 	})
 })
