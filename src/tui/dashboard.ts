@@ -42,6 +42,7 @@ import {
 	themes,
 	throughputColumns
 } from './format.ts'
+import { isFiveHourUsageWindow, visibleUsageWindows } from './usage-windows.ts'
 
 type Tab = 'accounts' | 'analytics' | 'settings'
 const TABS: readonly Tab[] = ['accounts', 'analytics', 'settings']
@@ -186,7 +187,7 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 		const state = snapshot.providers.find(s => s.provider === account.provider)
 		const hidden = state?.policy.hiddenWindowIds ?? []
 		const usage = snapshot.usage.find(u => u.accountId === account.id)
-		const visible = visibleWindows(usage?.windows ?? [], hidden)
+		const visible = visibleUsageWindows(usage?.windows ?? [], hidden)
 		const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
 		const base =
 			3 +
@@ -207,10 +208,6 @@ function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
 		widest = Math.max(widest, base + body)
 	}
 	return Math.min(CONTENT_MAX, ctx.columns - 2, widest + 2)
-}
-
-function isFiveHour(window: UsageWindow): boolean {
-	return /5 ?h/i.test(window.label) || window.id === 'session' || window.id === 'five-hour'
 }
 
 function recentSwitch(ctx: Ctx, state: ProviderState | undefined): boolean {
@@ -237,7 +234,10 @@ function orderedRows(snapshot: DashboardSnapshot): Row[] {
 		const hidden = state?.policy.hiddenWindowIds ?? []
 		const pressure = (accountId: string): number => {
 			const windows = snapshot.usage.find(u => u.accountId === accountId)?.windows ?? []
-			return visibleWindows(windows, hidden).reduce((max, w) => Math.max(max, w.usedPercent), -1)
+			return visibleUsageWindows(windows, hidden).reduce(
+				(max, window) => Math.max(max, window.usedPercent),
+				-1
+			)
 		}
 		const accounts = snapshot.accounts
 			.filter(account => account.provider === provider)
@@ -251,17 +251,6 @@ function orderedRows(snapshot: DashboardSnapshot): Row[] {
 		rows.push({ accountId: ADD_ROW, provider })
 	}
 	return rows
-}
-
-function visibleWindows(
-	windows: readonly UsageWindow[],
-	hiddenIds: readonly string[]
-): UsageWindow[] {
-	const rank = (window: UsageWindow): number =>
-		isFiveHour(window) ? 0 : /scoped|fable|opus|sonnet|spark/i.test(window.id) ? 2 : 1
-	return hardWindows(windows)
-		.filter(window => !hiddenIds.includes(window.id))
-		.sort((left, right) => rank(left) - rank(right))
 }
 
 function windowCell(ctx: Ctx, window: UsageWindow, barWidth: number, withReset: boolean) {
@@ -337,7 +326,7 @@ function accountLine(
 			fg: rgb(badge?.color ?? ctx.theme.dim)
 		})
 	]
-	const visible = visibleWindows(usage?.windows ?? [], hiddenIds)
+	const visible = visibleUsageWindows(usage?.windows ?? [], hiddenIds)
 	const spend = spendCell(ctx.tier, account, usage)
 	if (spend !== null) {
 		children.push(
@@ -496,7 +485,7 @@ function sessionResets(ctx: Ctx, snapshot: DashboardSnapshot): string | null {
 		}
 		const account = snapshot.accounts.find(a => a.id === state.activeAccountId)
 		const windows = snapshot.usage.find(u => u.accountId === state.activeAccountId)?.windows ?? []
-		const reset = shortReset(windows.find(isFiveHour)?.resetAt ?? null, ctx.now)
+		const reset = shortReset(windows.find(isFiveHourUsageWindow)?.resetAt ?? null, ctx.now)
 		if (account === undefined || reset === null) {
 			return []
 		}
@@ -780,7 +769,7 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 		}
 	}
 	return [...seen.values()].sort(
-		(left, right) => (isFiveHour(left) ? 0 : 1) - (isFiveHour(right) ? 0 : 1)
+		(left, right) => (isFiveHourUsageWindow(left) ? 0 : 1) - (isFiveHourUsageWindow(right) ? 0 : 1)
 	)
 }
 
