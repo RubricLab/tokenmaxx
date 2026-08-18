@@ -37,19 +37,33 @@ function stripMarkedBlock(content: string, beginMarker: string, endMarker: strin
 	return `${content.slice(0, begin)}${content.slice(end + endMarker.length)}`
 }
 
+// tokenmaxx owns its provider name: codex rewrites config.toml (sorting tables,
+// dropping comments), which strips our markers and leaves a bare copy of the
+// provider table — reclaim those too, or install stacks duplicates that break
+// TOML parsing for codex and for us.
+const bareProviderTable = /^\[model_providers\.(?:tokenmaxx|tokmax)\]\r?\n(?:(?!\[).*\r?\n?)*/gm
+const ownProviderSelection = /^\s*model_provider\s*=\s*"(?:tokenmaxx|tokmax)"\s*$/
+
 function stripCodexManagedBlocks(content: string): string {
 	let base = stripMarkedBlock(content, tableBeginMarker, tableEndMarker)
 	for (let index = 0; index < legacyBeginMarkers.length; index += 1) {
 		base = stripMarkedBlock(base, legacyBeginMarkers[index] ?? '', legacyEndMarkers[index] ?? '')
 	}
-	return base
-		.split('\n')
-		.map(line =>
-			/^\s*model_provider\s*=/.test(line) ? `# tokenmaxx-disabled: ${line.trimStart()}` : line
-		)
-		.join('\n')
-		.replace(/\n{3,}/g, '\n\n')
-		.trim()
+	base = base.replace(bareProviderTable, '')
+	return (
+		base
+			.split('\n')
+			// Drop selections of our own provider, including previously disabled
+			// ones — restoring those on uninstall would point codex at a provider
+			// that no longer exists.
+			.filter(line => !ownProviderSelection.test(line.replace(disabledPrefix, '')))
+			.map(line =>
+				/^\s*model_provider\s*=/.test(line) ? `# tokenmaxx-disabled: ${line.trimStart()}` : line
+			)
+			.join('\n')
+			.replace(/\n{3,}/g, '\n\n')
+			.trim()
+	)
 }
 
 function restoreCodexContent(content: string): string {
@@ -89,10 +103,11 @@ export async function installCodexConfig(paths: ApplicationPaths): Promise<strin
 export async function uninstallCodexConfig(): Promise<string | null> {
 	const path = codexConfigPath()
 	const existing = await readFile(path, 'utf8').catch(() => null)
-	if (
-		existing === null ||
-		![...legacyBeginMarkers, tableBeginMarker].some(marker => existing.includes(marker))
-	) {
+	const carriesOurConfig = (content: string): boolean =>
+		[...legacyBeginMarkers, tableBeginMarker].some(marker => content.includes(marker)) ||
+		content.match(bareProviderTable) !== null ||
+		content.split('\n').some(line => ownProviderSelection.test(line.replace(disabledPrefix, '')))
+	if (existing === null || !carriesOurConfig(existing)) {
 		return null
 	}
 	await writeFile(path, restoreCodexContent(existing), { mode: 0o600 })
@@ -185,7 +200,8 @@ export async function installStatus(): Promise<InstallStatus> {
 	}
 	const codexStale =
 		!codexRouted &&
-		[...legacyBeginMarkers, tableBeginMarker].some(marker => codexRaw.includes(marker))
+		([...legacyBeginMarkers, tableBeginMarker].some(marker => codexRaw.includes(marker)) ||
+			codexRaw.match(bareProviderTable) !== null)
 
 	let claudeRouted = false
 	try {

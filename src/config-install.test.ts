@@ -285,3 +285,68 @@ describe('pi install', () => {
 		delete process.env.PI_CODING_AGENT_DIR
 	})
 })
+
+describe('codex-normalized configs', () => {
+	test('install reclaims a bare provider table codex re-serialized without our markers', async () => {
+		const configPath = join(process.env.CODEX_HOME ?? '', 'config.toml')
+		await writeFile(
+			configPath,
+			[
+				'# >>> tokenmaxx managed (do not edit) >>>',
+				'model_provider = "tokenmaxx"',
+				'# <<< tokenmaxx managed <<<',
+				'',
+				'model = "gpt-5.6-sol"',
+				'# tokenmaxx-disabled: model_provider = "tokenmaxx"',
+				'',
+				'[model_providers.tokenmaxx]',
+				'base_url = "http://127.0.0.1:8459/openai"',
+				'name = "tokenmaxx"',
+				'wire_api = "responses"',
+				'',
+				'[notice]',
+				'hide_rate_limit_model_nudge = true',
+				'',
+				'# >>> tokenmaxx provider (do not edit) >>>',
+				'[model_providers.tokenmaxx]',
+				'name = "tokenmaxx"',
+				'base_url = "http://127.0.0.1:8459/openai"',
+				'# <<< tokenmaxx provider <<<'
+			].join('\n')
+		)
+		await installCodexConfig(applicationPaths())
+		const written = await readFile(configPath, 'utf8')
+		const parsed = Bun.TOML.parse(written) as {
+			model_provider?: string
+			notice?: { hide_rate_limit_model_nudge?: boolean }
+		}
+		expect(parsed.model_provider).toBe('tokenmaxx')
+		expect(parsed.notice?.hide_rate_limit_model_nudge).toBe(true)
+		expect(written.match(/\[model_providers\.tokenmaxx\]/g)).toHaveLength(1)
+		expect(written).not.toContain('# tokenmaxx-disabled: model_provider = "tokenmaxx"')
+		expect((await installStatus()).codexRouted).toBe(true)
+	})
+
+	test('uninstall removes a bare provider table even when the markers are gone', async () => {
+		const configPath = join(process.env.CODEX_HOME ?? '', 'config.toml')
+		await writeFile(
+			configPath,
+			[
+				'model = "gpt-5.6-sol"',
+				'model_provider = "tokenmaxx"',
+				'',
+				'[model_providers.tokenmaxx]',
+				'base_url = "http://127.0.0.1:8459/openai"',
+				'name = "tokenmaxx"',
+				'',
+				'[notice]',
+				'hide_rate_limit_model_nudge = true'
+			].join('\n')
+		)
+		expect(await uninstallCodexConfig()).not.toBeNull()
+		const written = await readFile(configPath, 'utf8')
+		expect(written).not.toContain('tokenmaxx')
+		const parsed = Bun.TOML.parse(written) as { notice?: { hide_rate_limit_model_nudge?: boolean } }
+		expect(parsed.notice?.hide_rate_limit_model_nudge).toBe(true)
+	})
+})
