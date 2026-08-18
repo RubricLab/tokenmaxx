@@ -7,9 +7,11 @@ import {
 	healInstalledConfigs,
 	installClaudeConfig,
 	installCodexConfig,
+	installPiConfig,
 	installStatus,
 	uninstallClaudeConfig,
-	uninstallCodexConfig
+	uninstallCodexConfig,
+	uninstallPiConfig
 } from './config-install.ts'
 import { applicationPaths } from './paths.ts'
 
@@ -230,5 +232,56 @@ describe('healInstalledConfigs', () => {
 		})
 		expect(await healInstalledConfigs(paths())).toEqual([])
 		expect((await readClaudeSettings()).env?.ANTHROPIC_AUTH_TOKEN).toBe('managed-by-tokenmaxx')
+	})
+})
+
+describe('pi install', () => {
+	test('providers merge into models.json and back out without touching the rest', async () => {
+		process.env.PI_CODING_AGENT_DIR = join(home, 'pi-agent')
+		await mkdir(process.env.PI_CODING_AGENT_DIR, { recursive: true })
+		const modelsPath = join(process.env.PI_CODING_AGENT_DIR, 'models.json')
+		await writeFile(
+			modelsPath,
+			JSON.stringify({
+				providers: { mine: { api: 'anthropic-messages', baseUrl: 'https://example.com' } }
+			})
+		)
+		const installed = await installPiConfig(applicationPaths())
+		expect(installed.applied).toBe(true)
+		const config = JSON.parse(await readFile(modelsPath, 'utf8'))
+		expect(config.providers['tokenmaxx-anthropic'].api).toBe('anthropic-messages')
+		expect(config.providers['tokenmaxx-openai'].baseUrl).toContain('/openai')
+		expect(config.providers.mine.baseUrl).toBe('https://example.com')
+		const removed = await uninstallPiConfig()
+		expect(removed.applied).toBe(true)
+		const restored = JSON.parse(await readFile(modelsPath, 'utf8'))
+		expect(restored.providers['tokenmaxx-anthropic']).toBeUndefined()
+		expect(restored.providers['tokenmaxx-openai']).toBeUndefined()
+		expect(restored.providers.mine.baseUrl).toBe('https://example.com')
+		delete process.env.PI_CODING_AGENT_DIR
+	})
+
+	test('a missing models.json is created on install and reported clean on uninstall', async () => {
+		process.env.PI_CODING_AGENT_DIR = join(home, 'pi-agent')
+		const removed = await uninstallPiConfig()
+		expect(removed.applied).toBe(false)
+		expect(removed.manual).toBeNull()
+		const installed = await installPiConfig(applicationPaths())
+		expect(installed.applied).toBe(true)
+		const config = JSON.parse(await readFile(installed.path, 'utf8'))
+		expect(Object.keys(config.providers)).toEqual(['tokenmaxx-anthropic', 'tokenmaxx-openai'])
+		delete process.env.PI_CODING_AGENT_DIR
+	})
+
+	test('an unparseable models.json is left alone with manual instructions', async () => {
+		process.env.PI_CODING_AGENT_DIR = join(home, 'pi-agent')
+		await mkdir(process.env.PI_CODING_AGENT_DIR, { recursive: true })
+		const modelsPath = join(process.env.PI_CODING_AGENT_DIR, 'models.json')
+		await writeFile(modelsPath, '{ broken json')
+		const result = await installPiConfig(applicationPaths())
+		expect(result.applied).toBe(false)
+		expect(result.manual).toContain('providers')
+		expect(await readFile(modelsPath, 'utf8')).toBe('{ broken json')
+		delete process.env.PI_CODING_AGENT_DIR
 	})
 })

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { ApplicationPaths } from './paths.ts'
@@ -218,4 +218,125 @@ export async function healInstalledConfigs(paths: ApplicationPaths): Promise<str
 	await mkdir(paths.root, { recursive: true })
 	await writeFile(stampPath, `${VERSION}\n`)
 	return healed
+}
+
+export interface PiResult {
+	path: string
+	applied: boolean
+	manual: string | null
+}
+
+function piModelsPath(): string {
+	return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'), 'models.json')
+}
+
+const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai']
+
+// The anthropic ids pair with an API-key account (subscription auth is not for
+// third-party harnesses); gpt-5.6-sol is the one id the ChatGPT codex backend
+// accepts for subscription accounts.
+const piAnthropicModelIds = ['claude-opus-4-8', 'claude-sonnet-4-6']
+const piOpenaiModelIds = ['gpt-5.6-sol']
+
+function piProviders(paths: ApplicationPaths): Record<string, unknown> {
+	const models = (ids: readonly string[]) => ids.map(id => ({ id, reasoning: true }))
+	return {
+		'tokenmaxx-anthropic': {
+			api: 'anthropic-messages',
+			apiKey: dummyAuthToken,
+			baseUrl: proxyBaseUrl(paths, 'anthropic'),
+			models: models(piAnthropicModelIds)
+		},
+		'tokenmaxx-openai': {
+			api: 'openai-responses',
+			apiKey: dummyAuthToken,
+			baseUrl: proxyBaseUrl(paths, 'openai'),
+			models: models(piOpenaiModelIds)
+		}
+	}
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+	if (raw.trim().length === 0) {
+		return {}
+	}
+	try {
+		const parsed = JSON.parse(raw)
+		return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: null
+	} catch {
+		return null
+	}
+}
+
+function ensureObject(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+	const value = parent[key]
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		parent[key] = {}
+	}
+	return parent[key] as Record<string, unknown>
+}
+
+async function writePiProviders(
+	providers: Record<string, unknown> | null,
+	manual: string
+): Promise<PiResult> {
+	const path = piModelsPath()
+	const raw = await readFileOrEmpty(path)
+	const config = parseJsonObject(raw)
+	if (config === null) {
+		return { applied: false, manual, path }
+	}
+	const bucket = ensureObject(config, 'providers')
+	for (const key of piProviderKeys) {
+		delete bucket[key]
+	}
+	if (providers !== null) {
+		Object.assign(bucket, providers)
+	}
+	await mkdir(dirname(path), { recursive: true })
+	await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+	return { applied: true, manual: null, path }
+}
+
+// pi re-reads models.json every time /model opens, so no restart is needed.
+export async function installPiConfig(paths: ApplicationPaths): Promise<PiResult> {
+	return writePiProviders(
+		piProviders(paths),
+		`could not parse it as JSON — add this under providers yourself:\n${JSON.stringify(piProviders(paths), null, 2)}`
+	)
+}
+
+export async function uninstallPiConfig(): Promise<PiResult> {
+	const raw = await readFile(piModelsPath(), 'utf8').catch(() => null)
+	if (raw === null) {
+		return { applied: false, manual: null, path: piModelsPath() }
+	}
+	return writePiProviders(
+		null,
+		'could not parse it as JSON — remove the tokenmaxx-anthropic and tokenmaxx-openai providers yourself'
+	)
+}
+
+export interface PiStatus {
+	present: boolean
+	routed: boolean
+}
+
+// pi counts as present when its binary is on PATH or its agent directory
+// exists — someone who installed pi but never launched it has only the binary.
+export async function piStatus(
+	which: (binary: string) => string | null = Bun.which
+): Promise<PiStatus> {
+	const path = piModelsPath()
+	const raw = await readFile(path, 'utf8').catch(() => null)
+	const present =
+		raw !== null ||
+		which('pi') !== null ||
+		(await stat(dirname(dirname(path))).then(
+			() => true,
+			() => false
+		))
+	return { present, routed: raw?.includes('tokenmaxx-anthropic') ?? false }
 }
