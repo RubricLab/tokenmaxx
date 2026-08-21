@@ -1,3 +1,4 @@
+- [2026-08-21] codex keeps its shell and apply_patch tools on the gpt-5.6 models
 - [2026-08-18] meter clients that hang up early
 - [2026-08-18] reclaim bare provider tables
 - [2026-08-18] settings shows pi
