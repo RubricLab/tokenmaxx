@@ -1,4 +1,13 @@
-- [2026-09-01] installStatus reads routed state when Bun.TOML cannot parse the config
+- [2026-09-01] scope the installStatus fallback to top-level keys
+
+The parse-failure fallback matched our selection line anywhere in the file,
+but a model_provider under a table belongs to that table: a legacy selection
+swallowed into [notice], or a [profiles.x] naming our provider while another
+is active, would read as routed — and healInstalledConfigs would re-enable
+routing from that. Scan only the region before the first table header.
+Also pin that the installed fixture genuinely breaks Bun.TOML, so the
+regression test keeps exercising the fallback if bun's parser improves.
+- [2026-09-01] [installStatus reads routed state when Bun.TOML cannot parse the config
 
 Bun.TOML.parse rejects bare table keys that start with a digit — a real-world
 example is [mcp_servers.1password], which codex itself writes and accepts.
@@ -13,7 +22,7 @@ off through the dashboard was impossible on such a config.
 
 On parse failure, fall back to detecting our own active selection line
 (commented-out lines never match). The semantic TOML check stays the primary
-path for configs that parse.
+path for configs that parse.](https://github.com/dallascrilley/tokenmaxx/commit/008b7297c177f2aa122f4ec78517e931f46b47fb)
 - [2026-09-01] [keep settings routing state live
 
 The dashboard received routing once at launch (options.routing) and never

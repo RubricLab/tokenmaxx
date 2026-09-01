@@ -97,7 +97,8 @@ describe('installCodexConfig', () => {
 			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\nenabled = false\n`
 		)
 		await installCodexConfig(paths())
-		expect(() => Bun.TOML.parse(legacyBrokenConfig)).not.toThrow()
+		const written = await readCodexConfig()
+		expect(() => Bun.TOML.parse(written)).toThrow()
 		const status = await installStatus()
 		expect(status.codexRouted).toBe(true)
 	})
@@ -105,6 +106,25 @@ describe('installCodexConfig', () => {
 	test('an unparseable config without our selection still reads as not routed', async () => {
 		await writeCodexConfig(
 			'model = "gpt-5.6-sol"\n\n[mcp_servers.1password]\ncommand = "1password-mcp"\n'
+		)
+		const status = await installStatus()
+		expect(status.codexRouted).toBe(false)
+	})
+
+	test('the fallback ignores a swallowed legacy selection under a table', async () => {
+		// legacyBrokenConfig's model_provider = "tokmax" sits under [notice], so
+		// codex never routes through it; the digit table only breaks parsing.
+		await writeCodexConfig(
+			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\n`
+		)
+		const status = await installStatus()
+		expect(status.codexRouted).toBe(false)
+		expect(status.codexStale).toBe(true)
+	})
+
+	test('the fallback ignores our provider named inside a codex profile', async () => {
+		await writeCodexConfig(
+			'model_provider = "ollama"\n\n[profiles.work]\nmodel_provider = "tokenmaxx"\n\n[mcp_servers.1password]\ncommand = "1password-mcp"\n'
 		)
 		const status = await installStatus()
 		expect(status.codexRouted).toBe(false)
