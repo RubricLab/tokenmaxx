@@ -196,7 +196,12 @@ export async function installStatus(): Promise<InstallStatus> {
 		const baseUrl = selected === null ? undefined : parsed.model_providers?.[selected]?.base_url
 		codexRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
 	} catch {
-		codexRouted = false
+		// Bun.TOML rejects configs codex accepts — bare table keys starting with a
+		// digit, like [mcp_servers.1password]. Reading that as "not routed" makes
+		// the dashboard show routing off while traffic flows through the proxy,
+		// and turns the routing toggle into a re-install. Fall back to detecting
+		// our own active selection line; commented-out lines never match.
+		codexRouted = codexRaw.split('\n').some(line => ownProviderSelection.test(line))
 	}
 	const codexStale =
 		!codexRouted &&

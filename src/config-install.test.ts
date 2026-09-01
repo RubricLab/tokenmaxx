@@ -89,6 +89,27 @@ describe('installCodexConfig', () => {
 		expect(status.codexStale).toBe(false)
 	})
 
+	test('installStatus stays truthful when Bun.TOML cannot parse the config', async () => {
+		// Bun.TOML rejects bare table keys that start with a digit, like
+		// [mcp_servers.1password]; codex accepts them. A parse failure must not
+		// read as "not routed" while our selection line is active.
+		await writeCodexConfig(
+			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\nenabled = false\n`
+		)
+		await installCodexConfig(paths())
+		expect(() => Bun.TOML.parse(legacyBrokenConfig)).not.toThrow()
+		const status = await installStatus()
+		expect(status.codexRouted).toBe(true)
+	})
+
+	test('an unparseable config without our selection still reads as not routed', async () => {
+		await writeCodexConfig(
+			'model = "gpt-5.6-sol"\n\n[mcp_servers.1password]\ncommand = "1password-mcp"\n'
+		)
+		const status = await installStatus()
+		expect(status.codexRouted).toBe(false)
+	})
+
 	test('reinstall is idempotent', async () => {
 		await writeCodexConfig(legacyBrokenConfig)
 		await installCodexConfig(paths())

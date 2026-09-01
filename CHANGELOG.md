@@ -1,4 +1,20 @@
-- [2026-09-01] keep settings routing state live
+- [2026-09-01] installStatus reads routed state when Bun.TOML cannot parse the config
+
+Bun.TOML.parse rejects bare table keys that start with a digit — a real-world
+example is [mcp_servers.1password], which codex itself writes and accepts.
+On any config containing such a table, installStatus() threw into its catch
+and reported codexRouted = false no matter what the file actually said.
+
+The visible damage: the dashboard's Settings page showed codex routing off
+while model_provider = "tokenmaxx" was actively sending traffic through the
+proxy, and pressing the routing toggle computed enable from that wrong false
+and re-installed the managed block instead of removing it — turning routing
+off through the dashboard was impossible on such a config.
+
+On parse failure, fall back to detecting our own active selection line
+(commented-out lines never match). The semantic TOML check stays the primary
+path for configs that parse.
+- [2026-09-01] [keep settings routing state live
 
 The dashboard received routing once at launch (options.routing) and never
 re-read it, so Settings kept showing the launch-time snapshot for the whole
@@ -10,7 +26,7 @@ while model_provider still points at the proxy).
 
 reload() now re-reads installStatus() alongside piStatus(), so the 2s tick
 and manual refresh both bring the display back to the files' truth, and the
-routing toggle flips from the live value instead of the stale snapshot.
+routing toggle flips from the live value instead of the stale snapshot.](https://github.com/dallascrilley/tokenmaxx/commit/db617e8573c9e5390f43a9f9d732275b2a205c5e)
 - [2026-08-18] meter clients that hang up early
 - [2026-08-18] reclaim bare provider tables
 - [2026-08-18] settings shows pi
