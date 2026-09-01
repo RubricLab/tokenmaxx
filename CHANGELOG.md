@@ -1,3 +1,16 @@
+- [2026-09-01] keep settings routing state live
+
+The dashboard received routing once at launch (options.routing) and never
+re-read it, so Settings kept showing the launch-time snapshot for the whole
+session. Routing actually lives in the harness config files and can change
+while the dashboard is open — tokenmaxx install/uninstall from another
+shell, first-login auto-enable, or the daemon's post-update heal — leaving
+Settings contradicting the on-disk config (e.g. showing codex routing off
+while model_provider still points at the proxy).
+
+reload() now re-reads installStatus() alongside piStatus(), so the 2s tick
+and manual refresh both bring the display back to the files' truth, and the
+routing toggle flips from the live value instead of the stale snapshot.
 - [2026-08-18] meter clients that hang up early
 - [2026-08-18] reclaim bare provider tables
 - [2026-08-18] settings shows pi

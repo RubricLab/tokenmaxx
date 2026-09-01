@@ -1,5 +1,11 @@
 import { Box, createCliRenderer, parseColor, type RGBA, Text } from '@opentui/core'
-import { installPiConfig, type PiStatus, piStatus, uninstallPiConfig } from '../config-install.ts'
+import {
+	installPiConfig,
+	installStatus,
+	type PiStatus,
+	piStatus,
+	uninstallPiConfig
+} from '../config-install.ts'
 import type {
 	Account,
 	AnalyticsSnapshot,
@@ -1347,6 +1353,11 @@ export async function runTuiDashboard(
 			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
 	let pi: PiStatus = live ? await piStatus() : { present: true, routed: true }
+	// Routing is derived from the harness config files, which can change while
+	// this dashboard is open (tokenmaxx install/uninstall from another shell,
+	// first-login auto-enable, daemon heal after an update). options.routing is
+	// only the launch-time snapshot; reload() keeps this current.
+	let routing = options.routing
 	const state: ViewState = {
 		addConfirm: null,
 		alert: options.alert ?? '',
@@ -1387,7 +1398,7 @@ export async function runTuiDashboard(
 					columns,
 					now: live ? Date.now() : simulatedNow,
 					pi,
-					routing: options.routing,
+					routing,
 					rows: process.stdout.rows ?? 24,
 					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 24 * 60_000 : 120_000,
 					theme: currentTheme(),
@@ -1436,6 +1447,8 @@ export async function runTuiDashboard(
 			analytics = await readAnalytics(socketPath)
 			rows = orderedRows(analytics.snapshot)
 			pi = await piStatus()
+			const status = await installStatus()
+			routing = { anthropic: status.claudeRouted, openai: status.codexRouted }
 			clampSelection()
 		})
 
@@ -1573,7 +1586,7 @@ export async function runTuiDashboard(
 	}
 
 	const toggleRouting = (provider: ProviderId) => {
-		finish({ enable: !options.routing[provider], kind: 'routing', provider })
+		finish({ enable: !routing[provider], kind: 'routing', provider })
 	}
 
 	const adjustSetting = (delta: number) => {
