@@ -31,11 +31,12 @@ function buildTokens(scale: number): TokenAnalytics {
 		const buckets = raw.map(value => Math.round((value / rawSum) * target))
 		const totalTokens = buckets.reduce((sum, value) => sum + value, 0)
 		const modelMix: { model: string; provider: ProviderId; share: number }[] = [
-			{ model: 'gpt-5.6-sol', provider: 'openai', share: 0.42 },
-			{ model: 'gpt-5.6-codex', provider: 'openai', share: 0.13 },
-			{ model: 'claude-opus-4-8', provider: 'anthropic', share: 0.3 },
-			{ model: 'claude-sonnet-4-6', provider: 'anthropic', share: 0.11 },
-			{ model: 'claude-haiku-4-5', provider: 'anthropic', share: 0.04 }
+			{ model: 'gpt-5.6-sol', provider: 'openai', share: 0.38 },
+			{ model: 'gpt-5.6-codex', provider: 'openai', share: 0.12 },
+			{ model: 'claude-opus-4-8', provider: 'anthropic', share: 0.27 },
+			{ model: 'claude-sonnet-4-6', provider: 'anthropic', share: 0.1 },
+			{ model: 'claude-haiku-4-5', provider: 'anthropic', share: 0.04 },
+			{ model: 'grok-4.6', provider: 'xai', share: 0.09 }
 		]
 		const models = modelMix
 			.map(entry => {
@@ -178,21 +179,32 @@ function account(seed: AccountSeed, now: number): Account {
 		plan: seed.plan,
 		updatedAt: new Date(now - 2 * MINUTE).toISOString()
 	} as const
-	return seed.provider === 'openai'
-		? {
+	switch (seed.provider) {
+		case 'openai':
+			return {
 				...base,
 				externalUserId: `user_${seed.n}`,
 				profilePath: null,
 				provider: 'openai',
 				secretReference: `codex:${base.externalAccountId}`
 			}
-		: {
+		case 'anthropic':
+			return {
 				...base,
 				externalUserId: null,
 				profilePath: `/tmp/tokenmaxx/claude/${seed.n}`,
 				provider: 'anthropic',
 				secretReference: null
 			}
+		case 'xai':
+			return {
+				...base,
+				externalUserId: null,
+				profilePath: null,
+				provider: 'xai',
+				secretReference: `grok:${base.externalAccountId}`
+			}
+	}
 }
 
 function usage(seed: AccountSeed, now: number): UsageSnapshot {
@@ -207,14 +219,19 @@ function usage(seed: AccountSeed, now: number): UsageSnapshot {
 		).toISOString(),
 		windows
 	} as const
-	return seed.provider === 'openai'
-		? {
+	switch (seed.provider) {
+		case 'openai':
+			return {
 				...base,
 				provider: 'openai',
 				resetCredits: seed.resetCredits ?? null,
 				source: 'codexUsageEndpoint'
 			}
-		: { ...base, provider: 'anthropic', source: 'claudeUsageEndpoint' }
+		case 'anthropic':
+			return { ...base, provider: 'anthropic', source: 'claudeUsageEndpoint' }
+		case 'xai':
+			return { ...base, provider: 'xai', source: 'grokProbe' }
+	}
 }
 
 function policy(
@@ -310,6 +327,16 @@ const claudeSession = (peak: number, nowFrac: number, seed: number): WindowSpec 
 	...fiveHour(peak, nowFrac, seed),
 	label: '5h session'
 })
+const grokLimit = (peak: number, nowFrac: number, seed: number): WindowSpec => ({
+	fillFrac: 0.01,
+	id: 'limit',
+	label: 'rate limit',
+	nowFrac,
+	peak,
+	period: HOUR,
+	seed,
+	wobble: 0
+})
 
 type ScenarioBuilder = (now: number) => AnalyticsSnapshot
 
@@ -369,11 +396,26 @@ const cruising: ScenarioBuilder = now =>
 				n: 5,
 				plan: null,
 				provider: 'anthropic'
+			},
+			{
+				email: 'dexter@rubriclabs.com',
+				n: 6,
+				plan: null,
+				provider: 'xai',
+				windows: [grokLimit(0, 0, 61)]
+			},
+			{
+				email: 'ship@rubriclabs.com',
+				n: 7,
+				plan: null,
+				provider: 'xai',
+				windows: [grokLimit(100, 0.4, 62)]
 			}
 		],
 		[
 			{ activeN: 1, auto: true, generation: 4, provider: 'openai', switchedMinutesAgo: 96 },
-			{ activeN: 3, auto: true, generation: 2, provider: 'anthropic', switchedMinutesAgo: 210 }
+			{ activeN: 3, auto: true, generation: 2, provider: 'anthropic', switchedMinutesAgo: 210 },
+			{ activeN: 6, auto: true, generation: 1, provider: 'xai', switchedMinutesAgo: 12 }
 		]
 	)
 

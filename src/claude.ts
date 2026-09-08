@@ -13,7 +13,7 @@ import {
 } from './domain.ts'
 import { ApplicationError, loginFailureMessage } from './errors.ts'
 import { type UpstreamInjection, upstreamFor } from './proxy.ts'
-import { type CredentialVault, exclusive } from './vault.ts'
+import { type CredentialVault, exclusive, readApiKey } from './vault.ts'
 
 const clientId = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 const tokenEndpoint = 'https://console.anthropic.com/v1/oauth/token'
@@ -201,14 +201,6 @@ async function readClaudeCredential(
 		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
 	}
 	return ClaudeOauthSchema.parse(JSON.parse(serialized))
-}
-
-async function readApiKey(vault: CredentialVault, reference: string): Promise<string> {
-	const key = await vault.read(reference)
-	if (key === null) {
-		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
-	}
-	return key
 }
 
 const anthropicVersion = '2023-06-01'

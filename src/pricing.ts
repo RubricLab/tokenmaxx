@@ -41,6 +41,22 @@ const PRICES: ReadonlyArray<{ match: string; price: ModelPrice }> = [
 	{
 		match: 'o4',
 		price: { cacheReadPerMTok: 0.275, cacheWritePerMTok: 0, inputPerMTok: 1.1, outputPerMTok: 4.4 }
+	},
+	{
+		match: 'grok-4.6',
+		price: { cacheReadPerMTok: 0.5, cacheWritePerMTok: 0, inputPerMTok: 2, outputPerMTok: 6 }
+	},
+	{
+		match: 'grok-4.5',
+		price: { cacheReadPerMTok: 0.3, cacheWritePerMTok: 0, inputPerMTok: 2, outputPerMTok: 6 }
+	},
+	{
+		match: 'grok-build',
+		price: { cacheReadPerMTok: 0.2, cacheWritePerMTok: 0, inputPerMTok: 1, outputPerMTok: 2 }
+	},
+	{
+		match: 'grok-4',
+		price: { cacheReadPerMTok: 0.2, cacheWritePerMTok: 0, inputPerMTok: 1.25, outputPerMTok: 2.5 }
 	}
 ]
 

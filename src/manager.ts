@@ -9,7 +9,9 @@ import {
 	type Account,
 	AutomationPolicySchema,
 	type FetchImplementation,
+	PROVIDERS,
 	type ProviderId,
+	ProviderIdSchema,
 	type ProviderState,
 	type ResetCreditsView,
 	type ResetOutcome,
@@ -20,6 +22,7 @@ import {
 	type UsageWindow
 } from './domain.ts'
 import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
+import { grokUpstream, probeGrok } from './grok.ts'
 import type { ApplicationPaths } from './paths.ts'
 import { costUsd } from './pricing.ts'
 import {
@@ -63,7 +66,7 @@ function priceTokenTimeframe(aggregate: TokenTimeframeAggregate): TokenTimeframe
 	const byProvider = new Map<ProviderId, TokenBreakdownAccumulator>()
 	const models: (TokenBreakdownAccumulator & { model: string; provider: ProviderId })[] = []
 	for (const entry of aggregate.byModel) {
-		const provider: ProviderId = entry.provider === 'anthropic' ? 'anthropic' : 'openai'
+		const provider = ProviderIdSchema.catch('openai').parse(entry.provider)
 		const priced: TokenBreakdownAccumulator = {
 			cacheCreation: entry.cacheCreation,
 			cached: entry.cached,
@@ -180,9 +183,14 @@ export class AccountManager {
 			vault: this.#vault
 		}
 		try {
-			return account.provider === 'openai'
-				? await codexUpstream({ account, ...shared })
-				: await claudeUpstream({ account, ...shared })
+			switch (account.provider) {
+				case 'openai':
+					return await codexUpstream({ account, ...shared })
+				case 'anthropic':
+					return await claudeUpstream({ account, ...shared })
+				case 'xai':
+					return await grokUpstream({ account, ...shared })
+			}
 		} catch (error) {
 			const cause = error instanceof Error ? error : undefined
 			if (isNetworkFailure(error)) {
@@ -192,10 +200,9 @@ export class AccountManager {
 					{ cause }
 				)
 			}
-			const cli = provider === 'openai' ? 'codex' : 'claude'
 			throw new ApplicationError(
 				'ACTIVE_CREDENTIAL_UNUSABLE',
-				`${account.label} needs re-login — run: tokenmaxx login ${cli}`,
+				`${account.label} needs re-login — run: tokenmaxx login ${PROVIDERS[provider].cli}`,
 				{ cause }
 			)
 		}
@@ -369,10 +376,16 @@ export class AccountManager {
 			now: () => this.#dependencies.now(),
 			vault: this.#vault
 		}
-		const result =
-			account.provider === 'anthropic'
-				? await probeClaude({ account, ...shared })
-				: await probeCodex({ account, ...shared })
+		const result = await (() => {
+			switch (account.provider) {
+				case 'openai':
+					return probeCodex({ account, ...shared })
+				case 'anthropic':
+					return probeClaude({ account, ...shared })
+				case 'xai':
+					return probeGrok({ account, existing: this.#store.findUsage(account.id), ...shared })
+			}
+		})()
 		if (account.auth === 'apiKey') {
 			const start = this.#dependencies.now().getTime() - 31 * 24 * 3_600_000
 			result.usage.measuredSpendUsd = this.#store
@@ -515,7 +528,7 @@ export class AccountManager {
 		if (this.#stopping) {
 			return
 		}
-		for (const provider of ['openai', 'anthropic'] as const) {
+		for (const provider of ProviderIdSchema.options) {
 			if (this.#stopping) {
 				return
 			}
