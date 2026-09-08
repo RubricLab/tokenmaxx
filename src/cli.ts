@@ -31,6 +31,7 @@ import {
 	requestSwitch,
 	startManagerServer
 } from './ipc.ts'
+import { LaunchAgent } from './launch-agent.ts'
 import { AccountManager } from './manager.ts'
 import { type ApplicationPaths, applicationPaths, ensureApplicationPaths } from './paths.ts'
 import { proxyIdentity } from './proxy.ts'
@@ -192,6 +193,7 @@ const EmptyResultSchema = z.unknown()
 interface ApplicationContext {
 	paths: ApplicationPaths
 	store: StateStore
+	launchAgent: LaunchAgent
 }
 
 function providerFromCli(value: string): 'openai' | 'anthropic' {
@@ -244,7 +246,7 @@ function help(): string {
 			'sign in an account · re-run to re-auth',
 			'add --api-key to use an API key instead'
 		),
-		row('install [pi]', 'route codex & claude, or pi, through tokenmaxx'),
+		row('install [pi] [--autostart]', 'route clients; optionally start at macOS login'),
 		row('uninstall [pi]', 'restore your original config'),
 		'',
 		head('Everyday'),
@@ -262,6 +264,7 @@ function help(): string {
 		row('refresh', 're-probe usage now'),
 		row('doctor', 'check tools, proxy, and config'),
 		row('daemon <start|stop|status>', 'the background manager'),
+		row('daemon <install|uninstall>', 'add or remove macOS login startup'),
 		'',
 		head('Auto-rotation'),
 		dim("  The threshold is measured against the active account's fullest rate-limit"),
@@ -282,7 +285,7 @@ function help(): string {
 async function createContext(): Promise<ApplicationContext> {
 	const paths = applicationPaths()
 	await ensureApplicationPaths(paths)
-	return { paths, store: createStateStore(paths.database) }
+	return { launchAgent: new LaunchAgent(paths), paths, store: createStateStore(paths.database) }
 }
 
 async function runDaemon(context: ApplicationContext): Promise<void> {
@@ -355,8 +358,22 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 	if (await managerAvailable(context.paths.managerSocket)) {
 		return
 	}
+	const managed = await context.launchAgent.installed()
+	if (managed && (await context.launchAgent.loaded())) await stopDaemon(context)
 	await replacePortOccupant(context.paths.proxyPort)
 	await mkdir(context.paths.runtime, { mode: 0o700, recursive: true })
+	if (managed) {
+		await context.launchAgent.start()
+		const deadline = Date.now() + 15_000
+		while (Date.now() < deadline) {
+			if (await managerAvailable(context.paths.managerSocket)) return
+			await Bun.sleep(100)
+		}
+		throw new ApplicationError(
+			'DAEMON_START_FAILED',
+			`Login startup loaded, but the manager did not respond. Check ${join(context.paths.runtime, 'daemon.log')} and System Settings → General → Login Items & Extensions.`
+		)
+	}
 	const entrypoint = process.argv[1]
 	if (entrypoint === undefined) {
 		throw new ApplicationError('ENTRYPOINT_MISSING', 'Cannot locate the CLI entrypoint')
@@ -424,6 +441,7 @@ async function forceStopDaemon(context: ApplicationContext): Promise<void> {
 }
 
 async function stopDaemon(context: ApplicationContext): Promise<void> {
+	if (await context.launchAgent.installed()) await context.launchAgent.stop()
 	await managerRequest({
 		method: 'manager/stop',
 		schema: EmptyResultSchema,
@@ -445,6 +463,28 @@ async function stopDaemon(context: ApplicationContext): Promise<void> {
 	}
 	await forceStopDaemon(context)
 	process.stdout.write('Manager daemon stopped.\n')
+}
+
+async function installLoginStartup(context: ApplicationContext): Promise<void> {
+	await context.launchAgent.install()
+	await stopDaemon(context)
+	await startDaemon(context)
+	process.stdout.write(
+		'Login startup installed. macOS keeps tokenmaxx running in the background; you can close the terminal.\n'
+	)
+}
+
+async function uninstallLoginStartup(context: ApplicationContext): Promise<void> {
+	if (!(await context.launchAgent.installed())) {
+		process.stdout.write('Login startup is not installed for this TOKENMAXX_HOME.\n')
+		return
+	}
+	await stopDaemon(context)
+	await context.launchAgent.uninstall()
+	await startDaemon(context)
+	process.stdout.write(
+		'Login startup removed. The manager is still running until logout; use tokenmaxx daemon stop to stop it now.\n'
+	)
 }
 
 async function ensureDaemon(context: ApplicationContext): Promise<void> {
@@ -869,6 +909,9 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	process.stdout.write(`${Bun.which('security') === null ? 'missing' : 'ok     '}  security\n`)
 	const running = await managerAvailable(context.paths.managerSocket)
 	const daemonVersion = running ? await managerVersion(context.paths.managerSocket) : null
+	process.stdout.write(
+		`${(await context.launchAgent.installed()) ? 'installed' : 'not installed'}  macOS login startup (tokenmaxx daemon install)\n`
+	)
 	const unreachable = !running && (await proxyIdentity(context.paths.proxyPort)) === 'tokenmaxx'
 	if (unreachable) {
 		const processId = await portOwnerProcessId(context.paths.proxyPort)
@@ -1063,14 +1106,26 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 			case 'list':
 				listAccounts(context)
 				return 0
-			case 'install':
-				await installConfig(context, arguments_[1])
+			case 'install': {
+				const targets = arguments_.slice(1).filter(argument => argument !== '--autostart')
+				if (targets.length > 1 || (targets[0] !== undefined && targets[0] !== 'pi')) {
+					throw new ApplicationError('USAGE', 'Usage: tokenmaxx install [pi] [--autostart]')
+				}
+				if (arguments_.includes('--autostart')) await installLoginStartup(context)
+				await installConfig(context, targets[0])
 				return 0
+			}
 			case 'uninstall':
 				await uninstallConfig(arguments_[1])
 				return 0
 			case 'daemon':
 				switch (arguments_[1]) {
+					case 'install':
+						await installLoginStartup(context)
+						return 0
+					case 'uninstall':
+						await uninstallLoginStartup(context)
+						return 0
 					case 'run':
 						await runDaemon(context)
 						return 0
@@ -1082,6 +1137,9 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						await stopDaemon(context)
 						return 0
 					case 'status': {
+						process.stdout.write(
+							`Login startup: ${(await context.launchAgent.installed()) ? 'installed' : 'not installed'}\n`
+						)
 						if (await managerAvailable(context.paths.managerSocket)) {
 							process.stdout.write('running\n')
 							return 0
@@ -1098,7 +1156,7 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						return 0
 					}
 					default:
-						throw new ApplicationError('USAGE', 'Usage: daemon <start|run|stop|status>')
+						throw new ApplicationError('USAGE', 'Usage: daemon <start|run|stop|status|install|uninstall>')
 				}
 			case 'doctor':
 				await doctor(context)
