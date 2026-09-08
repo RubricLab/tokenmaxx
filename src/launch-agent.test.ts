@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { managerAvailable, managerRequest } from './ipc.ts'
 import { LaunchAgent, type LaunchAgentOptions, launchAgentFiles } from './launch-agent.ts'
 import { applicationPaths, ensureApplicationPaths } from './paths.ts'
+import { uninstallTokenmaxx } from './uninstall.ts'
 
 const directories: string[] = []
 
@@ -151,7 +152,7 @@ async function waitFor<Result>(
 }
 
 test.skipIf(process.platform !== 'darwin' || process.env.TOKENMAXX_TEST_LAUNCHD !== '1')(
-	'launchd runs one manager, restarts it after exit, and supports stop, reinstall, and removal',
+	'launchd runs one manager, restarts it after exit, and supports stop, reinstall, and full uninstall',
 	async () => {
 		const input = await options()
 		input.label = `sh.tokenmaxx.test.${crypto.randomUUID()}`
@@ -209,6 +210,13 @@ test.skipIf(process.platform !== 'darwin' || process.env.TOKENMAXX_TEST_LAUNCHD 
 			await expect(other.install()).rejects.toThrow('different startup configuration')
 			await other.uninstall()
 			expect(await agent.installed()).toBe(true)
+			await uninstallTokenmaxx({
+				environment: input.environment,
+				paths: input.paths,
+				removeCredentials: async () => {},
+				removeStartup: () => agent.uninstall(),
+				stopDaemon: () => agent.stop()
+			})
 		} finally {
 			await agent.uninstall()
 			await waitFor(
@@ -218,7 +226,18 @@ test.skipIf(process.platform !== 'darwin' || process.env.TOKENMAXX_TEST_LAUNCHD 
 		}
 		expect(await agent.installed()).toBe(false)
 		expect(await agent.loaded()).toBe(false)
-		expect(await readFile(input.paths.database)).toBeDefined()
+		for (const path of [
+			input.paths.root,
+			launchAgentFiles(input).appPath,
+			launchAgentFiles(input).plistPath
+		]) {
+			expect(
+				await stat(path).then(
+					() => true,
+					() => false
+				)
+			).toBe(false)
+		}
 		await agent.uninstall()
 	},
 	60_000

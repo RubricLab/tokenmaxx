@@ -1,8 +1,9 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { forgetConfigBackup, restoreConfigBackup, saveConfigBackup } from './config-backup.ts'
 import type { ApplicationPaths } from './paths.ts'
-import { proxyBaseUrl } from './paths.ts'
+import { applicationPaths, proxyBaseUrl } from './paths.ts'
 import { VERSION } from './version.ts'
 
 const providerName = 'tokenmaxx'
@@ -16,12 +17,20 @@ const legacyEndMarkers = [topEndMarker, '# <<< tokmax managed <<<']
 const legacyDummyTokens = [dummyAuthToken, 'managed-by-tokmax']
 const disabledPrefix = /^#\s*(?:tokenmaxx|tokmax)-disabled:\s*/
 
+export function clientConfigPaths(environment: NodeJS.ProcessEnv = process.env) {
+	return {
+		claude: resolve(environment.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'settings.json'),
+		codex: resolve(environment.CODEX_HOME ?? join(homedir(), '.codex'), 'config.toml'),
+		pi: resolve(environment.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'), 'models.json')
+	}
+}
+
 function codexConfigPath(): string {
-	return join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'config.toml')
+	return clientConfigPaths().codex
 }
 
 function claudeSettingsPath(): string {
-	return join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'settings.json')
+	return clientConfigPaths().claude
 }
 
 async function readFileOrEmpty(path: string): Promise<string> {
@@ -92,16 +101,27 @@ function buildCodexManagedConfig(paths: ApplicationPaths): { top: string; table:
 
 export async function installCodexConfig(paths: ApplicationPaths): Promise<string> {
 	const path = codexConfigPath()
-	const base = stripCodexManagedBlocks(await readFileOrEmpty(path))
+	const existing = await readFileOrEmpty(path)
+	const base = stripCodexManagedBlocks(existing)
 	const managed = buildCodexManagedConfig(paths)
 	const body = base.length === 0 ? '' : `${base}\n\n`
+	const installed = `${managed.top}\n\n${body}${managed.table}\n`
+	await saveConfigBackup(
+		paths,
+		path,
+		installed,
+		/tokenmaxx|tokmax/.test(existing) ? restoreCodexContent(existing) : undefined
+	)
 	await mkdir(dirname(path), { recursive: true })
-	await writeFile(path, `${managed.top}\n\n${body}${managed.table}\n`, { mode: 0o600 })
+	await writeFile(path, installed, { mode: 0o600 })
 	return path
 }
 
-export async function uninstallCodexConfig(): Promise<string | null> {
-	const path = codexConfigPath()
+export async function uninstallCodexConfig(
+	paths = applicationPaths(),
+	path = codexConfigPath()
+): Promise<string | null> {
+	if (await restoreConfigBackup(paths, path)) return path
 	const existing = await readFile(path, 'utf8').catch(() => null)
 	const carriesOurConfig = (content: string): boolean =>
 		[...legacyBeginMarkers, tableBeginMarker].some(marker => content.includes(marker)) ||
@@ -111,6 +131,7 @@ export async function uninstallCodexConfig(): Promise<string | null> {
 		return null
 	}
 	await writeFile(path, restoreCodexContent(existing), { mode: 0o600 })
+	await forgetConfigBackup(paths, path)
 	return path
 }
 
@@ -124,25 +145,35 @@ export async function installClaudeConfig(paths: ApplicationPaths): Promise<stri
 	const raw = await readFileOrEmpty(path)
 	let settings: ClaudeSettings = {}
 	if (raw.trim().length > 0) {
-		try {
-			settings = JSON.parse(raw) as ClaudeSettings
-		} catch {
-			settings = {}
-		}
+		settings = JSON.parse(raw) as ClaudeSettings
 	}
+	const original = structuredClone(settings)
+	if (original.env?.ANTHROPIC_BASE_URL === proxyBaseUrl(paths, 'anthropic'))
+		delete original.env.ANTHROPIC_BASE_URL
+	if (legacyDummyTokens.includes(original.env?.ANTHROPIC_AUTH_TOKEN ?? ''))
+		delete original.env?.ANTHROPIC_AUTH_TOKEN
+	const sanitized =
+		JSON.stringify(original) !== JSON.stringify(settings)
+			? `${JSON.stringify(original, null, 2)}\n`
+			: undefined
 	// Base URL only: any set ANTHROPIC_AUTH_TOKEN switches Claude Code off its
 	// claude.ai login, losing connectors and MCP; the proxy injects credentials itself.
 	settings.env = { ...settings.env, ANTHROPIC_BASE_URL: proxyBaseUrl(paths, 'anthropic') }
 	if (legacyDummyTokens.includes(settings.env.ANTHROPIC_AUTH_TOKEN ?? '')) {
 		delete settings.env.ANTHROPIC_AUTH_TOKEN
 	}
+	const installed = `${JSON.stringify(settings, null, 2)}\n`
+	await saveConfigBackup(paths, path, installed, sanitized)
 	await mkdir(dirname(path), { recursive: true })
-	await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 })
+	await writeFile(path, installed, { mode: 0o600 })
 	return path
 }
 
-export async function uninstallClaudeConfig(): Promise<string | null> {
-	const path = claudeSettingsPath()
+export async function uninstallClaudeConfig(
+	paths = applicationPaths(),
+	path = claudeSettingsPath()
+): Promise<string | null> {
+	if (await restoreConfigBackup(paths, path)) return path
 	const raw = await readFile(path, 'utf8').catch(() => null)
 	if (raw === null) {
 		return null
@@ -159,7 +190,7 @@ export async function uninstallClaudeConfig(): Promise<string | null> {
 	const { ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ...rest } = settings.env
 	const managed =
 		(ANTHROPIC_AUTH_TOKEN !== undefined && legacyDummyTokens.includes(ANTHROPIC_AUTH_TOKEN)) ||
-		(ANTHROPIC_BASE_URL?.includes('127.0.0.1') ?? false)
+		ANTHROPIC_BASE_URL === proxyBaseUrl(paths, 'anthropic')
 	if (!managed) {
 		return null
 	}
@@ -243,7 +274,7 @@ export interface PiResult {
 }
 
 function piModelsPath(): string {
-	return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'), 'models.json')
+	return clientConfigPaths().pi
 }
 
 const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai']
@@ -296,23 +327,28 @@ function ensureObject(parent: Record<string, unknown>, key: string): Record<stri
 
 async function writePiProviders(
 	providers: Record<string, unknown> | null,
-	manual: string
+	manual: string,
+	paths?: ApplicationPaths,
+	path = piModelsPath()
 ): Promise<PiResult> {
-	const path = piModelsPath()
 	const raw = await readFileOrEmpty(path)
 	const config = parseJsonObject(raw)
 	if (config === null) {
 		return { applied: false, manual, path }
 	}
 	const bucket = ensureObject(config, 'providers')
+	const hadManaged = piProviderKeys.some(key => key in bucket)
 	for (const key of piProviderKeys) {
 		delete bucket[key]
 	}
+	const sanitized = hadManaged ? `${JSON.stringify(config, null, 2)}\n` : undefined
 	if (providers !== null) {
 		Object.assign(bucket, providers)
 	}
+	const installed = `${JSON.stringify(config, null, 2)}\n`
+	if (paths !== undefined) await saveConfigBackup(paths, path, installed, sanitized)
 	await mkdir(dirname(path), { recursive: true })
-	await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+	await writeFile(path, installed, { mode: 0o600 })
 	return { applied: true, manual: null, path }
 }
 
@@ -320,18 +356,26 @@ async function writePiProviders(
 export async function installPiConfig(paths: ApplicationPaths): Promise<PiResult> {
 	return writePiProviders(
 		piProviders(paths),
-		`could not parse it as JSON — add this under providers yourself:\n${JSON.stringify(piProviders(paths), null, 2)}`
+		`could not parse it as JSON — add this under providers yourself:\n${JSON.stringify(piProviders(paths), null, 2)}`,
+		paths
 	)
 }
 
-export async function uninstallPiConfig(): Promise<PiResult> {
-	const raw = await readFile(piModelsPath(), 'utf8').catch(() => null)
+export async function uninstallPiConfig(
+	paths = applicationPaths(),
+	path = piModelsPath()
+): Promise<PiResult> {
+	if (await restoreConfigBackup(paths, path)) return { applied: true, manual: null, path }
+	const raw = await readFile(path, 'utf8').catch(() => null)
 	if (raw === null) {
-		return { applied: false, manual: null, path: piModelsPath() }
+		return { applied: false, manual: null, path }
 	}
+	if (!piProviderKeys.some(key => raw.includes(key))) return { applied: false, manual: null, path }
 	return writePiProviders(
 		null,
-		'could not parse it as JSON — remove the tokenmaxx-anthropic and tokenmaxx-openai providers yourself'
+		'could not parse it as JSON — remove the tokenmaxx-anthropic and tokenmaxx-openai providers yourself',
+		undefined,
+		path
 	)
 }
 

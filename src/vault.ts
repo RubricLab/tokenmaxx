@@ -86,6 +86,23 @@ function requireSafeIdentifier(kind: string, value: string): string {
 	return value
 }
 
+export async function removeMacOsKeychainCredentials(
+	service = defaultService,
+	runner: KeychainCommandRunner = defaultKeychainCommandRunner()
+): Promise<void> {
+	requireSafeIdentifier('service', service)
+	for (;;) {
+		const result = await runner.run(['security', 'delete-generic-password', '-s', service])
+		if (result.exitCode === 44) return
+		if (result.exitCode !== 0) {
+			throw new ApplicationError(
+				'KEYCHAIN_DELETE_FAILED',
+				redactSecrets(result.stderr) || 'Keychain cleanup failed'
+			)
+		}
+	}
+}
+
 export function createMacOsKeychainVault(
 	service = defaultService,
 	runner: KeychainCommandRunner = defaultKeychainCommandRunner()

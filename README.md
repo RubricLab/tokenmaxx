@@ -52,10 +52,26 @@ The background item is named **tokenmaxx** in System Settings → General → Lo
 tokenmaxx daemon status       # manager health and login startup configuration
 tokenmaxx daemon stop         # stop now; startup remains installed for the next login
 tokenmaxx daemon start        # start again under macOS supervision
-tokenmaxx daemon uninstall    # remove login startup; keep a standalone manager running
+tokenmaxx daemon disable      # remove login startup and stop the manager
 ```
 
-Commands that need the manager, including opening the dashboard, start it again after `daemon stop`. To remove login startup and stop the manager entirely, run `tokenmaxx daemon uninstall` followed by `tokenmaxx daemon stop`. Client routing remains configured; run `tokenmaxx uninstall` (and `tokenmaxx uninstall pi` if applicable) to restore direct provider connections.
+Commands that need the manager, including opening the dashboard, start it again after `daemon stop`. `daemon disable` removes automatic startup while retaining your accounts and data for manual use.
+
+### Uninstall completely
+
+```bash
+tokenmaxx uninstall
+```
+
+This stops the manager, restores Codex, Claude, and pi routing, removes the LaunchAgent and launcher app, deletes tokenmaxx's Keychain credentials (including orphaned entries), and removes its account database, usage history, preferences, logs, isolated profiles, and saved setup files. It then asks the owning global package manager—Bun, npm, pnpm, or Yarn—to remove the CLI package. The manager is not restarted.
+
+Setup records the client settings it replaces. Uninstall restores the original files when they are unchanged, removes files and empty client directories created by setup, and preserves unrelated settings and subsequent user edits. Older installations without these records can have their managed routing removed, but previously overwritten settings cannot be recovered. Native client logins, unrelated files, and other packages are preserved. When run from a source checkout, the checkout is kept.
+
+To restore routing while keeping tokenmaxx installed, use `tokenmaxx uninstall routing`. `tokenmaxx uninstall pi` restores only pi routing. These commands do not delete saved accounts or usage history.
+
+If cleanup fails, the command reports the failed step and keeps the remaining recovery data for a retry. Package removal happens only after setup cleanup succeeds. If the package manager cannot be identified, the command reports that the package still needs removal.
+
+### Startup files and troubleshooting
 
 The installer creates:
 
@@ -122,9 +138,10 @@ A single loopback proxy on `127.0.0.1:8459`, and the clients you already use.
 tokenmaxx                                  live dashboard
 tokenmaxx login <codex|claude>             sign in; isolated, idempotent
 tokenmaxx install [pi] [--autostart]        route clients; optionally start at login
-tokenmaxx uninstall                        restore native config
+tokenmaxx uninstall                        remove all setup, data, credentials, and the global package
+tokenmaxx uninstall <routing|pi>           restore routing while keeping tokenmaxx installed
 tokenmaxx daemon start | stop | status     manage the background manager
-tokenmaxx daemon install | uninstall       add or remove macOS login startup
+tokenmaxx daemon install | disable         add or remove macOS login startup
 tokenmaxx switch <codex|claude> <email>    make an account active
 tokenmaxx logout [codex|claude] <email>    sign out; the credential is deleted
 tokenmaxx auto <both|codex|claude> <on|off> [--threshold N]

@@ -3,7 +3,7 @@ import { access, chmod, lstat, mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { ApplicationError } from './errors.ts'
-import type { ApplicationPaths } from './paths.ts'
+import { type ApplicationPaths, applicationPaths } from './paths.ts'
 
 type PlistValue = string | number | boolean | PlistValue[] | { [key: string]: PlistValue }
 
@@ -149,19 +149,37 @@ export class LaunchAgent {
 	}
 
 	public async installed(): Promise<boolean> {
+		const environment = await this.environment()
+		return environment !== null && applicationPaths(environment).root === this.#options.paths.root
+	}
+
+	public async environment(): Promise<NodeJS.ProcessEnv | null> {
 		if (process.platform !== 'darwin' || !(await Bun.file(this.#configuration.plistPath).exists())) {
-			return false
+			return null
 		}
 		const result = await run([
 			'/usr/bin/plutil',
-			'-extract',
-			'EnvironmentVariables.TOKENMAXX_HOME',
-			'raw',
+			'-convert',
+			'json',
 			'-o',
 			'-',
 			this.#configuration.plistPath
 		])
-		return result.exitCode === 0 && result.stdout.replace(/\n$/, '') === this.#options.paths.root
+		if (result.exitCode !== 0)
+			throw new ApplicationError(
+				'AUTOSTART_CONFLICT',
+				'Cannot read the existing startup configuration'
+			)
+		const config = JSON.parse(result.stdout) as {
+			Label?: string
+			EnvironmentVariables?: NodeJS.ProcessEnv
+		}
+		if (config.Label !== this.#configuration.label)
+			throw new ApplicationError(
+				'AUTOSTART_CONFLICT',
+				'The startup configuration belongs to another service'
+			)
+		return config.EnvironmentVariables ?? {}
 	}
 
 	async #checkAppOwnership(): Promise<void> {
@@ -274,7 +292,7 @@ export class LaunchAgent {
 		if (!(await this.installed())) return
 		await this.#checkAppOwnership()
 		await this.stop()
-		await rm(this.#configuration.plistPath)
 		await rm(this.#configuration.appPath, { force: true, recursive: true })
+		await rm(this.#configuration.plistPath)
 	}
 }
