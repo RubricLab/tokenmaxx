@@ -1,3 +1,4 @@
+- [2026-09-23] price fable 5.1, opus 5.5, sonnet 5, gpt-6 and gpt-5.6 at current rates
 - [2026-08-21] codex keeps its shell and apply_patch tools on the gpt-5.6 models
 - [2026-08-18] meter clients that hang up early
 - [2026-08-18] reclaim bare provider tables
