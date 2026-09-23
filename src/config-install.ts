@@ -249,10 +249,9 @@ function piModelsPath(): string {
 const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai']
 
 // The anthropic ids pair with an API-key account (subscription auth is not for
-// third-party harnesses); gpt-5.6-sol is the one id the ChatGPT codex backend
-// accepts for subscription accounts.
-const piAnthropicModelIds = ['claude-opus-4-8', 'claude-sonnet-4-6']
-const piOpenaiModelIds = ['gpt-5.6-sol']
+// third-party harnesses).
+const piAnthropicModelIds = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5']
+const piOpenaiModelIds = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
 
 function piProviders(paths: ApplicationPaths): Record<string, unknown> {
 	const models = (ids: readonly string[]) => ids.map(id => ({ id, reasoning: true }))
