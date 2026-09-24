@@ -182,11 +182,14 @@ interface InstallStatus {
 	codexRouted: boolean
 	claudeRouted: boolean
 	codexStale: boolean
+	codexBaseUrl: string | null
+	claudeBaseUrl: string | null
 }
 
 export async function installStatus(): Promise<InstallStatus> {
 	const codexRaw = await readFileOrEmpty(codexConfigPath())
 	let codexRouted = false
+	let codexBaseUrl: string | null = null
 	try {
 		const parsed = Bun.TOML.parse(codexRaw) as {
 			model_provider?: unknown
@@ -194,7 +197,8 @@ export async function installStatus(): Promise<InstallStatus> {
 		}
 		const selected = typeof parsed.model_provider === 'string' ? parsed.model_provider : null
 		const baseUrl = selected === null ? undefined : parsed.model_providers?.[selected]?.base_url
-		codexRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
+		codexBaseUrl = typeof baseUrl === 'string' ? baseUrl : null
+		codexRouted = codexBaseUrl?.includes('127.0.0.1') ?? false
 	} catch {
 		codexRouted = false
 	}
@@ -203,31 +207,33 @@ export async function installStatus(): Promise<InstallStatus> {
 		([...legacyBeginMarkers, tableBeginMarker].some(marker => codexRaw.includes(marker)) ||
 			codexRaw.match(bareProviderTable) !== null)
 
-	let claudeRouted = false
+	let claudeBaseUrl: string | null = null
 	try {
 		const settings = JSON.parse(await readFileOrEmpty(claudeSettingsPath())) as ClaudeSettings
-		claudeRouted = settings.env?.ANTHROPIC_BASE_URL?.includes('127.0.0.1') ?? false
+		claudeBaseUrl = settings.env?.ANTHROPIC_BASE_URL ?? null
 	} catch {
-		claudeRouted = false
+		claudeBaseUrl = null
 	}
-	return { claudeRouted, codexRouted, codexStale }
+	const claudeRouted = claudeBaseUrl?.includes('127.0.0.1') ?? false
+	return { claudeBaseUrl, claudeRouted, codexBaseUrl, codexRouted, codexStale }
 }
 
 // Configs written by an older version stay stale after an update (#17): re-apply
 // install for whatever is currently routed, once per version change. Never adds
-// routing — a harness the user uninstalled or never installed stays untouched.
+// routing — a harness the user uninstalled or never installed stays untouched, and a
+// config routed to another tokenmaxx instance's port belongs to that instance.
 export async function healInstalledConfigs(paths: ApplicationPaths): Promise<string[]> {
 	const stampPath = join(paths.root, 'healed-version')
 	if ((await readFileOrEmpty(stampPath)).trim() === VERSION) {
 		return []
 	}
-	const { claudeRouted, codexRouted } = await installStatus()
+	const { claudeBaseUrl, codexBaseUrl } = await installStatus()
 	const healed: string[] = []
-	if (codexRouted) {
+	if (codexBaseUrl === proxyBaseUrl(paths, 'openai')) {
 		await installCodexConfig(paths)
 		healed.push('codex')
 	}
-	if (claudeRouted) {
+	if (claudeBaseUrl === proxyBaseUrl(paths, 'anthropic')) {
 		await installClaudeConfig(paths)
 		healed.push('claude')
 	}

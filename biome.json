@@ -4,6 +4,7 @@
 		"includes": [
 			"**",
 			"!dist",
+			"!gui",
 			"!node_modules",
 			"!remotion",
 			"!assets/generated",

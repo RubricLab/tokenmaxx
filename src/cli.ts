@@ -5,8 +5,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { z } from 'zod'
-import { registerClaudeAccount, registerClaudeApiKeyAccount } from './claude.ts'
-import { registerCodexAccount, registerOpenAiApiKeyAccount } from './codex.ts'
+import { registerClaudeAccount } from './claude.ts'
+import { registerCodexAccount } from './codex.ts'
 import {
 	healInstalledConfigs,
 	installClaudeConfig,
@@ -26,8 +26,11 @@ import {
 	managerVersion,
 	readDashboard,
 	readProxyPort,
+	readRouting,
 	requestAccountRemove,
 	requestAccountSave,
+	requestAddApiKey,
+	requestRouting,
 	requestSwitch,
 	startManagerServer
 } from './ipc.ts'
@@ -37,7 +40,7 @@ import { proxyIdentity } from './proxy.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
 import { createMacOsKeychainVault } from './vault.ts'
-import { availableUpdate, installedVersion, VERSION } from './version.ts'
+import { availableUpdate, compiledBinary, installedVersion, VERSION } from './version.ts'
 
 const DaemonLockSchema = z
 	.object({
@@ -351,20 +354,28 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 	}
 }
 
+function daemonCommandArguments(): string[] {
+	if (compiledBinary) {
+		return ['daemon', 'run']
+	}
+	const entrypoint = process.argv[1]
+	if (entrypoint === undefined) {
+		throw new ApplicationError('ENTRYPOINT_MISSING', 'Cannot locate the CLI entrypoint')
+	}
+	return [entrypoint, 'daemon', 'run']
+}
+
 async function startDaemon(context: ApplicationContext): Promise<void> {
 	if (await managerAvailable(context.paths.managerSocket)) {
 		return
 	}
 	await replacePortOccupant(context.paths.proxyPort)
 	await mkdir(context.paths.runtime, { mode: 0o700, recursive: true })
-	const entrypoint = process.argv[1]
-	if (entrypoint === undefined) {
-		throw new ApplicationError('ENTRYPOINT_MISSING', 'Cannot locate the CLI entrypoint')
-	}
+	const daemonArguments = daemonCommandArguments()
 	const logDescriptor = openSync(join(context.paths.runtime, 'daemon.log'), 'a', 0o600)
 	try {
 		for (let attempt = 0; attempt < 3; attempt += 1) {
-			const child = spawn(process.execPath, [entrypoint, 'daemon', 'run'], {
+			const child = spawn(process.execPath, daemonArguments, {
 				detached: true,
 				env: process.env,
 				stdio: ['ignore', logDescriptor, logDescriptor]
@@ -543,10 +554,9 @@ export function stripTerminalNoise(line: string): string {
 	return clean.trim()
 }
 
-async function registerApiKeyAccount(
-	provider: 'openai' | 'anthropic',
+async function promptApiKey(
 	keyArgument: string | undefined
-): Promise<Account> {
+): Promise<{ key: string; label: string }> {
 	if (process.stdin.isTTY !== true && keyArgument === undefined) {
 		throw new ApplicationError(
 			'USAGE',
@@ -555,41 +565,19 @@ async function registerApiKeyAccount(
 	}
 	await handTerminalBack()
 	const readline = createInterface({ input: process.stdin, output: process.stdout })
-	let key: string
-	let label: string
 	try {
-		key = keyArgument ?? stripTerminalNoise(await readline.question('Paste the API key: '))
-		label = stripTerminalNoise(
+		const key = keyArgument ?? stripTerminalNoise(await readline.question('Paste the API key: '))
+		const label = stripTerminalNoise(
 			await readline.question('Name this account (shown in the dashboard): ')
 		)
+		return { key, label }
 	} finally {
 		readline.close()
 	}
-	if (label.trim().length === 0) {
-		throw new ApplicationError('USAGE', 'The account needs a name')
-	}
-	const vault = createMacOsKeychainVault()
-	return provider === 'openai'
-		? registerOpenAiApiKeyAccount({ key, label: label.trim(), vault })
-		: registerClaudeApiKeyAccount({ key, label: label.trim(), vault })
 }
 
-async function login(
-	context: ApplicationContext,
-	providerArgument: string | undefined,
-	options: { apiKey: boolean; apiKeyValue?: string } = { apiKey: false }
-): Promise<void> {
-	if (providerArgument === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude> [--api-key [key]]')
-	}
-	const provider = providerFromCli(providerArgument)
-	if (!options.apiKey) {
-		assertCliInstalled(provider)
-	}
-	await ensureDaemon(context)
-	const authenticated = options.apiKey
-		? await registerApiKeyAccount(provider, options.apiKeyValue)
-		: await registerIsolatedAccount(provider)
+async function signInOauth(context: ApplicationContext, provider: ProviderId): Promise<boolean> {
+	const authenticated = await registerIsolatedAccount(provider)
 	const existing = context.store
 		.listAccounts(provider)
 		.find(
@@ -612,7 +600,9 @@ async function login(
 			secretReference: existing?.secretReference ?? null
 		})
 	} catch (error) {
-		await removeUnstoredAccount(authenticated)
+		if (authenticated.secretReference !== null) {
+			await createMacOsKeychainVault().remove(authenticated.secretReference)
+		}
 		throw error
 	}
 	process.stdout.write(
@@ -620,21 +610,38 @@ async function login(
 			? `Signed in ${account.label}.\n`
 			: `Re-authenticated ${account.label}; live sessions pick it up on their next request.\n`
 	)
-	if (existing === undefined) {
-		const status = await installStatus()
-		const alreadyRouted = provider === 'openai' ? status.codexRouted : status.claudeRouted
-		if (!alreadyRouted) {
-			await setRouting(context, provider, true).catch(() => undefined)
-			process.stdout.write(
-				`tokenmaxx is on for ${providerArgument} — run ${providerArgument} as usual.\n`
-			)
-		}
-	}
+	return existing === undefined
 }
 
-async function removeUnstoredAccount(account: Account): Promise<void> {
-	if (account.secretReference !== null) {
-		await createMacOsKeychainVault().remove(account.secretReference)
+async function login(
+	context: ApplicationContext,
+	providerArgument: string | undefined,
+	options: { apiKey: boolean; apiKeyValue?: string } = { apiKey: false }
+): Promise<void> {
+	if (providerArgument === undefined) {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude> [--api-key [key]]')
+	}
+	const provider = providerFromCli(providerArgument)
+	if (!options.apiKey) {
+		assertCliInstalled(provider)
+	}
+	await ensureDaemon(context)
+	const socket = context.paths.managerSocket
+	if (options.apiKey) {
+		const account = await requestAddApiKey(socket, {
+			provider,
+			...(await promptApiKey(options.apiKeyValue))
+		})
+		process.stdout.write(`Signed in ${account.label}.\n`)
+	} else if (!(await signInOauth(context, provider))) {
+		return
+	}
+	const routing = await readRouting(socket)
+	if (!routing.routed[provider]) {
+		await requestRouting(socket, provider, true).catch(() => undefined)
+		process.stdout.write(
+			`tokenmaxx is on for ${providerArgument} — run ${providerArgument} as usual.\n`
+		)
 	}
 }
 
@@ -840,18 +847,6 @@ async function uninstallConfig(targetArgument?: string): Promise<void> {
 	)
 }
 
-async function setRouting(
-	context: ApplicationContext,
-	provider: ProviderId,
-	enable: boolean
-): Promise<void> {
-	if (provider === 'openai') {
-		await (enable ? installCodexConfig(context.paths) : uninstallCodexConfig())
-	} else {
-		await (enable ? installClaudeConfig(context.paths) : uninstallClaudeConfig())
-	}
-}
-
 async function doctor(context: ApplicationContext): Promise<void> {
 	const tools = [
 		['bun', '1.2+'],
@@ -884,7 +879,7 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	process.stdout.write(
 		update === null
 			? `ok       version  ${VERSION} (latest)\n`
-			: `note     version  ${VERSION} — v${update} is out: bun add -g tokenmaxx\n`
+			: `note     version  ${VERSION} — v${update} is out: ${compiledBinary ? 'update the tokenmaxx app' : 'bun add -g tokenmaxx'}\n`
 	)
 	if (running) {
 		const port = await readProxyPort(context.paths.managerSocket).catch(() => null)
@@ -954,9 +949,9 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						fixture: {
 							name: fixtureName,
 							now,
+							routed,
 							timewarp: Number.isFinite(timewarp) && timewarp > 0 ? timewarp : 0
-						},
-						routing: { anthropic: routed, openai: routed }
+						}
 					})
 					context.store.close()
 					process.exit(0)
@@ -964,16 +959,9 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				await ensureDaemon(context)
 				if (process.stdout.isTTY) {
 					const { runTuiDashboard } = await import('./tui/dashboard.ts')
-					const readRouting = async (): Promise<Record<'openai' | 'anthropic', boolean>> => {
-						const status = await installStatus()
-						return { anthropic: status.claudeRouted, openai: status.codexRouted }
-					}
 					let alert = ''
 					for (;;) {
-						const action = await runTuiDashboard(context.paths.managerSocket, {
-							alert,
-							routing: await readRouting()
-						})
+						const action = await runTuiDashboard(context.paths.managerSocket, { alert })
 						alert = ''
 						await handTerminalBack()
 						if (action === undefined) {
@@ -995,13 +983,13 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 							})
 							continue
 						}
-						if (action.kind === 'routing') {
-							await setRouting(context, action.provider, action.enable).catch(error => {
-								alert = errorMessage(error)
-							})
-							continue
-						}
 						if (action.kind === 'update') {
+							if (compiledBinary) {
+								process.stdout.write(
+									`v${action.version} is out — update the tokenmaxx app from https://tokenmaxx.sh\n`
+								)
+								break
+							}
 							process.stdout.write(`Updating tokenmaxx to v${action.version}…\n`)
 							const bun = Bun.which('bun') ?? 'bun'
 							const result = Bun.spawnSync([bun, 'add', '-g', `tokenmaxx@${action.version}`], {
@@ -1022,6 +1010,11 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				process.stdout.write(`${renderDashboard(await readDashboard(context.paths.managerSocket))}\n`)
 				return 0
 			}
+			case 'version':
+			case '--version':
+			case '-v':
+				process.stdout.write(`${VERSION}\n`)
+				return 0
 			case 'help':
 			case '--help':
 			case '-h':
@@ -1075,7 +1068,7 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						await runDaemon(context)
 						return 0
 					case 'start':
-						await startDaemon(context)
+						await ensureDaemon(context)
 						process.stdout.write('Manager daemon is running.\n')
 						return 0
 					case 'stop':

@@ -1,9 +1,16 @@
-import { claudeUpstream, migrateClaudeAccount, probeClaude, removeClaudeProfile } from './claude.ts'
+import {
+	claudeUpstream,
+	migrateClaudeAccount,
+	probeClaude,
+	registerClaudeApiKeyAccount,
+	removeClaudeProfile
+} from './claude.ts'
 import {
 	codexUpstream,
 	probeCodex,
 	probeCodexResetCredits,
-	redeemCodexResetCredit
+	redeemCodexResetCredit,
+	registerOpenAiApiKeyAccount
 } from './codex.ts'
 import {
 	type Account,
@@ -165,6 +172,10 @@ export class AccountManager {
 		return this.#proxy?.port ?? null
 	}
 
+	public get paths(): ApplicationPaths {
+		return this.#paths
+	}
+
 	private async upstreamInjection(
 		provider: ProviderId,
 		forceRefresh: boolean
@@ -316,6 +327,27 @@ export class AccountManager {
 				})
 			}
 		})
+	}
+
+	public async addApiKeyAccount(input: {
+		provider: ProviderId
+		key: string
+		label: string
+	}): Promise<Account> {
+		const label = input.label.trim()
+		if (label.length === 0) {
+			throw new ApplicationError('USAGE', 'The account needs a name')
+		}
+		const register =
+			input.provider === 'openai' ? registerOpenAiApiKeyAccount : registerClaudeApiKeyAccount
+		const account = await register({
+			fetchImplementation: this.#dependencies.fetchImplementation,
+			key: input.key,
+			label,
+			vault: this.#vault
+		})
+		await this.saveAccount({ account, removePrevious: { profilePath: null, secretReference: null } })
+		return account
 	}
 
 	public setAutomationPolicy(input: {
