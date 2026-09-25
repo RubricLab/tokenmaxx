@@ -62,6 +62,10 @@ const PolicyParamsSchema = z
 
 const ResetParamsSchema = z.object({ accountId: z.uuid() }).strict()
 
+const OrderParamsSchema = z
+	.object({ accountIds: z.array(z.uuid()), provider: ProviderIdSchema })
+	.strict()
+
 const ReplaceCredentialParamsSchema = z
 	.object({
 		account: AccountSchema,
@@ -114,6 +118,11 @@ async function dispatch(
 		case 'account/remove': {
 			await manager.removeAccount(ResetParamsSchema.parse(params).accountId)
 			return { removed: true }
+		}
+		case 'account/order': {
+			const parsed = OrderParamsSchema.parse(params)
+			await manager.setAccountOrder(parsed.provider, parsed.accountIds)
+			return manager.dashboard()
 		}
 		case 'codex/resetCredits':
 			return manager.codexResetCredits(ResetParamsSchema.parse(params).accountId)
@@ -394,4 +403,18 @@ export function requestAccountSave(
 		socketPath,
 		timeoutMilliseconds: 15_000
 	}).then(() => undefined)
+}
+
+export function requestAccountOrder(
+	socketPath: string,
+	provider: ProviderId,
+	accountIds: readonly string[]
+): Promise<DashboardSnapshot> {
+	return managerRequest({
+		method: 'account/order',
+		params: { accountIds, provider },
+		schema: DashboardSnapshotSchema,
+		socketPath,
+		timeoutMilliseconds: 15_000
+	})
 }

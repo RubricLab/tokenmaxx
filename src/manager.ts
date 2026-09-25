@@ -28,7 +28,7 @@ import {
 	startProxy,
 	type UpstreamInjection
 } from './proxy.ts'
-import { selectRotation } from './selection.ts'
+import { orderRank, selectRotation } from './selection.ts'
 import type { StateStore, TokenTimeframeAggregate } from './storage.ts'
 import type { CredentialVault } from './vault.ts'
 
@@ -315,6 +315,39 @@ export class AccountManager {
 					target: input.account
 				})
 			}
+		})
+	}
+
+	/** Puts `accountIds` first in this order and keeps the rest after them; an empty list clears the order. */
+	public async setAccountOrder(provider: ProviderId, accountIds: readonly string[]): Promise<void> {
+		return this.withProviderOperation(provider, async () => {
+			const accounts = this.#store.listAccounts(provider)
+			const listed = [...new Set(accountIds)].map(id => {
+				const account = accounts.find(candidate => candidate.id === id)
+				if (account === undefined) {
+					throw new ApplicationError('ACCOUNT_NOT_FOUND', `No ${provider} account ${id}`)
+				}
+				return account
+			})
+			const rest = accounts
+				.filter(account => !listed.includes(account))
+				.sort(
+					(left, right) => orderRank(left) - orderRank(right) || left.label.localeCompare(right.label)
+				)
+			const now = this.#dependencies.now().toISOString()
+			const ordered = listed.length === 0 ? accounts : [...listed, ...rest]
+			ordered.forEach((account, index) => {
+				const priority = listed.length === 0 ? undefined : index
+				if (account.priority !== priority) {
+					const { priority: _, ...unordered } = account
+					this.#store.saveAccount(
+						priority === undefined
+							? { ...unordered, updatedAt: now }
+							: { ...account, priority, updatedAt: now }
+					)
+				}
+			})
+			await this.evaluateAutomation(provider)
 		})
 	}
 
