@@ -78,13 +78,6 @@ const UsageWindowSchema = z
 	.strict()
 export type UsageWindow = z.infer<typeof UsageWindowSchema>
 
-const UsageSnapshotFieldsSchema = z.object({
-	accountId: z.uuid(),
-	hardLimitReached: z.boolean(),
-	observedAt: z.iso.datetime(),
-	windows: z.array(UsageWindowSchema)
-})
-
 export const ResetCreditCountsSchema = z
 	.object({
 		applicable: z.number().int().nonnegative(),
@@ -92,6 +85,14 @@ export const ResetCreditCountsSchema = z
 	})
 	.strict()
 export type ResetCreditCounts = z.infer<typeof ResetCreditCountsSchema>
+
+const UsageSnapshotFieldsSchema = z.object({
+	accountId: z.uuid(),
+	hardLimitReached: z.boolean(),
+	observedAt: z.iso.datetime(),
+	resetCredits: ResetCreditCountsSchema.nullish().default(null),
+	windows: z.array(UsageWindowSchema)
+})
 
 export const ExtraUsageSchema = z
 	.object({
@@ -110,7 +111,6 @@ export const UsageSnapshotSchema = z.discriminatedUnion('provider', [
 		extraUsage: ExtraUsageSchema.nullish().default(null),
 		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
 		provider: z.literal('openai'),
-		resetCredits: ResetCreditCountsSchema.nullish().default(null),
 		source: z.enum(['codexUsageEndpoint', 'proxyResponseHeaders', 'apiKeyProbe'])
 	}).strict(),
 	UsageSnapshotFieldsSchema.extend({
@@ -140,7 +140,7 @@ export type ResetCreditsView = z.infer<typeof ResetCreditsViewSchema>
 
 export const ResetOutcomeSchema = z
 	.object({
-		code: z.enum(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed']),
+		code: z.enum(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed', 'unavailable']),
 		windowsReset: z.number().int().nonnegative()
 	})
 	.strict()

@@ -205,15 +205,11 @@ function usage(seed: AccountSeed, now: number): UsageSnapshot {
 		observedAt: new Date(
 			now - 8_000 - Math.round(Math.abs(noise(Math.floor(now / (5 * MINUTE)))) * 16_000)
 		).toISOString(),
+		resetCredits: seed.resetCredits ?? null,
 		windows
 	} as const
 	return seed.provider === 'openai'
-		? {
-				...base,
-				provider: 'openai',
-				resetCredits: seed.resetCredits ?? null,
-				source: 'codexUsageEndpoint'
-			}
+		? { ...base, provider: 'openai', source: 'codexUsageEndpoint' }
 		: { ...base, provider: 'anthropic', source: 'claudeUsageEndpoint' }
 }
 

@@ -1,3 +1,4 @@
+- [2026-09-30] claude banked resets
 - [2026-09-30] toml fallback test survives newer bun
 - [2026-09-30] [settings shows live routing state](https://github.com/RubricLab/tokenmaxx/commit/df576cf609f72bf274e932fe1bd8d74ed191cc7d)
 - [2026-09-30] [pick which accounts auto-rotation uses first](https://github.com/RubricLab/tokenmaxx/commit/8999da2b9c11f204d5b2d932b64fb221e52646dc)

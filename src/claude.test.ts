@@ -2,9 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import {
 	type ClaudeOauth,
 	claudeUpstream,
+	probeClaude,
+	redeemClaudeReset,
 	refreshClaudeCredential,
 	registerClaudeAccount
 } from './claude.ts'
+import type { Account } from './domain.ts'
 import type { CredentialVault } from './vault.ts'
 
 function memoryVault(initial: Record<string, string>): CredentialVault & {
@@ -158,5 +161,99 @@ describe('api key accounts', () => {
 		expect(injection.baseUrl).toBe('https://api.anthropic.com')
 		expect(injection.headers['x-api-key']).toBe('sk-ant-test')
 		expect(injection.stripHeaders).toContain('authorization')
+	})
+})
+
+describe('claude banked resets on the wire', () => {
+	const oauthAccount: Extract<Account, { provider: 'anthropic' }> = {
+		auth: 'oauth',
+		createdAt: '2026-09-01T00:00:00.000Z',
+		enabled: true,
+		externalAccountId: 'account-uuid',
+		externalUserId: null,
+		health: 'ready',
+		id: '00000000-0000-4000-8000-000000000301',
+		identity: 'max@example.com',
+		label: 'max@example.com',
+		onThreshold: 'switch',
+		plan: null,
+		profilePath: null,
+		provider: 'anthropic',
+		secretReference: reference,
+		updatedAt: '2026-09-01T00:00:00.000Z'
+	}
+	const fresh = { ...stored, expiresAt: Date.now() + 3_600_000 }
+	const profile = {
+		account: { email: 'max@example.com', uuid: 'account-uuid' },
+		organization: { rate_limit_tier: 'default_claude_max_20x', uuid: 'org-uuid' }
+	}
+	const usage = {
+		cedar_ember: {
+			at_limit: false,
+			cooldown_until: null,
+			eligible: true,
+			exhausted: [],
+			grants: [
+				{
+					ends_at: '2026-10-22T16:00:00+00:00',
+					id: 'opus55-launch-promax-20260921',
+					label: 'Claude Opus 5.5 launch: one usage-limit reset for Pro and Max',
+					paused: false,
+					resets_left: 1,
+					resets_total: 1,
+					usable_now: true,
+					use_requires_limit: false
+				}
+			],
+			ineligible_reason: null,
+			next_grant_id: 'opus55-launch-promax-20260921'
+		},
+		five_hour: { resets_at: '2026-10-01T06:10:00.137634+00:00', utilization: 17 },
+		seven_day: { resets_at: '2026-10-01T13:00:00.137657+00:00', utilization: 16 }
+	}
+
+	test('the cedar_ember grants on the usage payload become the banked reset count', async () => {
+		const requested: string[] = []
+		const result = await probeClaude({
+			account: oauthAccount,
+			fetchImplementation: async request => {
+				requested.push(String(request))
+				return Response.json(String(request).includes('/profile') ? profile : usage)
+			},
+			now: () => new Date(),
+			vault: vaultWith(fresh)
+		})
+		expect(requested).toContain('https://api.anthropic.com/api/oauth/usage?cedar_ember=1')
+		expect(result.usage.resetCredits).toEqual({ applicable: 1, available: 1 })
+	})
+
+	test('redeeming claims the next grant for the profile organization', async () => {
+		let claim: unknown = null
+		const outcome = await redeemClaudeReset({
+			account: oauthAccount,
+			fetchImplementation: async (request, initialization) => {
+				const url = String(request)
+				if (initialization?.method === 'POST') {
+					claim = { body: JSON.parse(String(initialization.body)), url }
+					return Response.json({
+						cleared: ['five_hour', 'seven_day', 'seven_day_overage_included'],
+						resets_left: 0,
+						result: 'reset'
+					})
+				}
+				return Response.json(url.includes('/profile') ? profile : usage)
+			},
+			requestId: 'request-1',
+			vault: vaultWith(fresh)
+		})
+		expect(claim).toEqual({
+			body: {
+				grant_id: 'opus55-launch-promax-20260921',
+				program: 'cedar_ember',
+				request_id: 'request-1'
+			},
+			url: 'https://api.anthropic.com/api/organizations/org-uuid/reset_rate_limits'
+		})
+		expect(outcome).toEqual({ code: 'reset', windowsReset: 3 })
 	})
 })

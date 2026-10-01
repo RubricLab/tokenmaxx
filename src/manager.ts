@@ -1,4 +1,11 @@
-import { claudeUpstream, migrateClaudeAccount, probeClaude, removeClaudeProfile } from './claude.ts'
+import {
+	claudeResetCredits,
+	claudeUpstream,
+	migrateClaudeAccount,
+	probeClaude,
+	redeemClaudeReset,
+	removeClaudeProfile
+} from './claude.ts'
 import {
 	codexUpstream,
 	probeCodex,
@@ -420,31 +427,35 @@ export class AccountManager {
 		this.#store.saveAccount(result.account)
 	}
 
-	private codexAccountOrThrow(accountId: string): Extract<Account, { provider: 'openai' }> {
+	private accountOrThrow(accountId: string): Account {
 		const account = this.#store.findAccount(accountId)
-		if (account === null || account.provider !== 'openai') {
-			throw new ApplicationError('INVALID_TARGET', `Account ${accountId} is not a codex account`)
+		if (account === null) {
+			throw new ApplicationError('ACCOUNT_NOT_FOUND', `Unknown account ${accountId}`)
 		}
 		return account
 	}
 
-	public async codexResetCredits(accountId: string): Promise<ResetCreditsView> {
-		return probeCodexResetCredits({
-			account: this.codexAccountOrThrow(accountId),
-			fetchImplementation: this.#dependencies.fetchImplementation,
-			vault: this.#vault
-		})
+	public async resetCredits(accountId: string): Promise<ResetCreditsView> {
+		const account = this.accountOrThrow(accountId)
+		const shared = { fetchImplementation: this.#dependencies.fetchImplementation, vault: this.#vault }
+		return account.provider === 'openai'
+			? probeCodexResetCredits({ account, ...shared })
+			: claudeResetCredits({ account, ...shared })
 	}
 
-	public async consumeCodexReset(accountId: string): Promise<ResetOutcome> {
-		return this.withProviderOperation('openai', async () => {
-			const account = this.codexAccountOrThrow(accountId)
-			const outcome = await redeemCodexResetCredit({
-				account,
+	public async consumeReset(accountId: string): Promise<ResetOutcome> {
+		const { provider } = this.accountOrThrow(accountId)
+		return this.withProviderOperation(provider, async () => {
+			const account = this.accountOrThrow(accountId)
+			const shared = {
 				fetchImplementation: this.#dependencies.fetchImplementation,
-				redeemRequestId: crypto.randomUUID(),
 				vault: this.#vault
-			})
+			}
+			const requestId = crypto.randomUUID()
+			const outcome =
+				account.provider === 'openai'
+					? await redeemCodexResetCredit({ account, redeemRequestId: requestId, ...shared })
+					: await redeemClaudeReset({ account, requestId, ...shared })
 			await this.probeAndSave(account).catch(() => undefined)
 			return outcome
 		})
@@ -597,11 +608,9 @@ export class AccountManager {
 						merged.some(window => window.kind === 'hard' && window.usedPercent >= 100),
 					observedAt: new Date(event.at).toISOString(),
 					provider: event.provider,
+					resetCredits: existing?.resetCredits ?? null,
 					source: 'proxyResponseHeaders',
-					windows: merged,
-					...(event.provider === 'openai'
-						? { resetCredits: existing?.provider === 'openai' ? (existing.resetCredits ?? null) : null }
-						: {})
+					windows: merged
 				})
 			)
 		} catch {

@@ -124,10 +124,10 @@ async function dispatch(
 			await manager.setAccountOrder(parsed.provider, parsed.accountIds)
 			return manager.dashboard()
 		}
-		case 'codex/resetCredits':
-			return manager.codexResetCredits(ResetParamsSchema.parse(params).accountId)
-		case 'codex/consumeReset':
-			return manager.consumeCodexReset(ResetParamsSchema.parse(params).accountId)
+		case 'account/resetCredits':
+			return manager.resetCredits(ResetParamsSchema.parse(params).accountId)
+		case 'account/consumeReset':
+			return manager.consumeReset(ResetParamsSchema.parse(params).accountId)
 		default:
 			throw new ApplicationError('METHOD_NOT_FOUND', `Unknown manager method ${method}`)
 	}
@@ -343,7 +343,7 @@ export function requestResetCredits(
 	accountId: string
 ): Promise<ResetCreditsView> {
 	return managerRequest({
-		method: 'codex/resetCredits',
+		method: 'account/resetCredits',
 		params: { accountId },
 		schema: ResetCreditsViewSchema,
 		socketPath,
@@ -353,7 +353,7 @@ export function requestResetCredits(
 
 export function requestConsumeReset(socketPath: string, accountId: string): Promise<ResetOutcome> {
 	return managerRequest({
-		method: 'codex/consumeReset',
+		method: 'account/consumeReset',
 		params: { accountId },
 		schema: ResetOutcomeSchema,
 		socketPath,
