@@ -43,6 +43,7 @@ beforeEach(async () => {
 	process.env.CODEX_HOME = join(home, 'codex')
 	process.env.CLAUDE_CONFIG_DIR = join(home, 'claude')
 	process.env.GROK_HOME = join(home, 'grok')
+	process.env.TOKENMAXX_HOME = join(home, 'state')
 	await mkdir(process.env.CODEX_HOME, { recursive: true })
 	await mkdir(process.env.CLAUDE_CONFIG_DIR, { recursive: true })
 	await mkdir(process.env.GROK_HOME, { recursive: true })
@@ -52,10 +53,11 @@ afterEach(() => {
 	delete process.env.CODEX_HOME
 	delete process.env.CLAUDE_CONFIG_DIR
 	delete process.env.GROK_HOME
+	delete process.env.TOKENMAXX_HOME
 	rmSync(home, { force: true, recursive: true })
 })
 
-const paths = () => applicationPaths({ ...process.env, TOKENMAXX_HOME: join(home, 'state') })
+const paths = () => applicationPaths()
 
 async function writeCodexConfig(content: string): Promise<void> {
 	await writeFile(join(process.env.CODEX_HOME ?? '', 'config.toml'), content)
@@ -144,7 +146,7 @@ describe('installCodexConfig', () => {
 	test('uninstall restores the user config without managed blocks', async () => {
 		await writeCodexConfig(legacyBrokenConfig)
 		await installCodexConfig(paths())
-		await uninstallCodexConfig()
+		await uninstallCodexConfig(paths())
 		const restored = await readCodexConfig()
 		expect(restored).not.toContain('tokenmaxx')
 		expect(restored).not.toContain('tokmax')
@@ -225,7 +227,7 @@ describe('installClaudeConfig', () => {
 			model: 'fable[1m]'
 		})
 		await installClaudeConfig(paths())
-		await uninstallClaudeConfig()
+		await uninstallClaudeConfig(paths())
 		const settings = await readClaudeSettings()
 		expect(settings.env?.ANTHROPIC_BASE_URL).toBeUndefined()
 		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBe('users-own-token')
@@ -239,7 +241,7 @@ describe('installClaudeConfig', () => {
 				ANTHROPIC_BASE_URL: 'http://127.0.0.1:8459/anthropic'
 			}
 		})
-		await uninstallClaudeConfig()
+		await uninstallClaudeConfig(paths())
 		const settings = await readClaudeSettings()
 		expect(settings.env).toBeUndefined()
 	})
@@ -297,7 +299,7 @@ describe('pi install', () => {
 		expect(config.providers['tokenmaxx-openai'].baseUrl).toContain('/openai')
 		expect(config.providers['tokenmaxx-xai'].baseUrl).toContain('/xai/v1')
 		expect(config.providers.mine.baseUrl).toBe('https://example.com')
-		const removed = await uninstallPiConfig()
+		const removed = await uninstallPiConfig(paths())
 		expect(removed.applied).toBe(true)
 		const restored = JSON.parse(await readFile(modelsPath, 'utf8'))
 		expect(restored.providers['tokenmaxx-anthropic']).toBeUndefined()
@@ -309,7 +311,7 @@ describe('pi install', () => {
 
 	test('a missing models.json is created on install and reported clean on uninstall', async () => {
 		process.env.PI_CODING_AGENT_DIR = join(home, 'pi-agent')
-		const removed = await uninstallPiConfig()
+		const removed = await uninstallPiConfig(paths())
 		expect(removed.applied).toBe(false)
 		expect(removed.manual).toBeNull()
 		const installed = await installPiConfig(applicationPaths())
@@ -484,7 +486,7 @@ describe('codex-normalized configs', () => {
 				'hide_rate_limit_model_nudge = true'
 			].join('\n')
 		)
-		expect(await uninstallCodexConfig()).not.toBeNull()
+		expect(await uninstallCodexConfig(paths())).not.toBeNull()
 		const written = await readFile(configPath, 'utf8')
 		expect(written).not.toContain('tokenmaxx')
 		const parsed = Bun.TOML.parse(written) as { notice?: { hide_rate_limit_model_nudge?: boolean } }

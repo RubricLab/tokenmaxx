@@ -1,3 +1,4 @@
+- [2026-09-30] macos login startup and uninstall all
 - [2026-09-30] grok accounts
 - [2026-09-30] claude banked resets
 - [2026-09-30] toml fallback test survives newer bun

@@ -24,6 +24,69 @@ bun add -g tokenmaxx
 tokenmaxx #starts the dashboard
 ```
 
+### Run in the background and start at login
+
+The dashboard connects to a separate background manager. You can close the dashboard or its terminal and keep using your AI clients. To start the manager without opening the dashboard:
+
+```bash
+tokenmaxx daemon start
+```
+
+To route your clients and have macOS start the manager automatically whenever you log in:
+
+```bash
+tokenmaxx install --autostart
+```
+
+For pi, use `tokenmaxx install pi --autostart`. If your clients are already configured, add login startup on its own:
+
+```bash
+tokenmaxx daemon install
+```
+
+Run this as your normal macOS user, without `sudo`. It starts the manager immediately and installs a per-user LaunchAgent that restarts it if it exits. After restarting your Mac, it starts when you log in, when your login Keychain is available. It does not run while the Mac is asleep or shut down.
+
+The background item is named **tokenmaxx** in System Settings → General → Login Items & Extensions. A small launcher app provides that name; launching Bun directly can make macOS display Bun's signing-certificate owner, such as “Jarred Sumner,” instead.
+
+```bash
+tokenmaxx daemon status       # manager health and login startup configuration
+tokenmaxx daemon stop         # stop now; startup remains installed for the next login
+tokenmaxx daemon start        # start again under macOS supervision
+tokenmaxx daemon disable      # remove login startup and stop the manager
+```
+
+Commands that need the manager, including opening the dashboard, start it again after `daemon stop`. `daemon disable` removes automatic startup while retaining your accounts and data for manual use.
+
+### Uninstall
+
+```bash
+tokenmaxx uninstall        # restore native client config; accounts and data stay
+tokenmaxx uninstall all    # remove everything, including saved credentials
+```
+
+`tokenmaxx uninstall` restores Codex, Claude, Grok, and pi routing and keeps your saved accounts and usage history. `tokenmaxx uninstall pi` restores only pi routing.
+
+`tokenmaxx uninstall all` stops the manager, restores Codex, Claude, Grok, and pi routing, removes the LaunchAgent and launcher app, deletes tokenmaxx's Keychain credentials (including orphaned entries), and removes its account database, usage history, preferences, logs, isolated profiles, and saved setup files. It then asks the owning global package manager—Bun, npm, pnpm, or Yarn—to remove the CLI package. The manager is not restarted.
+
+Setup records the client settings it replaces. Uninstall restores the original files when they are unchanged, removes files and empty client directories created by setup, and preserves unrelated settings and subsequent user edits. Older installations without these records can have their managed routing removed, but previously overwritten settings cannot be recovered. Native client logins, unrelated files, and other packages are preserved. When run from a source checkout, the checkout is kept.
+
+If cleanup fails, the command reports the failed step and keeps the remaining recovery data for a retry. Package removal happens only after setup cleanup succeeds. If the package manager cannot be identified, the command reports that the package still needs removal.
+
+### Startup files and troubleshooting
+
+The installer creates:
+
+- `~/Library/LaunchAgents/sh.tokenmaxx.daemon.plist`
+- `~/Applications/tokenmaxx.app` (the background launcher)
+
+Logs remain in `~/.tokenmaxx/runtime/daemon.log`. `tokenmaxx doctor` also reports whether login startup is installed.
+
+Set `TOKENMAXX_HOME`, `TOKENMAXX_PROXY_PORT`, and any custom `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GROK_HOME`, or `PI_CODING_AGENT_DIR` before installing startup. These settings and the executable search path are saved for the background service; unrelated environment variables and API keys are not copied. One startup configuration is supported per macOS user. Use the same `TOKENMAXX_HOME` when managing it, and remove the previous startup configuration before installing one for a different directory.
+
+The launcher uses absolute paths to Bun and the installed tokenmaxx entrypoint. Re-run `tokenmaxx daemon install` after moving or reinstalling either tool to refresh those paths. Install from a permanent package location, rather than a temporary `bunx` download or development checkout that you intend to delete.
+
+If startup fails, check `tokenmaxx daemon status`, `tokenmaxx doctor`, and the daemon log. Confirm that the tokenmaxx background item is allowed in System Settings. Running `tokenmaxx daemon install` again refreshes the configuration and retries startup; it may briefly interrupt requests while restarting the manager.
+
 ## What it does
 
 You run a fleet of coding agents using multiple Codex, Claude or Grok accounts:
@@ -81,8 +144,11 @@ A single loopback proxy on `127.0.0.1:8459`, and the clients you already use.
 ```text
 tokenmaxx                                  live dashboard
 tokenmaxx login <codex|claude|grok>        sign in; isolated, idempotent
-tokenmaxx install                          route native codex, claude & grok
-tokenmaxx uninstall                        restore native config
+tokenmaxx install [pi] [--autostart]       route native codex, claude & grok; optionally start at login
+tokenmaxx uninstall [pi]                   restore native config; accounts and data stay
+tokenmaxx uninstall all                    remove all setup, data, credentials, and the global package
+tokenmaxx daemon start | stop | status     manage the background manager
+tokenmaxx daemon install | disable         add or remove macOS login startup
 tokenmaxx switch <codex|claude|grok> <email>   make an account active
 tokenmaxx logout [codex|claude|grok] <email>   sign out; the credential is deleted
 tokenmaxx order <codex|claude|grok> [email…]   which accounts auto-rotation uses first

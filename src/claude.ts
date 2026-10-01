@@ -189,7 +189,7 @@ export async function removeClaudeProfile(
 	profilePath: string,
 	dependencies: ClaudeLoginDependencies = defaultClaudeLoginDependencies()
 ): Promise<void> {
-	await dependencies.captured([
+	const result = await dependencies.captured([
 		'security',
 		'delete-generic-password',
 		'-a',
@@ -197,6 +197,12 @@ export async function removeClaudeProfile(
 		'-s',
 		cliKeychainService(profilePath)
 	])
+	if (result.exitCode !== 0 && result.exitCode !== 44) {
+		throw new ApplicationError(
+			'KEYCHAIN_DELETE_FAILED',
+			'Could not remove the isolated Claude profile credential'
+		)
+	}
 	await rm(profilePath, { force: true, recursive: true })
 }
 
