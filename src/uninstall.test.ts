@@ -176,6 +176,36 @@ test('edits made after installation survive while overwritten client settings ar
 	expect(codex).not.toContain('tokenmaxx')
 })
 
+test('edits made before a version re-install survive uninstall', async () => {
+	const configs = clientConfigPaths(environment)
+	await mkdir(join(directory, 'claude'))
+	await writeFile(configs.claude, '{"theme":"light"}\n')
+	const paths = await setup()
+	const claude = JSON.parse(await readFile(configs.claude, 'utf8'))
+	claude.model = 'opus'
+	await writeFile(configs.claude, JSON.stringify(claude))
+	await writeFile(
+		configs.codex,
+		`${await readFile(configs.codex, 'utf8')}\n[projects."/new"]\ntrust_level = "trusted"\n`
+	)
+	await installClaudeConfig(paths)
+	await installCodexConfig(paths)
+	await uninstallTokenmaxx({
+		environment,
+		paths,
+		removeCredentials: async () => {},
+		removeStartup: async () => {},
+		stopDaemon: async () => {}
+	})
+	expect(JSON.parse(await readFile(configs.claude, 'utf8'))).toEqual({
+		model: 'opus',
+		theme: 'light'
+	})
+	const codex = await readFile(configs.codex, 'utf8')
+	expect(codex).toContain('[projects."/new"]')
+	expect(codex).not.toContain('tokenmaxx')
+})
+
 test('failed credential cleanup keeps local recovery data and can be retried', async () => {
 	const paths = await setup()
 	let removedStartup = false

@@ -30,15 +30,16 @@ export async function saveConfigBackup(
 	installed: string,
 	originalOverride?: string
 ): Promise<void> {
-	const records = await backups(paths)
+	const current = await readFile(path, 'utf8').catch(error => {
+		if (error.code === 'ENOENT') return null
+		throw error
+	})
+	const records = (await backups(paths)).filter(
+		item => item.path !== path || item.installed === current
+	)
 	let record = records.find(item => item.path === path)
 	if (record === undefined) {
-		const original =
-			originalOverride ??
-			(await readFile(path, 'utf8').catch(error => {
-				if (error.code === 'ENOENT') return null
-				throw error
-			}))
+		const original = originalOverride ?? current
 		const directories: string[] = []
 		for (
 			let directory = dirname(path);

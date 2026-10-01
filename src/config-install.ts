@@ -158,6 +158,7 @@ export async function installClaudeConfig(paths: ApplicationPaths): Promise<stri
 		delete original.env.ANTHROPIC_BASE_URL
 	if (legacyDummyTokens.includes(original.env?.ANTHROPIC_AUTH_TOKEN ?? ''))
 		delete original.env?.ANTHROPIC_AUTH_TOKEN
+	if (original.env !== undefined && Object.keys(original.env).length === 0) delete original.env
 	const sanitized =
 		JSON.stringify(original) !== JSON.stringify(settings)
 			? `${JSON.stringify(original, null, 2)}\n`
