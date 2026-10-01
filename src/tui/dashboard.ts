@@ -75,6 +75,16 @@ function rgb(hex: string): RGBA {
 }
 
 const providerOrder = ProviderIdSchema.options
+const grokInstalled = Bun.which(PROVIDERS.xai.cli) !== null
+
+function shownProviders(snapshot: DashboardSnapshot): ProviderId[] {
+	return providerOrder.filter(
+		provider =>
+			provider !== 'xai' ||
+			grokInstalled ||
+			snapshot.accounts.some(account => account.provider === 'xai')
+	)
+}
 const providerTitle = (provider: ProviderId) =>
 	`${PROVIDERS[provider].vendor} · ${PROVIDERS[provider].app}`
 const providerShort = (provider: ProviderId) => PROVIDERS[provider].app
@@ -247,7 +257,7 @@ function hardWindows(windows: readonly UsageWindow[]): UsageWindow[] {
 
 function orderedRows(snapshot: DashboardSnapshot): Row[] {
 	const rows: Row[] = []
-	for (const provider of providerOrder) {
+	for (const provider of shownProviders(snapshot)) {
 		const state = snapshot.providers.find(s => s.provider === provider)
 		const hidden = state?.policy.hiddenWindowIds ?? []
 		const pressure = (accountId: string): number => {
@@ -808,7 +818,7 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 
 function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
 	return [
-		...providerOrder.flatMap(provider => [
+		...shownProviders(snapshot).flatMap(provider => [
 			{ key: 'routing' as const, provider, scope: 'provider' as const },
 			{ key: 'auto' as const, provider, scope: 'provider' as const },
 			{ key: 'threshold' as const, provider, scope: 'provider' as const },
@@ -1005,7 +1015,9 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 	return column(
 		ctx,
 		[
-			...providerOrder.map(provider => settingsPanel(ctx, snapshot, rows, provider, selected)),
+			...shownProviders(snapshot).map(provider =>
+				settingsPanel(ctx, snapshot, rows, provider, selected)
+			),
 			displayPanel(ctx, rows, selected),
 			harnessPanel(ctx, rows, selected)
 		],
@@ -1019,7 +1031,9 @@ function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], select
 	return column(
 		ctx,
 		[
-			...providerOrder.map(provider => providerPanel(ctx, snapshot, provider, rows, selected)),
+			...shownProviders(snapshot).map(provider =>
+				providerPanel(ctx, snapshot, provider, rows, selected)
+			),
 			...(note === null ? [] : [note])
 		],
 		width + 2

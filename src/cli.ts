@@ -822,7 +822,9 @@ async function configureAutomation(
 		)
 	}
 	const providers =
-		providerArgument === 'all' ? ProviderIdSchema.options : [providerFromCli(providerArgument)]
+		providerArgument === 'all' || providerArgument === 'both'
+			? ProviderIdSchema.options
+			: [providerFromCli(providerArgument)]
 	const thresholdValue = option(arguments_, '--threshold')
 	const thresholdPercent = thresholdValue === undefined ? undefined : Number(thresholdValue)
 	if (
@@ -875,12 +877,16 @@ async function installConfig(context: ApplicationContext, targetArgument?: strin
 		)
 		return
 	}
-	for (const provider of ProviderIdSchema.options) {
+	const providers = ProviderIdSchema.options.filter(
+		provider => provider !== 'xai' || Bun.which(PROVIDERS.xai.cli) !== null
+	)
+	for (const provider of providers) {
 		await installProviderConfig(provider, context.paths)
 	}
+	const clis = providers.map(provider => PROVIDERS[provider].cli)
 	process.stdout.write(
-		'Native codex, claude and grok now route through tokenmaxx.\n' +
-			'Just run `codex`, `claude` or `grok` as usual — tokenmaxx injects the active account.\n' +
+		`Native ${clis.join(', ').replace(/, ([^,]*)$/, ' and $1')} now route through tokenmaxx.\n` +
+			`Just run ${clis.map(cli => `\`${cli}\``).join(' or ')} as usual — tokenmaxx injects the active account.\n` +
 			'Undo any time with: tokenmaxx uninstall\n'
 	)
 }
@@ -928,7 +934,9 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	] as const
 	for (const [tool, testedVersion] of tools) {
 		if (Bun.which(tool) === null) {
-			process.stdout.write(`missing  ${tool}\n`)
+			if (tool !== PROVIDERS.xai.cli) {
+				process.stdout.write(`missing  ${tool}\n`)
+			}
 			continue
 		}
 		const version = await commandOutput([tool, '--version'])
@@ -968,6 +976,9 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	}
 	for (const provider of ProviderIdSchema.options) {
 		const routed = routing.routed[provider]
+		if (provider === 'xai' && !routed && Bun.which(PROVIDERS.xai.cli) === null) {
+			continue
+		}
 		const detail = routed
 			? routedText[provider]
 			: provider === 'openai' && routing.codexStale
