@@ -7,7 +7,7 @@ use gpui_kit::*;
 
 use crate::format;
 use crate::model::{TIMEFRAMES, TokenBreakdown, TokenTimeframe};
-use crate::store::Store;
+use crate::store::{Connection, Store};
 use crate::views::{muted, page_header, section_title};
 
 const DEFAULT_TIMEFRAME: usize = 2;
@@ -144,7 +144,7 @@ impl AnalyticsPage {
                 (SharedString::from(ago_label(remaining)), *value)
             })
             .collect();
-        let accent = cx.theme().primary;
+        let accent = cx.theme().blue;
         card(cx)
             .p_4()
             .gap_2()
@@ -154,6 +154,7 @@ impl AnalyticsPage {
                     AreaChart::new(points)
                         .x(|point: &(SharedString, f64)| point.0.clone())
                         .y(|point: &(SharedString, f64)| point.1)
+                        .linear()
                         .stroke(accent)
                         .fill(accent.opacity(0.2))
                         .tick_margin(CHART_POINTS / 6)
@@ -224,6 +225,7 @@ impl AnalyticsPage {
 impl Render for AnalyticsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let key = TIMEFRAMES[self.timeframe];
+        let connecting = self.store.read(cx).connection == Connection::Connecting;
         let analytics = self.store.read(cx).analytics.clone();
         let timeframe = analytics
             .timeframe(key)
@@ -265,6 +267,7 @@ impl Render for AnalyticsPage {
                 h_flex().gap_3().child(views).child(ranges),
             ))
             .map(|this| match &timeframe {
+                None if connecting => this.child(muted("Connecting to tokenmaxx…", cx)),
                 None => this.child(
                     card(cx)
                         .p_6()

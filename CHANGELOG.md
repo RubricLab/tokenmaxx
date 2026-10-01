@@ -1,3 +1,4 @@
+- [2026-10-01] mac app polish
 - [2026-09-30] proxy refuses web pages
 - [2026-09-30] a native macOS app for tokenmaxx, with a menu bar item
 - [2026-09-30] macos login startup and uninstall all
