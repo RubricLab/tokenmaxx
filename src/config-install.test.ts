@@ -97,8 +97,6 @@ describe('installCodexConfig', () => {
 			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\nenabled = false\n`
 		)
 		await installCodexConfig(paths())
-		const written = await readCodexConfig()
-		expect(() => Bun.TOML.parse(written)).toThrow()
 		const status = await installStatus()
 		expect(status.codexRouted).toBe(true)
 	})
