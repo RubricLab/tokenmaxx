@@ -324,13 +324,15 @@ export function uninstallProviderConfig(provider: ProviderId): Promise<string | 
 }
 
 interface InstallStatus {
-	routed: Record<ProviderId, boolean>
+	baseUrls: Record<ProviderId, string | null>
 	codexStale: boolean
+	routed: Record<ProviderId, boolean>
 }
 
 export async function installStatus(): Promise<InstallStatus> {
 	const codexRaw = await readFileOrEmpty(codexConfigPath())
 	let codexRouted = false
+	let codexBaseUrl: string | null = null
 	try {
 		const parsed = Bun.TOML.parse(codexRaw) as {
 			model_provider?: unknown
@@ -338,7 +340,8 @@ export async function installStatus(): Promise<InstallStatus> {
 		}
 		const selected = typeof parsed.model_provider === 'string' ? parsed.model_provider : null
 		const baseUrl = selected === null ? undefined : parsed.model_providers?.[selected]?.base_url
-		codexRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
+		codexBaseUrl = typeof baseUrl === 'string' ? baseUrl : null
+		codexRouted = codexBaseUrl?.includes('127.0.0.1') ?? false
 	} catch {
 		// Bun.TOML rejects configs codex accepts — bare table keys starting with a
 		// digit, like [mcp_servers.1password]. Reading that as "not routed" makes
@@ -355,39 +358,52 @@ export async function installStatus(): Promise<InstallStatus> {
 		([...legacyBeginMarkers, tableBeginMarker].some(marker => codexRaw.includes(marker)) ||
 			codexRaw.match(bareProviderTable) !== null)
 
-	let claudeRouted = false
+	let claudeBaseUrl: string | null = null
 	try {
 		const settings = JSON.parse(await readFileOrEmpty(claudeSettingsPath())) as ClaudeSettings
-		claudeRouted = settings.env?.ANTHROPIC_BASE_URL?.includes('127.0.0.1') ?? false
+		claudeBaseUrl = settings.env?.ANTHROPIC_BASE_URL ?? null
 	} catch {
-		claudeRouted = false
+		claudeBaseUrl = null
 	}
+	const claudeRouted = claudeBaseUrl?.includes('127.0.0.1') ?? false
 
-	let grokRouted = false
+	let grokBaseUrl: string | null = null
 	try {
 		const parsed = Bun.TOML.parse(await readFileOrEmpty(grokConfigPath())) as {
 			endpoints?: { cli_chat_proxy_base_url?: unknown }
 		}
 		const baseUrl = parsed.endpoints?.cli_chat_proxy_base_url
-		grokRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
+		grokBaseUrl = typeof baseUrl === 'string' ? baseUrl : null
 	} catch {
-		grokRouted = false
+		grokBaseUrl = null
 	}
-	return { codexStale, routed: { anthropic: claudeRouted, openai: codexRouted, xai: grokRouted } }
+	const grokRouted = grokBaseUrl?.includes('127.0.0.1') ?? false
+	return {
+		baseUrls: { anthropic: claudeBaseUrl, openai: codexBaseUrl, xai: grokBaseUrl },
+		codexStale,
+		routed: { anthropic: claudeRouted, openai: codexRouted, xai: grokRouted }
+	}
 }
 
 // Configs written by an older version stay stale after an update (#17): re-apply
 // install for whatever is currently routed, once per version change. Never adds
-// routing — a harness the user uninstalled or never installed stays untouched.
+// routing — a harness the user uninstalled or never installed stays untouched, and a
+// config routed to another tokenmaxx instance's port belongs to that instance.
 export async function healInstalledConfigs(paths: ApplicationPaths): Promise<ProviderId[]> {
 	const stampPath = join(paths.root, 'healed-version')
 	if ((await readFileOrEmpty(stampPath)).trim() === VERSION) {
 		return []
 	}
-	const { routed } = await installStatus()
+	const { baseUrls, routed } = await installStatus()
+	const ownBaseUrls: Record<ProviderId, string> = {
+		anthropic: proxyBaseUrl(paths, 'anthropic'),
+		openai: proxyBaseUrl(paths, 'openai'),
+		xai: `${proxyBaseUrl(paths, 'xai')}/v1`
+	}
 	const healed: ProviderId[] = []
 	for (const provider of ProviderIdSchema.options) {
-		if (routed[provider]) {
+		const baseUrl = baseUrls[provider]
+		if (routed[provider] && (baseUrl === null || baseUrl === ownBaseUrls[provider])) {
 			await installProviderConfig(provider, paths)
 			healed.push(provider)
 		}

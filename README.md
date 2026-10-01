@@ -117,6 +117,19 @@ Run `tokenmaxx`. **Accounts** shows every account and its live rate-limit window
 <img alt="routing, auto-rotation, threshold, and cooldown, tuned per provider" src="media/settings.png" width="820">
 </div>
 
+## The app
+
+`gui/` is a native macOS app built with [GPUI](https://gpui.rs) and [GPUI Kit](https://gpui-kit.com). It covers everything the dashboard does: accounts, switching, sign-in, reset credits, analytics, and every setting. It can also live in the menu bar, where each provider's accounts and their rate-limit windows are one click away.
+
+The app ships its own compiled `tokenmaxx` and drives the same daemon and `~/.tokenmaxx` state as the command line, so both always agree. Settings → System → Command-line tool links that binary onto your PATH. Settings → App picks the appearance (auto, light, dark), whether tokenmaxx shows in the menu bar, the Dock, or both, and which terminal runs subscription sign-in.
+
+```bash
+bun run gui:dev       # run against a dev build of the CLI
+bun run gui:bundle    # gui/target/tokenmaxx.app
+```
+
+Building needs Rust (stable) and Xcode's command-line tools.
+
 ## Auto-rotation
 
 Turn it on and tokenmaxx watches the active account's rate-limit windows. When the fullest one crosses your threshold, it switches to whichever of your accounts has the most room. The default threshold is 90%, which leaves the last stretch of every window alone in case you want it later. If an account hits a hard limit in the middle of a request, the proxy retries that request on your next account with room.

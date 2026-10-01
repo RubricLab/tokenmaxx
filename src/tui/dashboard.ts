@@ -1,12 +1,5 @@
 import { Box, createCliRenderer, parseColor, type RGBA, Text } from '@opentui/core'
 import {
-	installPiConfig,
-	installStatus,
-	type PiStatus,
-	piStatus,
-	uninstallPiConfig
-} from '../config-install.ts'
-import {
 	type Account,
 	type AnalyticsSnapshot,
 	type DashboardSnapshot,
@@ -22,16 +15,18 @@ import {
 } from '../domain.ts'
 import {
 	readAnalytics,
+	readRouting,
 	refreshUsage,
 	requestAccountOrder,
 	requestAccountSave,
 	requestConsumeReset,
 	requestPolicy,
 	requestResetCredits,
+	requestRouting,
 	requestSwitch
 } from '../ipc.ts'
-import { applicationPaths } from '../paths.ts'
 import { readPreferences, writePreferences } from '../preferences.ts'
+import type { RoutingStatus } from '../routing.ts'
 import { orderRank } from '../selection.ts'
 import { availableUpdate, installedVersion, VERSION } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
@@ -113,7 +108,7 @@ interface Ctx {
 	themePreference: ThemePreference
 	themePinnedByEnvironment: boolean
 	themeFromTerminalActive: boolean
-	pi: PiStatus
+	pi: RoutingStatus['pi']
 }
 
 function labelWidth(ctx: Ctx): number {
@@ -1203,7 +1198,6 @@ type DashboardAction =
 	| { kind: 'relogin'; provider: ProviderId }
 	| { kind: 'login'; provider: ProviderId }
 	| { kind: 'loginApiKey'; provider: ProviderId }
-	| { kind: 'routing'; provider: ProviderId; enable: boolean }
 	| { kind: 'update'; version: string }
 
 function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewState) {
@@ -1339,21 +1333,28 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 interface FixtureOptions {
 	name: string
 	now: number
+	routed: boolean
 	timewarp: number
 }
 
 export async function runTuiDashboard(
 	socketPath: string,
-	options: { routing: Record<ProviderId, boolean>; fixture?: FixtureOptions; alert?: string }
+	options: { fixture?: FixtureOptions; alert?: string }
 ): Promise<DashboardAction | undefined> {
 	const fixture = options.fixture
 	const live = fixture === undefined
 	try {
 		process.stdin.setRawMode?.(true)
 	} catch {}
-	const cliPresent = Object.fromEntries(
-		providerOrder.map(provider => [provider, !live || Bun.which(providerCli(provider)) !== null])
-	) as Record<ProviderId, boolean>
+	let routing: RoutingStatus =
+		fixture === undefined
+			? await readRouting(socketPath)
+			: {
+					clis: { anthropic: true, openai: true, xai: true },
+					codexStale: false,
+					pi: { present: true, routed: true },
+					routed: { anthropic: fixture.routed, openai: fixture.routed, xai: fixture.routed }
+				}
 	const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
 	await renderer.waitForThemeMode(400).catch(() => null)
 	const themeEnvironmentOverride = themeOverride(process.env)
@@ -1377,12 +1378,6 @@ export async function runTuiDashboard(
 			? await readAnalytics(socketPath)
 			: buildScenario(fixture.name, simulatedNow)
 	let rows = orderedRows(analytics.snapshot)
-	let pi: PiStatus = live ? await piStatus() : { present: true, routed: true }
-	// Routing is derived from the harness config files, which can change while
-	// this dashboard is open (tokenmaxx install/uninstall from another shell,
-	// first-login auto-enable, daemon heal after an update). options.routing is
-	// only the launch-time snapshot; reload() keeps this current.
-	let routing = options.routing
 	const state: ViewState = {
 		addConfirm: null,
 		alert: options.alert ?? '',
@@ -1419,11 +1414,11 @@ export async function runTuiDashboard(
 		try {
 			next = view(
 				{
-					cliPresent,
+					cliPresent: routing.clis,
 					columns,
 					now: live ? Date.now() : simulatedNow,
-					pi,
-					routing,
+					pi: routing.pi,
+					routing: routing.routed,
 					rows: process.stdout.rows ?? 24,
 					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 24 * 60_000 : 120_000,
 					theme: currentTheme(),
@@ -1471,8 +1466,7 @@ export async function runTuiDashboard(
 			}
 			analytics = await readAnalytics(socketPath)
 			rows = orderedRows(analytics.snapshot)
-			pi = await piStatus()
-			routing = (await installStatus()).routed
+			routing = await readRouting(socketPath)
 			clampSelection()
 		})
 
@@ -1492,7 +1486,7 @@ export async function runTuiDashboard(
 		}
 		if (row.accountId === ADD_ROW) {
 			state.addConfirm = {
-				choice: cliPresent[row.provider] ? 'oauth' : 'apiKey',
+				choice: routing.clis[row.provider] ? 'oauth' : 'apiKey',
 				provider: row.provider
 			}
 			paint()
@@ -1633,8 +1627,19 @@ export async function runTuiDashboard(
 		applyPolicy(provider, { hiddenWindowIds: next }, 'rate-limit view…')
 	}
 
-	const toggleRouting = (provider: ProviderId) => {
-		finish({ enable: !routing[provider], kind: 'routing', provider })
+	const toggleTarget = (target: ProviderId | 'pi', routed: boolean) => {
+		if (!live) {
+			routing =
+				target === 'pi'
+					? { ...routing, pi: { ...routing.pi, routed: !routed } }
+					: { ...routing, routed: { ...routing.routed, [target]: !routed } }
+			paint()
+			return
+		}
+		const name = target === 'pi' ? 'pi' : providerCli(target)
+		void withBusy(`${routed ? 'unrouting' : 'routing'} ${name}…`, async () => {
+			routing = await requestRouting(socketPath, target, !routed)
+		})
 	}
 
 	const adjustSetting = (delta: number) => {
@@ -1643,27 +1648,12 @@ export async function runTuiDashboard(
 			return
 		}
 		if (row.scope === 'harness') {
-			if (!pi.present) {
+			if (!routing.pi.present) {
 				state.note = 'pi is not installed'
 				paint()
 				return
 			}
-			if (!live) {
-				pi = { ...pi, routed: !pi.routed }
-				paint()
-				return
-			}
-			void withBusy(pi.routed ? 'unrouting pi…' : 'routing pi…', async () => {
-				if (pi.routed) {
-					await uninstallPiConfig()
-				} else {
-					const result = await installPiConfig(applicationPaths())
-					if (result.manual !== null) {
-						throw new Error('models.json needs a manual edit — run: tokenmaxx install pi')
-					}
-				}
-				pi = await piStatus()
-			})
+			toggleTarget('pi', routing.pi.routed)
 			return
 		}
 		if (row.scope === 'display') {
@@ -1684,7 +1674,7 @@ export async function runTuiDashboard(
 		}
 		const policy = currentPolicy(row.provider)
 		if (row.key === 'routing') {
-			toggleRouting(row.provider)
+			toggleTarget(row.provider, routing.routed[row.provider])
 			return
 		}
 		if (row.key === 'auto') {
@@ -1871,7 +1861,7 @@ export async function runTuiDashboard(
 					const row = rows[state.selected]
 					if (row !== undefined && row.accountId === ADD_ROW) {
 						state.addConfirm = {
-							choice: cliPresent[row.provider] ? 'oauth' : 'apiKey',
+							choice: routing.clis[row.provider] ? 'oauth' : 'apiKey',
 							provider: row.provider
 						}
 						paint()

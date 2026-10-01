@@ -4,6 +4,9 @@ import packageJson from '../package.json'
 
 export const VERSION: string = packageJson.version
 
+// `bun build --compile` mounts the bundle under /$bunfs/, which is how the app-bundled binary runs.
+export const compiledBinary = Bun.main.startsWith('/$bunfs/')
+
 // The version on disk, which an update may have moved past this running process.
 export async function installedVersion(): Promise<string> {
 	try {

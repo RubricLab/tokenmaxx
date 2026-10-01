@@ -4,13 +4,15 @@ import {
 	migrateClaudeAccount,
 	probeClaude,
 	redeemClaudeReset,
+	registerClaudeApiKeyAccount,
 	removeClaudeProfile
 } from './claude.ts'
 import {
 	codexUpstream,
 	probeCodex,
 	probeCodexResetCredits,
-	redeemCodexResetCredit
+	redeemCodexResetCredit,
+	registerOpenAiApiKeyAccount
 } from './codex.ts'
 import {
 	type Account,
@@ -29,7 +31,7 @@ import {
 	type UsageWindow
 } from './domain.ts'
 import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
-import { grokUpstream, probeGrok } from './grok.ts'
+import { grokUpstream, probeGrok, registerXaiApiKeyAccount } from './grok.ts'
 import type { ApplicationPaths } from './paths.ts'
 import { costUsd } from './pricing.ts'
 import {
@@ -173,6 +175,10 @@ export class AccountManager {
 
 	public get proxyPort(): number | null {
 		return this.#proxy?.port ?? null
+	}
+
+	public get paths(): ApplicationPaths {
+		return this.#paths
 	}
 
 	private async upstreamInjection(
@@ -330,6 +336,35 @@ export class AccountManager {
 				})
 			}
 		})
+	}
+
+	public async addApiKeyAccount(input: {
+		provider: ProviderId
+		key: string
+		label: string
+	}): Promise<Account> {
+		const label = input.label.trim()
+		if (label.length === 0) {
+			throw new ApplicationError('USAGE', 'The account needs a name')
+		}
+		const registration = {
+			fetchImplementation: this.#dependencies.fetchImplementation,
+			key: input.key,
+			label,
+			vault: this.#vault
+		}
+		const account = await (() => {
+			switch (input.provider) {
+				case 'openai':
+					return registerOpenAiApiKeyAccount(registration)
+				case 'anthropic':
+					return registerClaudeApiKeyAccount(registration)
+				case 'xai':
+					return registerXaiApiKeyAccount(registration)
+			}
+		})()
+		await this.saveAccount({ account, removePrevious: { profilePath: null, secretReference: null } })
+		return account
 	}
 
 	/** Puts `accountIds` first in this order and keeps the rest after them; an empty list clears the order. */

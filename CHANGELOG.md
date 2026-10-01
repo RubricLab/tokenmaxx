@@ -1,3 +1,4 @@
+- [2026-09-30] a native macOS app for tokenmaxx, with a menu bar item
 - [2026-09-30] macos login startup and uninstall all
 - [2026-09-30] grok accounts
 - [2026-09-30] claude banked resets

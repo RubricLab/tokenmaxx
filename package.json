@@ -49,10 +49,13 @@
 	"scripts": {
 		"bleed": "bun x npm-check-updates -u",
 		"build": "bun run clean && bun build ./src/index.ts --target bun --outdir dist --external '@opentui/*' && cp bin/launcher.cjs dist/launcher.cjs && chmod 755 dist/index.js dist/launcher.cjs",
+		"build:bin": "bun build --compile ./src/index.ts --outfile gui/target/bin/tokenmaxx",
 		"check": "bun run typecheck && bun x biome check . && bun test",
 		"clean": "rm -rf dist",
 		"dev": "bun run src/index.ts",
 		"format": "bun x biome check --write .",
+		"gui:bundle": "gui/scripts/bundle.sh",
+		"gui:dev": "bun run build:bin && TOKENMAXX_BIN=gui/target/bin/tokenmaxx cargo run --manifest-path gui/Cargo.toml",
 		"prepare": "bun x @rubriclab/package prepare",
 		"typecheck": "tsc --noEmit"
 	},
@@ -60,5 +63,5 @@
 		"post-commit": "bun x @rubriclab/package post-commit"
 	},
 	"type": "module",
-	"version": "0.0.75"
+	"version": "0.0.76"
 }

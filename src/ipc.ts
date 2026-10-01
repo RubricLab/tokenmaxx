@@ -19,7 +19,15 @@ import {
 } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
 import type { AccountManager } from './manager.ts'
-import { VERSION } from './version.ts'
+import {
+	type RoutingStatus,
+	RoutingStatusSchema,
+	type RoutingTarget,
+	RoutingTargetSchema,
+	routingStatus,
+	setRouting
+} from './routing.ts'
+import { availableUpdate, VERSION } from './version.ts'
 
 const RpcRequestSchema = z
 	.object({
@@ -61,6 +69,14 @@ const PolicyParamsSchema = z
 	.strict()
 
 const ResetParamsSchema = z.object({ accountId: z.uuid() }).strict()
+
+const RoutingParamsSchema = z.object({ enable: z.boolean(), target: RoutingTargetSchema }).strict()
+
+const AddApiKeyParamsSchema = z
+	.object({ key: z.string().min(1), label: z.string().min(1), provider: ProviderIdSchema })
+	.strict()
+
+const LatestVersionSchema = z.object({ latest: z.string().nullable() }).strict()
 
 const OrderParamsSchema = z
 	.object({ accountIds: z.array(z.uuid()), provider: ProviderIdSchema })
@@ -128,6 +144,19 @@ async function dispatch(
 			return manager.resetCredits(ResetParamsSchema.parse(params).accountId)
 		case 'account/consumeReset':
 			return manager.consumeReset(ResetParamsSchema.parse(params).accountId)
+		case 'account/addApiKey': {
+			const account = await manager.addApiKeyAccount(AddApiKeyParamsSchema.parse(params))
+			return { account }
+		}
+		case 'routing/read':
+			return routingStatus()
+		case 'routing/set': {
+			const parsed = RoutingParamsSchema.parse(params)
+			await setRouting(manager.paths, parsed.target, parsed.enable)
+			return routingStatus()
+		}
+		case 'version/latest':
+			return { latest: await availableUpdate() }
 		default:
 			throw new ApplicationError('METHOD_NOT_FOUND', `Unknown manager method ${method}`)
 	}
@@ -405,6 +434,28 @@ export function requestAccountSave(
 	}).then(() => undefined)
 }
 
+export function requestAddApiKey(
+	socketPath: string,
+	input: { provider: ProviderId; key: string; label: string }
+): Promise<Account> {
+	return managerRequest({
+		method: 'account/addApiKey',
+		params: input,
+		schema: z.object({ account: AccountSchema }).transform(result => result.account),
+		socketPath,
+		timeoutMilliseconds: 30_000
+	})
+}
+
+export function readRouting(socketPath: string): Promise<RoutingStatus> {
+	return managerRequest({
+		method: 'routing/read',
+		schema: RoutingStatusSchema,
+		socketPath,
+		timeoutMilliseconds: 15_000
+	})
+}
+
 export function requestAccountOrder(
 	socketPath: string,
 	provider: ProviderId,
@@ -417,4 +468,27 @@ export function requestAccountOrder(
 		socketPath,
 		timeoutMilliseconds: 15_000
 	})
+}
+
+export function requestRouting(
+	socketPath: string,
+	target: RoutingTarget,
+	enable: boolean
+): Promise<RoutingStatus> {
+	return managerRequest({
+		method: 'routing/set',
+		params: { enable, target },
+		schema: RoutingStatusSchema,
+		socketPath,
+		timeoutMilliseconds: 15_000
+	})
+}
+
+export function readLatestVersion(socketPath: string): Promise<string | null> {
+	return managerRequest({
+		method: 'version/latest',
+		schema: LatestVersionSchema,
+		socketPath,
+		timeoutMilliseconds: 5_000
+	}).then(result => result.latest)
 }

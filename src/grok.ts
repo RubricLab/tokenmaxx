@@ -160,7 +160,7 @@ async function validateXaiApiKey(
 		headers: { Authorization: `Bearer ${key}` },
 		signal: AbortSignal.timeout(10_000)
 	})
-	if (response.status === 401 || response.status === 403) {
+	if (response.status === 400 || response.status === 401 || response.status === 403) {
 		throw new ApplicationError('ACCESS_TOKEN_REJECTED', 'xAI rejected this API key')
 	}
 	if (!response.ok && response.status !== 429) {

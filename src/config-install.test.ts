@@ -268,6 +268,21 @@ describe('healInstalledConfigs', () => {
 		expect((await installStatus()).routed.openai).toBe(false)
 	})
 
+	test('leaves configs routed to another instance alone', async () => {
+		await installCodexConfig(paths())
+		await installClaudeConfig(paths())
+		const elsewhere = applicationPaths({
+			...process.env,
+			TOKENMAXX_HOME: join(home, 'elsewhere'),
+			TOKENMAXX_PROXY_PORT: '18459'
+		})
+		expect(await healInstalledConfigs(elsewhere)).toEqual([])
+		expect((await readClaudeSettings()).env?.ANTHROPIC_BASE_URL).toBe(
+			'http://127.0.0.1:8459/anthropic'
+		)
+		expect(await readCodexConfig()).toContain('http://127.0.0.1:8459/openai')
+	})
+
 	test('runs once per version, not on every start', async () => {
 		await healInstalledConfigs(paths())
 		await writeClaudeSettings({
