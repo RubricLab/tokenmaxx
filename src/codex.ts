@@ -407,6 +407,11 @@ function toWindow(
 	}
 }
 
+function windowId(prefix: string, slot: string, window: z.infer<typeof WindowSchema>): string {
+	const minutes = Math.round((window.limit_window_seconds ?? 0) / 60)
+	return minutes > 0 ? `${prefix}:${minutes}m` : `${prefix}:${slot}`
+}
+
 function appendLimitWindows(
 	windows: UsageWindow[],
 	prefix: string,
@@ -414,10 +419,12 @@ function appendLimitWindows(
 	details: z.infer<typeof LimitDetailsSchema> | null | undefined
 ): void {
 	if (details?.primary_window != null) {
-		windows.push(toWindow(`${prefix}:primary`, label, 'primary', details.primary_window))
+		const window = details.primary_window
+		windows.push(toWindow(windowId(prefix, 'primary', window), label, 'primary', window))
 	}
 	if (details?.secondary_window != null) {
-		windows.push(toWindow(`${prefix}:secondary`, label, 'secondary', details.secondary_window))
+		const window = details.secondary_window
+		windows.push(toWindow(windowId(prefix, 'secondary', window), label, 'secondary', window))
 	}
 }
 

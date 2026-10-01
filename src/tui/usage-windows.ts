@@ -9,7 +9,7 @@ function usageWindowPriority(window: UsageWindow): number {
 		case isFiveHourUsageWindow(window):
 			return 0
 		case /^(7 day(?: · all models)?)$/i.test(window.label):
-		case /^(weekly_all|seven_day|weekly|codex:primary)$/.test(window.id):
+		case /^(weekly_all|seven_day|weekly)$/.test(window.id):
 			return 1
 		case /^(weekly_scoped|codex_)/.test(window.id):
 			return 2

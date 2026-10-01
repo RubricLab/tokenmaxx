@@ -161,7 +161,7 @@ static FIVE_HOUR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)5 ?h").unw
 static WEEKLY_LABEL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(7 day(?: · all models)?)$").unwrap());
 static WEEKLY_ID: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(weekly_all|seven_day|weekly|codex:primary)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^(weekly_all|seven_day|weekly)$").unwrap());
 static SCOPED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)scoped|fable|opus|sonnet|spark").unwrap());
 

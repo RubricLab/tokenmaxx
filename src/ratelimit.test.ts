@@ -60,16 +60,15 @@ describe('observeRateLimitHeaders', () => {
 		const observation = observeRateLimitHeaders('openai', headers, 200)
 		expect(observation?.limited).toBe(false)
 		const byId = new Map(observation?.windows.map(window => [window.id, window]))
-		expect(byId.get('codex:primary')).toEqual({
-			id: 'codex:primary',
+		expect(byId.get('codex:10080m')).toEqual({
+			id: 'codex:10080m',
 			kind: 'hard',
 			label: '7 day',
 			resetAt: new Date(1784780264 * 1000).toISOString(),
 			usedPercent: 18
 		})
-		expect(byId.get('codex_bengalfox:primary')?.label).toBe('GPT-5.3-Codex-Spark · 7 day')
-		expect(byId.has('codex:secondary')).toBe(false)
-		expect(byId.has('codex_bengalfox:secondary')).toBe(false)
+		expect(byId.get('codex_bengalfox:10080m')?.label).toBe('GPT-5.3-Codex-Spark · 7 day')
+		expect(observation?.windows).toHaveLength(2)
 	})
 
 	test('codex 429 with no headers still reports limited', () => {

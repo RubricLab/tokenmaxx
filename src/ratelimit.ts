@@ -81,7 +81,7 @@ function codexObservation(headers: Headers, status: number): RateLimitObservatio
 		if (!Number.isFinite(minutes) || minutes <= 0) {
 			return
 		}
-		const id = `${feature}:${slot}`
+		const id = `${feature}:${Math.round(minutes)}m`
 		if (seen.has(id)) {
 			return
 		}
