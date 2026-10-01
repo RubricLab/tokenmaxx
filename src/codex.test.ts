@@ -94,6 +94,7 @@ describe('codex reset credits on the wire', () => {
 			vault: memoryVault({ [reference]: credential })
 		})
 		expect(result.usage.provider).toBe('openai')
+		expect(result.usage.windows.map(window => window.id)).toEqual(['codex:10080m'])
 		expect(result.usage.provider === 'openai' && result.usage.resetCredits).toEqual({
 			applicable: 0,
 			available: 3
