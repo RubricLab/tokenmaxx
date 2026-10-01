@@ -346,11 +346,31 @@ interface ProxyHandler {
 	handle(request: Request): Promise<Response>
 }
 
+const loopbackHosts = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+function fromWebPage(request: Request, url: URL): boolean {
+	if (!loopbackHosts.has(url.hostname)) {
+		return true
+	}
+	const origin = request.headers.get('origin')
+	if (origin !== null) {
+		return !URL.canParse(origin) || !loopbackHosts.has(new URL(origin).hostname)
+	}
+	const site = request.headers.get('sec-fetch-site')
+	return site !== null && site !== 'none'
+}
+
 function createProxyHandler(options: ProxyOptions): ProxyHandler {
 	const doFetch = options.fetchImplementation ?? fetch
 	return {
 		async handle(request) {
 			const url = new URL(request.url)
+			if (fromWebPage(request, url)) {
+				return new Response(
+					`${proxyFingerprint}: refused — only local clients may use this proxy, not web pages\n`,
+					{ status: 403 }
+				)
+			}
 			const route = routeProvider(url.pathname)
 			if (route === null) {
 				return new Response(`${proxyFingerprint}: unknown route\n`, { status: 404 })

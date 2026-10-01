@@ -269,3 +269,58 @@ describe('metering', () => {
 		await upstream.stop(true)
 	})
 })
+
+describe('browser pages', () => {
+	async function attempt(
+		headers: Record<string, string>
+	): Promise<{ status: number; injected: number }> {
+		let injected = 0
+		const upstream = Bun.serve({
+			fetch: () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
+			hostname: '127.0.0.1',
+			port: 0
+		})
+		const proxy = startProxy({
+			source: {
+				refresh: async () => undefined,
+				resolve: async () => {
+					injected += 1
+					return {
+						accountId: 'acct-1',
+						baseUrl: `http://127.0.0.1:${upstream.port}`,
+						headers: { authorization: 'Bearer secret' }
+					}
+				}
+			}
+		})
+		const response = await fetch(`http://127.0.0.1:${proxy.port}/anthropic/v1/messages`, {
+			body: '{}',
+			headers,
+			method: 'POST'
+		})
+		await response.arrayBuffer()
+		await proxy.stop()
+		await upstream.stop(true)
+		return { injected, status: response.status }
+	}
+
+	test('a local client reaches the upstream', async () => {
+		expect(await attempt({})).toEqual({ injected: 1, status: 200 })
+	})
+
+	test('a cross-site page cannot spend the active account', async () => {
+		expect(await attempt({ origin: 'https://evil.example' })).toEqual({ injected: 0, status: 403 })
+	})
+
+	test('a dns-rebinding page is refused by its host', async () => {
+		expect(await attempt({ host: 'evil.example:8459' })).toEqual({ injected: 0, status: 403 })
+	})
+
+	test('a no-origin browser subresource request is refused', async () => {
+		expect(await attempt({ 'sec-fetch-site': 'cross-site' })).toEqual({ injected: 0, status: 403 })
+	})
+
+	test('a page served from loopback stays allowed', async () => {
+		expect(await attempt({ origin: 'http://localhost:5173' })).toEqual({ injected: 1, status: 200 })
+	})
+})
