@@ -5,8 +5,14 @@ export type FetchImplementation = (
 	initialization?: RequestInit
 ) => Promise<Response>
 
-export const ProviderIdSchema = z.enum(['openai', 'anthropic'])
+export const ProviderIdSchema = z.enum(['openai', 'anthropic', 'xai'])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
+
+export const PROVIDERS: Record<ProviderId, { vendor: string; app: string; cli: string }> = {
+	anthropic: { app: 'Claude Code', cli: 'claude', vendor: 'Anthropic' },
+	openai: { app: 'Codex', cli: 'codex', vendor: 'OpenAI' },
+	xai: { app: 'Grok', cli: 'grok', vendor: 'xAI' }
+}
 
 export const AccountEmailSchema = z.string().trim().toLowerCase().email()
 const AccountNameSchema = z.string().trim().min(1)
@@ -52,6 +58,12 @@ export const AccountSchema = z
 			profilePath: z.string().trim().min(1).nullable(),
 			provider: z.literal('anthropic'),
 			secretReference: z.string().trim().min(1).nullable()
+		}).strict(),
+		AccountFieldsSchema.extend({
+			externalUserId: z.null().default(null),
+			profilePath: z.null(),
+			provider: z.literal('xai'),
+			secretReference: z.string().trim().min(1)
 		}).strict()
 	])
 	.refine(account => account.label === account.identity, {
@@ -118,6 +130,12 @@ export const UsageSnapshotSchema = z.discriminatedUnion('provider', [
 		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
 		provider: z.literal('anthropic'),
 		source: z.enum(['claudeUsageEndpoint', 'proxyResponseHeaders', 'apiKeyProbe'])
+	}).strict(),
+	UsageSnapshotFieldsSchema.extend({
+		extraUsage: ExtraUsageSchema.nullish().default(null),
+		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
+		provider: z.literal('xai'),
+		source: z.enum(['grokProbe', 'proxyResponseHeaders', 'apiKeyProbe'])
 	}).strict()
 ])
 export type UsageSnapshot = z.infer<typeof UsageSnapshotSchema>

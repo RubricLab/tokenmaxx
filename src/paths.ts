@@ -2,6 +2,7 @@ import { chmod, mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
+import type { ProviderId } from './domain.ts'
 
 const ApplicationPathsSchema = z.object({
 	claudeProfiles: z.string().min(1),
@@ -38,6 +39,6 @@ export async function ensureApplicationPaths(paths: ApplicationPaths): Promise<v
 	await Promise.all(directories.map(directory => chmod(directory, 0o700)))
 }
 
-export function proxyBaseUrl(paths: ApplicationPaths, provider: 'openai' | 'anthropic'): string {
+export function proxyBaseUrl(paths: ApplicationPaths, provider: ProviderId): string {
 	return `http://127.0.0.1:${paths.proxyPort}/${provider}`
 }

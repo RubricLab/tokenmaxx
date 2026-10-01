@@ -1,10 +1,12 @@
-import type {
-	Account,
-	DashboardSnapshot,
-	ProviderId,
-	ProviderState,
-	UsageSnapshot,
-	UsageWindow
+import {
+	type Account,
+	type DashboardSnapshot,
+	PROVIDERS,
+	type ProviderId,
+	ProviderIdSchema,
+	type ProviderState,
+	type UsageSnapshot,
+	type UsageWindow
 } from './domain.ts'
 
 interface RenderOptions {
@@ -107,16 +109,11 @@ function shortReset(resetAt: string | null, now: Date): string | null {
 }
 
 function providerTitle(provider: ProviderId): string {
-	switch (provider) {
-		case 'openai':
-			return 'OpenAI · Codex'
-		case 'anthropic':
-			return 'Anthropic · Claude Code'
-	}
+	return `${PROVIDERS[provider].vendor} · ${PROVIDERS[provider].app}`
 }
 
 function providerCliName(provider: ProviderId): string {
-	return provider === 'openai' ? 'codex' : 'claude'
+	return PROVIDERS[provider].cli
 }
 
 function sampleAge(observedAt: string, now: Date): string | null {
@@ -255,10 +252,10 @@ export function renderDashboard(
 	return [
 		header,
 		'',
-		providerSection(paint, snapshot, 'openai', now),
-		'',
-		providerSection(paint, snapshot, 'anthropic', now),
-		'',
+		...ProviderIdSchema.options.flatMap(provider => [
+			providerSection(paint, snapshot, provider, now),
+			''
+		]),
 		paint('● active — every request uses it · q quit · r refresh · tokenmaxx --help', 'dim')
 	].join('\n')
 }

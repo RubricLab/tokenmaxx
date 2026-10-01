@@ -6,17 +6,19 @@ import {
 	piStatus,
 	uninstallPiConfig
 } from '../config-install.ts'
-import type {
-	Account,
-	AnalyticsSnapshot,
-	DashboardSnapshot,
-	ProviderId,
-	ProviderState,
-	ResetCreditsView,
-	ResetOutcome,
-	TokenTimeframe,
-	UsageSnapshot,
-	UsageWindow
+import {
+	type Account,
+	type AnalyticsSnapshot,
+	type DashboardSnapshot,
+	PROVIDERS,
+	type ProviderId,
+	ProviderIdSchema,
+	type ProviderState,
+	type ResetCreditsView,
+	type ResetOutcome,
+	type TokenTimeframe,
+	type UsageSnapshot,
+	type UsageWindow
 } from '../domain.ts'
 import {
 	readAnalytics,
@@ -72,13 +74,21 @@ function rgb(hex: string): RGBA {
 	return value
 }
 
-const providerTitles: Record<ProviderId, string> = {
-	anthropic: 'Anthropic · Claude Code',
-	openai: 'OpenAI · Codex'
+const providerOrder = ProviderIdSchema.options
+const grokInstalled = Bun.which(PROVIDERS.xai.cli) !== null
+
+function shownProviders(snapshot: DashboardSnapshot): ProviderId[] {
+	return providerOrder.filter(
+		provider =>
+			provider !== 'xai' ||
+			grokInstalled ||
+			snapshot.accounts.some(account => account.provider === 'xai')
+	)
 }
-const providerShort: Record<ProviderId, string> = { anthropic: 'Claude Code', openai: 'Codex' }
-const providerCli: Record<ProviderId, string> = { anthropic: 'claude', openai: 'codex' }
-const providerOrder: readonly ProviderId[] = ['openai', 'anthropic']
+const providerTitle = (provider: ProviderId) =>
+	`${PROVIDERS[provider].vendor} · ${PROVIDERS[provider].app}`
+const providerShort = (provider: ProviderId) => PROVIDERS[provider].app
+const providerCli = (provider: ProviderId) => PROVIDERS[provider].cli
 const fallbackTimeframe = TIMEFRAMES[2] as Timeframe
 
 interface Row {
@@ -247,7 +257,7 @@ function hardWindows(windows: readonly UsageWindow[]): UsageWindow[] {
 
 function orderedRows(snapshot: DashboardSnapshot): Row[] {
 	const rows: Row[] = []
-	for (const provider of providerOrder) {
+	for (const provider of shownProviders(snapshot)) {
 		const state = snapshot.providers.find(s => s.provider === provider)
 		const hidden = state?.policy.hiddenWindowIds ?? []
 		const pressure = (accountId: string): number => {
@@ -299,11 +309,11 @@ function addAccountLine(ctx: Ctx, provider: ProviderId, isSelected: boolean, sol
 		Text({ content: ` ${isSelected ? '▸' : '＋'} `, fg: rgb(color) }),
 		Text({
 			attributes: sole ? 1 : 0,
-			content: `add a ${providerShort[provider]} account`,
+			content: `add a ${providerShort(provider)} account`,
 			fg: rgb(color)
 		}),
 		Text({
-			content: installed ? '   ⏎' : ` · install ${providerCli[provider]} first`,
+			content: installed ? '   ⏎' : ` · install ${providerCli(provider)} first`,
 			fg: rgb(installed ? ctx.theme.faint : ctx.theme.warn)
 		})
 	)
@@ -433,8 +443,8 @@ function providerPanel(
 		? `auto ${state.policy.thresholdPercent}%${ordered ? ' · in order' : ''}`
 		: 'auto off'
 	const title = routed
-		? ` ${providerTitles[provider]}   ● ${auto} `
-		: ` ${providerTitles[provider]}   ✗ off `
+		? ` ${providerTitle(provider)}   ● ${auto} `
+		: ` ${providerTitle(provider)}   ✗ off `
 	const titleColor = !routed
 		? ctx.theme.warn
 		: state?.policy.enabled
@@ -446,7 +456,7 @@ function providerPanel(
 				Box(
 					{ flexDirection: 'row', width: '100%' },
 					Text({
-						content: ` tokenmaxx is off for ${providerCli[provider]} — turn it on in settings`,
+						content: ` tokenmaxx is off for ${providerCli(provider)} — turn it on in settings`,
 						fg: rgb(ctx.theme.warn)
 					})
 				)
@@ -517,7 +527,7 @@ function sessionResets(ctx: Ctx, snapshot: DashboardSnapshot): string | null {
 			return []
 		}
 		const label = account.label.length <= 22 ? account.label : `${account.label.slice(0, 21)}…`
-		return [`${providerCli[provider]} · ${label} · ↻ ${reset}`]
+		return [`${providerCli(provider)} · ${label} · ↻ ${reset}`]
 	})
 	return parts.length === 0 ? null : parts.join('    ')
 }
@@ -621,7 +631,7 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 	for (const provider of tokens.byProvider) {
 		body.push(
 			metricRow(
-				{ color: ctx.theme.fg, text: providerShort[provider.provider] },
+				{ color: ctx.theme.fg, text: providerShort(provider.provider) },
 				[
 					{ color: ctx.theme.dim, text: num(provider.input) },
 					{ color: ctx.theme.dim, text: num(provider.output) },
@@ -808,7 +818,7 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 
 function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
 	return [
-		...providerOrder.flatMap(provider => [
+		...shownProviders(snapshot).flatMap(provider => [
 			{ key: 'routing' as const, provider, scope: 'provider' as const },
 			{ key: 'auto' as const, provider, scope: 'provider' as const },
 			{ key: 'threshold' as const, provider, scope: 'provider' as const },
@@ -902,7 +912,7 @@ function settingsPanel(
 								: 'shown'
 		const hint =
 			row.key === 'routing'
-				? `run ${providerCli[row.provider]} through tokenmaxx`
+				? `run ${providerCli(row.provider)} through tokenmaxx`
 				: row.key === 'auto'
 					? 'switch accounts as the active one fills'
 					: row.key === 'threshold'
@@ -936,8 +946,8 @@ function settingsPanel(
 			flexDirection: 'column',
 			flexShrink: 0,
 			title: routed
-				? ` ${providerTitles[provider]}   ${auto} `
-				: ` ${providerTitles[provider]}   ✗ off `,
+				? ` ${providerTitle(provider)}   ${auto} `
+				: ` ${providerTitle(provider)}   ✗ off `,
 			titleColor: rgb(!routed ? ctx.theme.warn : policy?.enabled ? ctx.theme.good : ctx.theme.dim),
 			width: '100%'
 		},
@@ -1005,8 +1015,9 @@ function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[],
 	return column(
 		ctx,
 		[
-			settingsPanel(ctx, snapshot, rows, 'openai', selected),
-			settingsPanel(ctx, snapshot, rows, 'anthropic', selected),
+			...shownProviders(snapshot).map(provider =>
+				settingsPanel(ctx, snapshot, rows, provider, selected)
+			),
 			displayPanel(ctx, rows, selected),
 			harnessPanel(ctx, rows, selected)
 		],
@@ -1020,8 +1031,9 @@ function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], select
 	return column(
 		ctx,
 		[
-			providerPanel(ctx, snapshot, 'openai', rows, selected),
-			providerPanel(ctx, snapshot, 'anthropic', rows, selected),
+			...shownProviders(snapshot).map(provider =>
+				providerPanel(ctx, snapshot, provider, rows, selected)
+			),
 			...(note === null ? [] : [note])
 		],
 		width + 2
@@ -1039,7 +1051,7 @@ interface AddConfirm {
 }
 
 function addConfirmBody(ctx: Ctx, confirm: AddConfirm) {
-	const cli = providerCli[confirm.provider]
+	const cli = providerCli(confirm.provider)
 	const installed = ctx.cliPresent[confirm.provider]
 	const line = (...children: ReturnType<typeof Text>[]) =>
 		Box(
@@ -1068,7 +1080,7 @@ function addConfirmBody(ctx: Ctx, confirm: AddConfirm) {
 			borderColor: rgb(ctx.theme.accent),
 			borderStyle: 'rounded',
 			flexDirection: 'column',
-			title: ` Add a ${providerShort[confirm.provider]} account `,
+			title: ` Add a ${providerShort(confirm.provider)} account `,
 			titleColor: rgb(ctx.theme.accent),
 			width: '100%'
 		},
@@ -1339,9 +1351,9 @@ export async function runTuiDashboard(
 	try {
 		process.stdin.setRawMode?.(true)
 	} catch {}
-	const cliPresent: Record<ProviderId, boolean> = live
-		? { anthropic: Bun.which('claude') !== null, openai: Bun.which('codex') !== null }
-		: { anthropic: true, openai: true }
+	const cliPresent = Object.fromEntries(
+		providerOrder.map(provider => [provider, !live || Bun.which(providerCli(provider)) !== null])
+	) as Record<ProviderId, boolean>
 	const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
 	await renderer.waitForThemeMode(400).catch(() => null)
 	const themeEnvironmentOverride = themeOverride(process.env)
@@ -1460,8 +1472,7 @@ export async function runTuiDashboard(
 			analytics = await readAnalytics(socketPath)
 			rows = orderedRows(analytics.snapshot)
 			pi = await piStatus()
-			const status = await installStatus()
-			routing = { anthropic: status.claudeRouted, openai: status.codexRouted }
+			routing = (await installStatus()).routed
 			clampSelection()
 		})
 
@@ -1586,7 +1597,7 @@ export async function runTuiDashboard(
 		applyPolicy(
 			provider,
 			{ enabled: enable },
-			`auto-rotate ${providerCli[provider]} ${enable ? 'on' : 'off'}…`
+			`auto-rotate ${providerCli(provider)} ${enable ? 'on' : 'off'}…`
 		)
 	}
 

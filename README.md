@@ -4,9 +4,9 @@
 
 <br/>
 
-**One dashboard for all of your Codex and Claude Code accounts. Easily switch between them, and monitor usage.**
+**One dashboard for all of your Codex, Claude Code and Grok accounts. Easily switch between them, and monitor usage.**
 
-<sub>macOS · [Bun](https://bun.sh) · a [Rubric Labs](https://rubriclabs.com) project · not affiliated with OpenAI or Anthropic</sub>
+<sub>macOS · [Bun](https://bun.sh) · a [Rubric Labs](https://rubriclabs.com) project · not affiliated with OpenAI, Anthropic or xAI</sub>
 
 <br/><br/>
 
@@ -26,7 +26,7 @@ tokenmaxx #starts the dashboard
 
 ## What it does
 
-You run a fleet of coding agents using multiple Codex or Claude accounts:
+You run a fleet of coding agents using multiple Codex, Claude or Grok accounts:
 
 <div align="center">
 <img alt="a desktop full of parallel agent sessions burning tokens" src="media/fleet.gif" width="820">
@@ -42,7 +42,7 @@ Run `tokenmaxx`. **Accounts** shows every account and its live rate-limit window
 <img alt="every account and its live rate-limit windows, colored by pressure" src="media/accounts.png" width="820">
 </div>
 
-**Analytics** is combined token throughput across all accounts and both providers, with the ≈ cost of that usage at API list rates. Tokens are metered as responses stream by, never buffered, so every number is cross-checkable against your clients' own session logs. Press `m` for the full pricing breakdown per model.
+**Analytics** is combined token throughput across all accounts and every provider, with the ≈ cost of that usage at API list rates. Tokens are metered as responses stream by, never buffered, so every number is cross-checkable against your clients' own session logs. Press `m` for the full pricing breakdown per model.
 
 <div align="center">
 <img alt="combined token throughput and API-list-price cost across all accounts" src="media/analytics.png" width="820">
@@ -59,7 +59,7 @@ Run `tokenmaxx`. **Accounts** shows every account and its live rate-limit window
 Turn it on and tokenmaxx watches the active account's rate-limit windows. When the fullest one crosses your threshold, it switches to whichever of your accounts has the most room. The default threshold is 90%, which leaves the last stretch of every window alone in case you want it later. If an account hits a hard limit in the middle of a request, the proxy retries that request on your next account with room.
 
 ```bash
-tokenmaxx auto both on --threshold 90    # or: codex | claude … off
+tokenmaxx auto all on --threshold 90     # or: codex | claude | grok … off
 ```
 
 Want some accounts used before others? Put them in order. Auto-rotation then switches to the first account in your order that still has room, instead of the emptiest one, and moves back to an earlier account once its window resets, after the cooldown. Accounts you leave out go after the ones you list. In the dashboard, `[` and `]` move the selected account.
@@ -73,20 +73,20 @@ tokenmaxx order claude work@acme.com personal@me.com    # --reset goes back to "
 A single loopback proxy on `127.0.0.1:8459`, and the clients you already use.
 
 - **Account per request.** The proxy reads which account is active for each request and attaches its credential. Switching lands on the next request.
-- **Pressure read for free.** Both providers report rate-limit state on every response; the proxy reads it as traffic streams by, so it always knows how full the active account is, with zero extra requests.
-- **Official apps only.** Your subscription login is for Claude Code and Codex. If you're building something custom, use an API key from the provider. tokenmaxx doesn't turn a subscription into an API plan.
+- **Pressure read for free.** Codex and Claude report rate-limit state on every response; the proxy reads it as traffic streams by, so it always knows how full the active account is, with zero extra requests. Grok reports nothing until it says no, so a Grok account's meter is empty until a 429 fills it, and auto-rotation for Grok is driven by hard limits rather than a threshold.
+- **Official apps only.** Your subscription login is for Claude Code, Codex and the grok CLI. If you're building something custom, use an API key from the provider. tokenmaxx doesn't turn a subscription into an API plan.
 
 ## Commands
 
 ```text
 tokenmaxx                                  live dashboard
-tokenmaxx login <codex|claude>             sign in; isolated, idempotent
-tokenmaxx install                          route native codex & claude
+tokenmaxx login <codex|claude|grok>        sign in; isolated, idempotent
+tokenmaxx install                          route native codex, claude & grok
 tokenmaxx uninstall                        restore native config
-tokenmaxx switch <codex|claude> <email>    make an account active
-tokenmaxx logout [codex|claude] <email>    sign out; the credential is deleted
-tokenmaxx order <codex|claude> [email…]    which accounts auto-rotation uses first
-tokenmaxx auto <both|codex|claude> <on|off> [--threshold N]
+tokenmaxx switch <codex|claude|grok> <email>   make an account active
+tokenmaxx logout [codex|claude|grok] <email>   sign out; the credential is deleted
+tokenmaxx order <codex|claude|grok> [email…]   which accounts auto-rotation uses first
+tokenmaxx auto <all|codex|claude|grok> <on|off> [--threshold N]
 tokenmaxx list | status | refresh | doctor
 ```
 
@@ -101,7 +101,7 @@ tokenmaxx is for one person with accounts they pay for themselves. No account ge
 ## Not affiliated
 
 An independent [Rubric Labs](https://rubriclabs.com) project, not an official
-product of, affiliated with, or endorsed by OpenAI or Anthropic. Inspired by
+product of, affiliated with, or endorsed by OpenAI, Anthropic or xAI. Inspired by
 [codex-account-switcher](https://github.com/Sls0n/codex-account-switcher).
 
 <div align="center">

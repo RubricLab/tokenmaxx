@@ -1,4 +1,4 @@
-import type { FetchImplementation, ProviderId } from './domain.ts'
+import { type FetchImplementation, PROVIDERS, type ProviderId, ProviderIdSchema } from './domain.ts'
 import { ApplicationError, errorMessage, isNetworkFailure } from './errors.ts'
 import { observeRateLimitHeaders, type RateLimitObservation } from './ratelimit.ts'
 
@@ -283,12 +283,14 @@ const strippedRequestHeaders = [
 ]
 const strippedResponseHeaders = ['content-encoding', 'content-length', 'transfer-encoding']
 
+const providerRoute = new RegExp(`^/(${ProviderIdSchema.options.join('|')})(/.*)?$`)
+
 function routeProvider(pathname: string): { provider: ProviderId; rest: string } | null {
-	const match = pathname.match(/^\/(openai|anthropic)(\/.*)?$/)
+	const match = pathname.match(providerRoute)
 	if (match === null) {
 		return null
 	}
-	return { provider: match[1] as ProviderId, rest: match[2] ?? '/' }
+	return { provider: ProviderIdSchema.parse(match[1]), rest: match[2] ?? '/' }
 }
 
 function forwardHeaders(incoming: Headers, injection: UpstreamInjection): Headers {
@@ -387,7 +389,7 @@ function createProxyHandler(options: ProxyOptions): ProxyHandler {
 				return { deliver, observation }
 			}
 
-			const providerLabel = route.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'
+			const providerLabel = PROVIDERS[route.provider].vendor
 			let injection: UpstreamInjection | null
 			try {
 				injection = await options.source.resolve(route.provider)
@@ -536,6 +538,7 @@ export function upstreamFor(provider: ProviderId): string {
 			return 'https://chatgpt.com/backend-api/codex'
 		case 'anthropic':
 			return 'https://api.anthropic.com'
+		case 'xai':
+			return 'https://cli-chat-proxy.grok.com'
 	}
-	throw new ApplicationError('UNKNOWN_PROVIDER', `No upstream for provider ${provider}`)
 }

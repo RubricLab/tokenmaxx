@@ -9,17 +9,16 @@ import { registerClaudeAccount, registerClaudeApiKeyAccount } from './claude.ts'
 import { registerCodexAccount, registerOpenAiApiKeyAccount } from './codex.ts'
 import {
 	healInstalledConfigs,
-	installClaudeConfig,
-	installCodexConfig,
 	installPiConfig,
+	installProviderConfig,
 	installStatus,
 	piStatus,
-	uninstallClaudeConfig,
-	uninstallCodexConfig,
-	uninstallPiConfig
+	uninstallPiConfig,
+	uninstallProviderConfig
 } from './config-install.ts'
-import type { Account, ProviderId } from './domain.ts'
+import { type Account, PROVIDERS, type ProviderId, ProviderIdSchema } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
+import { registerGrokAccount, registerXaiApiKeyAccount } from './grok.ts'
 import {
 	managerAvailable,
 	managerRequest,
@@ -196,7 +195,9 @@ interface ApplicationContext {
 	store: StateStore
 }
 
-function providerFromCli(value: string): 'openai' | 'anthropic' {
+const cliWords = '<codex|claude|grok>'
+
+function providerFromCli(value: string): ProviderId {
 	switch (value) {
 		case 'codex':
 		case 'openai':
@@ -204,8 +205,14 @@ function providerFromCli(value: string): 'openai' | 'anthropic' {
 		case 'claude':
 		case 'anthropic':
 			return 'anthropic'
+		case 'grok':
+		case 'xai':
+			return 'xai'
 		default:
-			throw new ApplicationError('INVALID_PROVIDER', `Expected codex or claude, received ${value}`)
+			throw new ApplicationError(
+				'INVALID_PROVIDER',
+				`Expected codex, claude or grok, received ${value}`
+			)
 	}
 }
 
@@ -236,30 +243,30 @@ function help(): string {
 		return [`  ${accent(name)}`, ...lines.map(line => `${gutter}${dim(line)}`)].join('\n')
 	}
 	return [
-		`${accent('tokenmaxx')} ${dim('— switch between your own Codex and Claude Code accounts')}`,
+		`${accent('tokenmaxx')} ${dim('— switch between your own Codex, Claude Code and Grok accounts')}`,
 		'',
 		`${head('Usage')}  tokenmaxx <command> [options]        ${dim('run with no command for the dashboard')}`,
 		'',
 		head('Setup'),
 		row(
-			'login <codex|claude>',
+			`login ${cliWords}`,
 			'sign in an account · re-run to re-auth',
 			'add --api-key to use an API key instead'
 		),
-		row('install [pi]', 'route codex & claude, or pi, through tokenmaxx'),
+		row('install [pi]', 'route codex, claude & grok, or pi, through tokenmaxx'),
 		row('uninstall [pi]', 'restore your original config'),
 		'',
 		head('Everyday'),
 		row('list', 'accounts, health, and live usage'),
-		row('switch <codex|claude> <email>', 'make an account active now'),
-		row('logout [codex|claude] <email>', 'sign out and delete the credential'),
+		row(`switch ${cliWords} <email>`, 'make an account active now'),
+		row('logout [codex|claude|grok] <email>', 'sign out and delete the credential'),
 		row(
-			'order <codex|claude> [email…]',
+			`order ${cliWords} [email…]`,
 			'which accounts auto-rotate uses first',
 			'no emails prints the order · --reset clears it'
 		),
 		row(
-			'auto <codex|claude|both> <on|off>',
+			'auto <codex|claude|grok|all> <on|off>',
 			'switch accounts at a usage threshold',
 			'optional: --threshold N  (default 90)'
 		),
@@ -282,7 +289,7 @@ function help(): string {
 		dim('  With an order set, it switches to the first account in the order with'),
 		dim('  room, and moves back to an earlier one once it has room again.'),
 		'',
-		dim('Once installed, use codex and claude normally — a local proxy injects the'),
+		dim('Once installed, use codex, claude and grok normally — a local proxy injects the'),
 		dim("active account's credential per request, so a switch takes effect on the"),
 		dim('next request, even mid-turn, with no restart.')
 	].join('\n')
@@ -321,7 +328,7 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 		})
 		if (healed.length > 0) {
 			process.stdout.write(
-				`[${new Date().toISOString()}] re-applied ${healed.join(' and ')} routing for v${VERSION}\n`
+				`[${new Date().toISOString()}] re-applied ${healed.map(provider => PROVIDERS[provider].cli).join(', ')} routing for v${VERSION}\n`
 			)
 		}
 		const manager = new AccountManager({
@@ -469,22 +476,25 @@ async function ensureDaemon(context: ApplicationContext): Promise<void> {
 	}
 }
 
-function registerIsolatedAccount(provider: 'openai' | 'anthropic'): Promise<Account> {
+function registerIsolatedAccount(provider: ProviderId): Promise<Account> {
 	switch (provider) {
 		case 'openai':
 			return registerCodexAccount({ vault: createMacOsKeychainVault() })
 		case 'anthropic':
 			return registerClaudeAccount({ vault: createMacOsKeychainVault() })
+		case 'xai':
+			return registerGrokAccount({ vault: createMacOsKeychainVault() })
 	}
 }
 
 const cliInstallHint: Record<ProviderId, string> = {
 	anthropic: 'npm install -g @anthropic-ai/claude-code',
-	openai: 'npm install -g @openai/codex'
+	openai: 'npm install -g @openai/codex',
+	xai: 'npm install -g @xai-official/grok'
 }
 
 function assertCliInstalled(provider: ProviderId): void {
-	const binary = provider === 'openai' ? 'codex' : 'claude'
+	const binary = PROVIDERS[provider].cli
 	if (Bun.which(binary) === null) {
 		throw new ApplicationError(
 			'CLI_MISSING',
@@ -553,13 +563,13 @@ export function stripTerminalNoise(line: string): string {
 }
 
 async function registerApiKeyAccount(
-	provider: 'openai' | 'anthropic',
+	provider: ProviderId,
 	keyArgument: string | undefined
 ): Promise<Account> {
 	if (process.stdin.isTTY !== true && keyArgument === undefined) {
 		throw new ApplicationError(
 			'USAGE',
-			'Pass the key inline in non-interactive shells: tokenmaxx login <codex|claude> --api-key <key>'
+			`Pass the key inline in non-interactive shells: tokenmaxx login ${cliWords} --api-key <key>`
 		)
 	}
 	await handTerminalBack()
@@ -577,10 +587,15 @@ async function registerApiKeyAccount(
 	if (label.trim().length === 0) {
 		throw new ApplicationError('USAGE', 'The account needs a name')
 	}
-	const vault = createMacOsKeychainVault()
-	return provider === 'openai'
-		? registerOpenAiApiKeyAccount({ key, label: label.trim(), vault })
-		: registerClaudeApiKeyAccount({ key, label: label.trim(), vault })
+	const input = { key, label: label.trim(), vault: createMacOsKeychainVault() }
+	switch (provider) {
+		case 'openai':
+			return registerOpenAiApiKeyAccount(input)
+		case 'anthropic':
+			return registerClaudeApiKeyAccount(input)
+		case 'xai':
+			return registerXaiApiKeyAccount(input)
+	}
 }
 
 async function login(
@@ -589,7 +604,7 @@ async function login(
 	options: { apiKey: boolean; apiKeyValue?: string } = { apiKey: false }
 ): Promise<void> {
 	if (providerArgument === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude> [--api-key [key]]')
+		throw new ApplicationError('USAGE', `Usage: tokenmaxx login ${cliWords} [--api-key [key]]`)
 	}
 	const provider = providerFromCli(providerArgument)
 	if (!options.apiKey) {
@@ -630,9 +645,7 @@ async function login(
 			: `Re-authenticated ${account.label}; live sessions pick it up on their next request.\n`
 	)
 	if (existing === undefined) {
-		const status = await installStatus()
-		const alreadyRouted = provider === 'openai' ? status.codexRouted : status.claudeRouted
-		if (!alreadyRouted) {
+		if (!(await installStatus()).routed[provider]) {
 			await setRouting(context, provider, true).catch(() => undefined)
 			process.stdout.write(
 				`tokenmaxx is on for ${providerArgument} — run ${providerArgument} as usual.\n`
@@ -647,11 +660,7 @@ async function removeUnstoredAccount(account: Account): Promise<void> {
 	}
 }
 
-function resolveAccount(
-	store: StateStore,
-	provider: 'openai' | 'anthropic',
-	reference: string
-): Account {
+function resolveAccount(store: StateStore, provider: ProviderId, reference: string): Account {
 	const matches = store
 		.listAccounts(provider)
 		.filter(account => account.id === reference || account.label === reference)
@@ -679,21 +688,19 @@ function listAccounts(context: ApplicationContext): void {
 	const states = new Map(context.store.listProviderStates().map(state => [state.provider, state]))
 	const accounts = context.store.listAccounts()
 	if (accounts.length === 0) {
-		process.stdout.write(
-			'No accounts yet. Sign in with:  tokenmaxx login codex   ·   tokenmaxx login claude\n'
+		const hints = ProviderIdSchema.options.map(
+			provider => `tokenmaxx login ${PROVIDERS[provider].cli}`
 		)
+		process.stdout.write(`No accounts yet. Sign in with:  ${hints.join('   ·   ')}\n`)
 		return
 	}
 	const width = Math.max(...accounts.map(account => account.label.length))
-	for (const [provider, title] of [
-		['openai', 'codex'],
-		['anthropic', 'claude']
-	] as const) {
+	for (const provider of ProviderIdSchema.options) {
 		const group = inOrder(accounts.filter(account => account.provider === provider))
 		if (group.length === 0) {
 			continue
 		}
-		process.stdout.write(`\n${title}\n`)
+		process.stdout.write(`\n${PROVIDERS[provider].cli}\n`)
 		for (const account of group) {
 			const isActive = states.get(provider)?.activeAccountId === account.id
 			const place = account.priority === undefined ? '  ' : `${account.priority + 1}.`
@@ -719,7 +726,7 @@ async function orderAccounts(
 	if (providerArgument === undefined) {
 		throw new ApplicationError(
 			'USAGE',
-			'Usage: tokenmaxx order <codex|claude> [email…] | tokenmaxx order <codex|claude> --reset'
+			`Usage: tokenmaxx order ${cliWords} [email…] | tokenmaxx order ${cliWords} --reset`
 		)
 	}
 	const provider = providerFromCli(providerArgument)
@@ -759,14 +766,14 @@ async function orderAccounts(
 	)
 }
 
-const providerWords = new Set(['codex', 'claude', 'openai', 'anthropic'])
+const providerWords = new Set(['codex', 'claude', 'grok', 'openai', 'anthropic', 'xai'])
 
 async function logout(context: ApplicationContext, arguments_: readonly string[]): Promise<void> {
 	const qualified = arguments_[0] !== undefined && providerWords.has(arguments_[0])
 	const provider = qualified ? providerFromCli(arguments_[0] as string) : undefined
 	const reference = qualified ? arguments_[1] : arguments_[0]
 	if (reference === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx logout [codex|claude] <email-or-name>')
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx logout [codex|claude|grok] <email-or-name>')
 	}
 	const matches = context.store
 		.listAccounts(provider)
@@ -793,7 +800,7 @@ async function switchAccount(
 	const providerArgument = arguments_[0]
 	const accountReference = arguments_[1]
 	if (providerArgument === undefined || accountReference === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx switch <codex|claude> <email-or-id>')
+		throw new ApplicationError('USAGE', `Usage: tokenmaxx switch ${cliWords} <email-or-id>`)
 	}
 	const provider = providerFromCli(providerArgument)
 	const target = resolveAccount(context.store, provider, accountReference)
@@ -811,13 +818,13 @@ async function configureAutomation(
 	if (providerArgument === undefined || (mode !== 'on' && mode !== 'off')) {
 		throw new ApplicationError(
 			'USAGE',
-			'Usage: tokenmaxx auto <codex|claude|both> <on|off> [--threshold 95]'
+			'Usage: tokenmaxx auto <codex|claude|grok|all> <on|off> [--threshold 95]'
 		)
 	}
 	const providers =
-		providerArgument === 'both'
-			? (['openai', 'anthropic'] as const)
-			: ([providerFromCli(providerArgument)] as const)
+		providerArgument === 'all' || providerArgument === 'both'
+			? ProviderIdSchema.options
+			: [providerFromCli(providerArgument)]
 	const thresholdValue = option(arguments_, '--threshold')
 	const thresholdPercent = thresholdValue === undefined ? undefined : Number(thresholdValue)
 	if (
@@ -864,17 +871,22 @@ async function installConfig(context: ApplicationContext, targetArgument?: strin
 			return
 		}
 		process.stdout.write(
-			`pi now has tokenmaxx-anthropic and tokenmaxx-openai providers (${result.path}).\n` +
+			`pi now has tokenmaxx-anthropic, tokenmaxx-openai and tokenmaxx-xai providers (${result.path}).\n` +
 				'Pick a tokenmaxx model with /model and requests route through the proxy.\n' +
 				'Undo any time with: tokenmaxx uninstall pi\n'
 		)
 		return
 	}
-	await installCodexConfig(context.paths)
-	await installClaudeConfig(context.paths)
+	const providers = ProviderIdSchema.options.filter(
+		provider => provider !== 'xai' || Bun.which(PROVIDERS.xai.cli) !== null
+	)
+	for (const provider of providers) {
+		await installProviderConfig(provider, context.paths)
+	}
+	const clis = providers.map(provider => PROVIDERS[provider].cli)
 	process.stdout.write(
-		'Native codex and claude now route through tokenmaxx.\n' +
-			'Just run `codex` or `claude` as usual — tokenmaxx injects the active account.\n' +
+		`Native ${clis.join(', ').replace(/, ([^,]*)$/, ' and $1')} now route through tokenmaxx.\n` +
+			`Just run ${clis.map(cli => `\`${cli}\``).join(' or ')} as usual — tokenmaxx injects the active account.\n` +
 			'Undo any time with: tokenmaxx uninstall\n'
 	)
 }
@@ -892,14 +904,15 @@ async function uninstallConfig(targetArgument?: string): Promise<void> {
 		)
 		return
 	}
-	const codex = await uninstallCodexConfig()
-	const claude = await uninstallClaudeConfig()
-	if (codex === null && claude === null) {
+	const restored = await Promise.all(
+		ProviderIdSchema.options.map(provider => uninstallProviderConfig(provider))
+	)
+	if (restored.every(path => path === null)) {
 		process.stdout.write('tokenmaxx was not installed; nothing to restore.\n')
 		return
 	}
 	process.stdout.write(
-		'Restored your original codex and claude config.\n' +
+		'Restored your original codex, claude and grok config.\n' +
 			'Native clients no longer route through tokenmaxx. Re-enable with: tokenmaxx install\n'
 	)
 }
@@ -909,22 +922,21 @@ async function setRouting(
 	provider: ProviderId,
 	enable: boolean
 ): Promise<void> {
-	if (provider === 'openai') {
-		await (enable ? installCodexConfig(context.paths) : uninstallCodexConfig())
-	} else {
-		await (enable ? installClaudeConfig(context.paths) : uninstallClaudeConfig())
-	}
+	await (enable ? installProviderConfig(provider, context.paths) : uninstallProviderConfig(provider))
 }
 
 async function doctor(context: ApplicationContext): Promise<void> {
 	const tools = [
 		['bun', '1.2+'],
 		['codex', '0.144.1'],
-		['claude', '2.1.206']
+		['claude', '2.1.206'],
+		['grok', '1.0.13']
 	] as const
 	for (const [tool, testedVersion] of tools) {
 		if (Bun.which(tool) === null) {
-			process.stdout.write(`missing  ${tool}\n`)
+			if (tool !== PROVIDERS.xai.cli) {
+				process.stdout.write(`missing  ${tool}\n`)
+			}
 			continue
 		}
 		const version = await commandOutput([tool, '--version'])
@@ -957,22 +969,25 @@ async function doctor(context: ApplicationContext): Promise<void> {
 		)
 	}
 	const routing = await installStatus()
-	process.stdout.write(
-		`${routing.codexRouted ? 'ok     ' : 'note   '}  codex    ${
-			routing.codexRouted
-				? 'config.toml selects the tokenmaxx provider'
-				: routing.codexStale
-					? 'a tokenmaxx block exists but codex ignores it (top-level key was swallowed by a [table]) — run tokenmaxx install to repair'
-					: 'not routed — run tokenmaxx install'
-		}\n`
-	)
-	process.stdout.write(
-		`${routing.claudeRouted ? 'ok     ' : 'note   '}  claude   ${
-			routing.claudeRouted
-				? 'settings.json routes ANTHROPIC_BASE_URL through tokenmaxx'
+	const routedText: Record<ProviderId, string> = {
+		anthropic: 'settings.json routes ANTHROPIC_BASE_URL through tokenmaxx',
+		openai: 'config.toml selects the tokenmaxx provider',
+		xai: 'config.toml points cli_chat_proxy_base_url at tokenmaxx'
+	}
+	for (const provider of ProviderIdSchema.options) {
+		const routed = routing.routed[provider]
+		if (provider === 'xai' && !routed && Bun.which(PROVIDERS.xai.cli) === null) {
+			continue
+		}
+		const detail = routed
+			? routedText[provider]
+			: provider === 'openai' && routing.codexStale
+				? 'a tokenmaxx block exists but codex ignores it (top-level key was swallowed by a [table]) — run tokenmaxx install to repair'
 				: 'not routed — run tokenmaxx install'
-		}\n`
-	)
+		process.stdout.write(
+			`${routed ? 'ok     ' : 'note   '}  ${PROVIDERS[provider].cli.padEnd(8)} ${detail}\n`
+		)
+	}
 	const pi = await piStatus()
 	if (pi.present) {
 		process.stdout.write(
@@ -1020,7 +1035,7 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 							now,
 							timewarp: Number.isFinite(timewarp) && timewarp > 0 ? timewarp : 0
 						},
-						routing: { anthropic: routed, openai: routed }
+						routing: { anthropic: routed, openai: routed, xai: routed }
 					})
 					context.store.close()
 					process.exit(0)
@@ -1028,10 +1043,8 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				await ensureDaemon(context)
 				if (process.stdout.isTTY) {
 					const { runTuiDashboard } = await import('./tui/dashboard.ts')
-					const readRouting = async (): Promise<Record<'openai' | 'anthropic', boolean>> => {
-						const status = await installStatus()
-						return { anthropic: status.claudeRouted, openai: status.codexRouted }
-					}
+					const readRouting = async (): Promise<Record<ProviderId, boolean>> =>
+						(await installStatus()).routed
 					let alert = ''
 					for (;;) {
 						const action = await runTuiDashboard(context.paths.managerSocket, {
@@ -1050,7 +1063,7 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 							continue
 						}
 						if (action.kind === 'relogin' || action.kind === 'login' || action.kind === 'loginApiKey') {
-							const cli = action.provider === 'openai' ? 'codex' : 'claude'
+							const cli = PROVIDERS[action.provider].cli
 							freshScreen(action.kind === 'loginApiKey' ? `add a ${cli} api key` : `sign in with ${cli}`)
 							await login(context, cli, {
 								apiKey: action.kind === 'loginApiKey'
