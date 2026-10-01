@@ -1,8 +1,10 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { forgetConfigBackup, restoreConfigBackup, saveConfigBackup } from './config-backup.ts'
+import { type ProviderId, ProviderIdSchema } from './domain.ts'
 import type { ApplicationPaths } from './paths.ts'
-import { proxyBaseUrl } from './paths.ts'
+import { applicationPaths, proxyBaseUrl } from './paths.ts'
 import { VERSION } from './version.ts'
 
 const providerName = 'tokenmaxx'
@@ -16,12 +18,25 @@ const legacyEndMarkers = [topEndMarker, '# <<< tokmax managed <<<']
 const legacyDummyTokens = [dummyAuthToken, 'managed-by-tokmax']
 const disabledPrefix = /^#\s*(?:tokenmaxx|tokmax)-disabled:\s*/
 
+export function clientConfigPaths(environment: NodeJS.ProcessEnv = process.env) {
+	return {
+		claude: resolve(environment.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'settings.json'),
+		codex: resolve(environment.CODEX_HOME ?? join(homedir(), '.codex'), 'config.toml'),
+		grok: resolve(environment.GROK_HOME ?? join(homedir(), '.grok'), 'config.toml'),
+		pi: resolve(environment.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'), 'models.json')
+	}
+}
+
 function codexConfigPath(): string {
-	return join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'config.toml')
+	return clientConfigPaths().codex
 }
 
 function claudeSettingsPath(): string {
-	return join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'settings.json')
+	return clientConfigPaths().claude
+}
+
+function grokConfigPath(): string {
+	return clientConfigPaths().grok
 }
 
 async function readFileOrEmpty(path: string): Promise<string> {
@@ -92,16 +107,27 @@ function buildCodexManagedConfig(paths: ApplicationPaths): { top: string; table:
 
 export async function installCodexConfig(paths: ApplicationPaths): Promise<string> {
 	const path = codexConfigPath()
-	const base = stripCodexManagedBlocks(await readFileOrEmpty(path))
+	const existing = await readFileOrEmpty(path)
+	const base = stripCodexManagedBlocks(existing)
 	const managed = buildCodexManagedConfig(paths)
 	const body = base.length === 0 ? '' : `${base}\n\n`
+	const installed = `${managed.top}\n\n${body}${managed.table}\n`
+	await saveConfigBackup(
+		paths,
+		path,
+		installed,
+		/tokenmaxx|tokmax/.test(existing) ? restoreCodexContent(existing) : undefined
+	)
 	await mkdir(dirname(path), { recursive: true })
-	await writeFile(path, `${managed.top}\n\n${body}${managed.table}\n`, { mode: 0o600 })
+	await writeFile(path, installed, { mode: 0o600 })
 	return path
 }
 
-export async function uninstallCodexConfig(): Promise<string | null> {
-	const path = codexConfigPath()
+export async function uninstallCodexConfig(
+	paths = applicationPaths(),
+	path = codexConfigPath()
+): Promise<string | null> {
+	if (await restoreConfigBackup(paths, path)) return path
 	const existing = await readFile(path, 'utf8').catch(() => null)
 	const carriesOurConfig = (content: string): boolean =>
 		[...legacyBeginMarkers, tableBeginMarker].some(marker => content.includes(marker)) ||
@@ -111,6 +137,7 @@ export async function uninstallCodexConfig(): Promise<string | null> {
 		return null
 	}
 	await writeFile(path, restoreCodexContent(existing), { mode: 0o600 })
+	await forgetConfigBackup(paths, path)
 	return path
 }
 
@@ -124,25 +151,36 @@ export async function installClaudeConfig(paths: ApplicationPaths): Promise<stri
 	const raw = await readFileOrEmpty(path)
 	let settings: ClaudeSettings = {}
 	if (raw.trim().length > 0) {
-		try {
-			settings = JSON.parse(raw) as ClaudeSettings
-		} catch {
-			settings = {}
-		}
+		settings = JSON.parse(raw) as ClaudeSettings
 	}
+	const original = structuredClone(settings)
+	if (original.env?.ANTHROPIC_BASE_URL === proxyBaseUrl(paths, 'anthropic'))
+		delete original.env.ANTHROPIC_BASE_URL
+	if (legacyDummyTokens.includes(original.env?.ANTHROPIC_AUTH_TOKEN ?? ''))
+		delete original.env?.ANTHROPIC_AUTH_TOKEN
+	if (original.env !== undefined && Object.keys(original.env).length === 0) delete original.env
+	const sanitized =
+		JSON.stringify(original) !== JSON.stringify(settings)
+			? `${JSON.stringify(original, null, 2)}\n`
+			: undefined
 	// Base URL only: any set ANTHROPIC_AUTH_TOKEN switches Claude Code off its
 	// claude.ai login, losing connectors and MCP; the proxy injects credentials itself.
 	settings.env = { ...settings.env, ANTHROPIC_BASE_URL: proxyBaseUrl(paths, 'anthropic') }
 	if (legacyDummyTokens.includes(settings.env.ANTHROPIC_AUTH_TOKEN ?? '')) {
 		delete settings.env.ANTHROPIC_AUTH_TOKEN
 	}
+	const installed = `${JSON.stringify(settings, null, 2)}\n`
+	await saveConfigBackup(paths, path, installed, sanitized)
 	await mkdir(dirname(path), { recursive: true })
-	await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 })
+	await writeFile(path, installed, { mode: 0o600 })
 	return path
 }
 
-export async function uninstallClaudeConfig(): Promise<string | null> {
-	const path = claudeSettingsPath()
+export async function uninstallClaudeConfig(
+	paths = applicationPaths(),
+	path = claudeSettingsPath()
+): Promise<string | null> {
+	if (await restoreConfigBackup(paths, path)) return path
 	const raw = await readFile(path, 'utf8').catch(() => null)
 	if (raw === null) {
 		return null
@@ -159,7 +197,7 @@ export async function uninstallClaudeConfig(): Promise<string | null> {
 	const { ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ...rest } = settings.env
 	const managed =
 		(ANTHROPIC_AUTH_TOKEN !== undefined && legacyDummyTokens.includes(ANTHROPIC_AUTH_TOKEN)) ||
-		(ANTHROPIC_BASE_URL?.includes('127.0.0.1') ?? false)
+		ANTHROPIC_BASE_URL === proxyBaseUrl(paths, 'anthropic')
 	if (!managed) {
 		return null
 	}
@@ -178,12 +216,117 @@ export async function uninstallClaudeConfig(): Promise<string | null> {
 	return path
 }
 
+const endpointBeginMarker = '# >>> tokenmaxx endpoint (do not edit) >>>'
+const endpointEndMarker = '# <<< tokenmaxx endpoint <<<'
+const grokEndpointKey = 'cli_chat_proxy_base_url'
+const ownEndpointLine =
+	/^\s*(?:endpoints\.)?cli_chat_proxy_base_url\s*=\s*"[^"]*127\.0\.0\.1:\d+\/xai\/v1"\s*$/
+const anyEndpointLine = /^\s*(?:endpoints\.)?cli_chat_proxy_base_url\s*=/
+const endpointsHeader = /^\s*\[endpoints\]\s*$/
+const tableHeader = /^\s*\[/
+
+function withoutMarkedLines(lines: string[]): string[] {
+	const begin = lines.findIndex(line => line.trim() === endpointBeginMarker)
+	const end = lines.findIndex(line => line.trim() === endpointEndMarker)
+	return begin === -1 || end < begin ? lines : [...lines.slice(0, begin), ...lines.slice(end + 1)]
+}
+
+function stripGrokManagedBlocks(content: string): string {
+	return withoutMarkedLines(content.split('\n'))
+		.filter(line => !ownEndpointLine.test(line.replace(disabledPrefix, '')))
+		.map(line => (anyEndpointLine.test(line) ? `# tokenmaxx-disabled: ${line.trimStart()}` : line))
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim()
+}
+
+function dropEmptyEndpointsTable(lines: string[]): string[] {
+	return lines.filter((line, index) => {
+		if (!endpointsHeader.test(line)) {
+			return true
+		}
+		const rest = lines.slice(index + 1)
+		const next = rest.findIndex(candidate => candidate.trim().length > 0)
+		return next !== -1 && !tableHeader.test(rest[next] ?? '')
+	})
+}
+
+function restoreGrokContent(content: string): string {
+	const restored = stripGrokManagedBlocks(content)
+		.split('\n')
+		.map(line => line.replace(disabledPrefix, ''))
+	return `${dropEmptyEndpointsTable(restored).join('\n').trimEnd()}\n`
+}
+
+export async function installGrokConfig(paths: ApplicationPaths): Promise<string> {
+	const path = grokConfigPath()
+	const base = stripGrokManagedBlocks(await readFileOrEmpty(path))
+	const managedLine = `${grokEndpointKey} = "${proxyBaseUrl(paths, 'xai')}/v1"`
+	const lines = base.length === 0 ? [] : base.split('\n')
+	const header = lines.findIndex(line => endpointsHeader.test(line))
+	const managed =
+		header === -1
+			? [
+					...lines,
+					...(lines.length === 0 ? [] : ['']),
+					endpointBeginMarker,
+					'[endpoints]',
+					managedLine,
+					endpointEndMarker
+				]
+			: [
+					...lines.slice(0, header + 1),
+					endpointBeginMarker,
+					managedLine,
+					endpointEndMarker,
+					...lines.slice(header + 1)
+				]
+	await mkdir(dirname(path), { recursive: true })
+	await writeFile(path, `${managed.join('\n')}\n`, { mode: 0o600 })
+	return path
+}
+
+export async function uninstallGrokConfig(path = grokConfigPath()): Promise<string | null> {
+	const existing = await readFile(path, 'utf8').catch(() => null)
+	const carriesOurConfig = (content: string): boolean =>
+		content.includes(endpointBeginMarker) ||
+		content.split('\n').some(line => ownEndpointLine.test(line) || disabledPrefix.test(line))
+	if (existing === null || !carriesOurConfig(existing)) {
+		return null
+	}
+	await writeFile(path, restoreGrokContent(existing), { mode: 0o600 })
+	return path
+}
+
+export function installProviderConfig(
+	provider: ProviderId,
+	paths: ApplicationPaths
+): Promise<string> {
+	switch (provider) {
+		case 'openai':
+			return installCodexConfig(paths)
+		case 'anthropic':
+			return installClaudeConfig(paths)
+		case 'xai':
+			return installGrokConfig(paths)
+	}
+}
+
+export function uninstallProviderConfig(provider: ProviderId): Promise<string | null> {
+	switch (provider) {
+		case 'openai':
+			return uninstallCodexConfig()
+		case 'anthropic':
+			return uninstallClaudeConfig()
+		case 'xai':
+			return uninstallGrokConfig()
+	}
+}
+
 interface InstallStatus {
-	codexRouted: boolean
-	claudeRouted: boolean
+	baseUrls: Record<ProviderId, string | null>
 	codexStale: boolean
-	codexBaseUrl: string | null
-	claudeBaseUrl: string | null
+	routed: Record<ProviderId, boolean>
 }
 
 export async function installStatus(): Promise<InstallStatus> {
@@ -200,7 +343,15 @@ export async function installStatus(): Promise<InstallStatus> {
 		codexBaseUrl = typeof baseUrl === 'string' ? baseUrl : null
 		codexRouted = codexBaseUrl?.includes('127.0.0.1') ?? false
 	} catch {
-		codexRouted = false
+		// Bun.TOML rejects configs codex accepts — bare table keys starting with a
+		// digit, like [mcp_servers.1password]. Reading that as "not routed" makes
+		// the dashboard show routing off while traffic flows through the proxy,
+		// and turns the routing toggle into a re-install. Fall back to our own
+		// active selection line, scanning only the top-level region: a
+		// model_provider line under a table belongs to that table, not to codex.
+		const firstTable = codexRaw.search(/^\[/m)
+		const topLevel = firstTable === -1 ? codexRaw : codexRaw.slice(0, firstTable)
+		codexRouted = topLevel.split('\n').some(line => ownProviderSelection.test(line))
 	}
 	const codexStale =
 		!codexRouted &&
@@ -215,27 +366,47 @@ export async function installStatus(): Promise<InstallStatus> {
 		claudeBaseUrl = null
 	}
 	const claudeRouted = claudeBaseUrl?.includes('127.0.0.1') ?? false
-	return { claudeBaseUrl, claudeRouted, codexBaseUrl, codexRouted, codexStale }
+
+	let grokBaseUrl: string | null = null
+	try {
+		const parsed = Bun.TOML.parse(await readFileOrEmpty(grokConfigPath())) as {
+			endpoints?: { cli_chat_proxy_base_url?: unknown }
+		}
+		const baseUrl = parsed.endpoints?.cli_chat_proxy_base_url
+		grokBaseUrl = typeof baseUrl === 'string' ? baseUrl : null
+	} catch {
+		grokBaseUrl = null
+	}
+	const grokRouted = grokBaseUrl?.includes('127.0.0.1') ?? false
+	return {
+		baseUrls: { anthropic: claudeBaseUrl, openai: codexBaseUrl, xai: grokBaseUrl },
+		codexStale,
+		routed: { anthropic: claudeRouted, openai: codexRouted, xai: grokRouted }
+	}
 }
 
 // Configs written by an older version stay stale after an update (#17): re-apply
 // install for whatever is currently routed, once per version change. Never adds
 // routing — a harness the user uninstalled or never installed stays untouched, and a
 // config routed to another tokenmaxx instance's port belongs to that instance.
-export async function healInstalledConfigs(paths: ApplicationPaths): Promise<string[]> {
+export async function healInstalledConfigs(paths: ApplicationPaths): Promise<ProviderId[]> {
 	const stampPath = join(paths.root, 'healed-version')
 	if ((await readFileOrEmpty(stampPath)).trim() === VERSION) {
 		return []
 	}
-	const { claudeBaseUrl, codexBaseUrl } = await installStatus()
-	const healed: string[] = []
-	if (codexBaseUrl === proxyBaseUrl(paths, 'openai')) {
-		await installCodexConfig(paths)
-		healed.push('codex')
+	const { baseUrls, routed } = await installStatus()
+	const ownBaseUrls: Record<ProviderId, string> = {
+		anthropic: proxyBaseUrl(paths, 'anthropic'),
+		openai: proxyBaseUrl(paths, 'openai'),
+		xai: `${proxyBaseUrl(paths, 'xai')}/v1`
 	}
-	if (claudeBaseUrl === proxyBaseUrl(paths, 'anthropic')) {
-		await installClaudeConfig(paths)
-		healed.push('claude')
+	const healed: ProviderId[] = []
+	for (const provider of ProviderIdSchema.options) {
+		const baseUrl = baseUrls[provider]
+		if (routed[provider] && (baseUrl === null || baseUrl === ownBaseUrls[provider])) {
+			await installProviderConfig(provider, paths)
+			healed.push(provider)
+		}
 	}
 	await mkdir(paths.root, { recursive: true })
 	await writeFile(stampPath, `${VERSION}\n`)
@@ -249,16 +420,16 @@ export interface PiResult {
 }
 
 function piModelsPath(): string {
-	return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'), 'models.json')
+	return clientConfigPaths().pi
 }
 
-const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai']
+const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai', 'tokenmaxx-xai']
 
 // The anthropic ids pair with an API-key account (subscription auth is not for
-// third-party harnesses); gpt-5.6-sol is the one id the ChatGPT codex backend
-// accepts for subscription accounts.
-const piAnthropicModelIds = ['claude-opus-4-8', 'claude-sonnet-4-6']
-const piOpenaiModelIds = ['gpt-5.6-sol']
+// third-party harnesses).
+const piAnthropicModelIds = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5']
+const piOpenaiModelIds = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
+const piXaiModelIds = ['grok-4.6']
 
 function piProviders(paths: ApplicationPaths): Record<string, unknown> {
 	const models = (ids: readonly string[]) => ids.map(id => ({ id, reasoning: true }))
@@ -274,6 +445,12 @@ function piProviders(paths: ApplicationPaths): Record<string, unknown> {
 			apiKey: dummyAuthToken,
 			baseUrl: proxyBaseUrl(paths, 'openai'),
 			models: models(piOpenaiModelIds)
+		},
+		'tokenmaxx-xai': {
+			api: 'openai-responses',
+			apiKey: dummyAuthToken,
+			baseUrl: `${proxyBaseUrl(paths, 'xai')}/v1`,
+			models: models(piXaiModelIds)
 		}
 	}
 }
@@ -302,23 +479,28 @@ function ensureObject(parent: Record<string, unknown>, key: string): Record<stri
 
 async function writePiProviders(
 	providers: Record<string, unknown> | null,
-	manual: string
+	manual: string,
+	paths?: ApplicationPaths,
+	path = piModelsPath()
 ): Promise<PiResult> {
-	const path = piModelsPath()
 	const raw = await readFileOrEmpty(path)
 	const config = parseJsonObject(raw)
 	if (config === null) {
 		return { applied: false, manual, path }
 	}
 	const bucket = ensureObject(config, 'providers')
+	const hadManaged = piProviderKeys.some(key => key in bucket)
 	for (const key of piProviderKeys) {
 		delete bucket[key]
 	}
+	const sanitized = hadManaged ? `${JSON.stringify(config, null, 2)}\n` : undefined
 	if (providers !== null) {
 		Object.assign(bucket, providers)
 	}
+	const installed = `${JSON.stringify(config, null, 2)}\n`
+	if (paths !== undefined) await saveConfigBackup(paths, path, installed, sanitized)
 	await mkdir(dirname(path), { recursive: true })
-	await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+	await writeFile(path, installed, { mode: 0o600 })
 	return { applied: true, manual: null, path }
 }
 
@@ -326,18 +508,26 @@ async function writePiProviders(
 export async function installPiConfig(paths: ApplicationPaths): Promise<PiResult> {
 	return writePiProviders(
 		piProviders(paths),
-		`could not parse it as JSON — add this under providers yourself:\n${JSON.stringify(piProviders(paths), null, 2)}`
+		`could not parse it as JSON — add this under providers yourself:\n${JSON.stringify(piProviders(paths), null, 2)}`,
+		paths
 	)
 }
 
-export async function uninstallPiConfig(): Promise<PiResult> {
-	const raw = await readFile(piModelsPath(), 'utf8').catch(() => null)
+export async function uninstallPiConfig(
+	paths = applicationPaths(),
+	path = piModelsPath()
+): Promise<PiResult> {
+	if (await restoreConfigBackup(paths, path)) return { applied: true, manual: null, path }
+	const raw = await readFile(path, 'utf8').catch(() => null)
 	if (raw === null) {
-		return { applied: false, manual: null, path: piModelsPath() }
+		return { applied: false, manual: null, path }
 	}
+	if (!piProviderKeys.some(key => raw.includes(key))) return { applied: false, manual: null, path }
 	return writePiProviders(
 		null,
-		'could not parse it as JSON — remove the tokenmaxx-anthropic and tokenmaxx-openai providers yourself'
+		`could not parse it as JSON — remove the ${piProviderKeys.join(', ')} providers yourself`,
+		undefined,
+		path
 	)
 }
 

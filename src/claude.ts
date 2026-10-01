@@ -8,17 +8,21 @@ import {
 	type ExtraUsage,
 	type FetchImplementation,
 	type ProviderProbeResult,
+	type ResetCreditCounts,
+	type ResetCreditsView,
+	type ResetOutcome,
 	type UsageSnapshot,
 	type UsageWindow
 } from './domain.ts'
 import { ApplicationError, loginFailureMessage } from './errors.ts'
 import { type UpstreamInjection, upstreamFor } from './proxy.ts'
-import { type CredentialVault, exclusive } from './vault.ts'
+import { type CredentialVault, exclusive, readApiKey } from './vault.ts'
 
 const clientId = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 const tokenEndpoint = 'https://console.anthropic.com/v1/oauth/token'
 const profileEndpoint = 'https://api.anthropic.com/api/oauth/profile'
-const usageEndpoint = 'https://api.anthropic.com/api/oauth/usage'
+const usageEndpoint = 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1'
+const organizationsEndpoint = 'https://api.anthropic.com/api/organizations'
 const oauthBeta = 'oauth-2025-04-20'
 
 const ClaudeOauthSchema = z
@@ -57,6 +61,10 @@ const ProfileSchema = z
 			.optional(),
 		email: z.string().email().optional(),
 		email_address: z.string().email().optional(),
+		organization: z
+			.object({ uuid: z.string().min(1) })
+			.passthrough()
+			.optional(),
 		uuid: z.string().min(1).optional()
 	})
 	.passthrough()
@@ -181,7 +189,7 @@ export async function removeClaudeProfile(
 	profilePath: string,
 	dependencies: ClaudeLoginDependencies = defaultClaudeLoginDependencies()
 ): Promise<void> {
-	await dependencies.captured([
+	const result = await dependencies.captured([
 		'security',
 		'delete-generic-password',
 		'-a',
@@ -189,6 +197,12 @@ export async function removeClaudeProfile(
 		'-s',
 		cliKeychainService(profilePath)
 	])
+	if (result.exitCode !== 0 && result.exitCode !== 44) {
+		throw new ApplicationError(
+			'KEYCHAIN_DELETE_FAILED',
+			'Could not remove the isolated Claude profile credential'
+		)
+	}
 	await rm(profilePath, { force: true, recursive: true })
 }
 
@@ -201,14 +215,6 @@ async function readClaudeCredential(
 		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
 	}
 	return ClaudeOauthSchema.parse(JSON.parse(serialized))
-}
-
-async function readApiKey(vault: CredentialVault, reference: string): Promise<string> {
-	const key = await vault.read(reference)
-	if (key === null) {
-		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
-	}
-	return key
 }
 
 const anthropicVersion = '2023-06-01'
@@ -312,7 +318,7 @@ export async function refreshClaudeCredential(input: {
 async function fetchClaudeProfile(
 	accessToken: string,
 	fetchImplementation: FetchImplementation = fetch
-): Promise<{ accountId: string; email: string | null }> {
+): Promise<{ accountId: string; email: string | null; organizationId: string | null }> {
 	const response = await fetchImplementation(profileEndpoint, {
 		headers: {
 			Authorization: `Bearer ${accessToken}`,
@@ -341,7 +347,8 @@ async function fetchClaudeProfile(
 			profile.account?.email ??
 			profile.email_address ??
 			profile.email ??
-			null
+			null,
+		organizationId: profile.organization?.uuid ?? null
 	}
 }
 
@@ -526,15 +533,54 @@ const SpendResponseSchema = z
 	})
 	.passthrough()
 
+const ResetGrantSchema = z
+	.object({
+		ends_at: z.string().nullish(),
+		id: z.string().min(1),
+		label: z.string().nullish(),
+		paused: z.boolean().nullish(),
+		resets_left: z.number().int().nonnegative(),
+		usable_now: z.boolean().nullish()
+	})
+	.passthrough()
+
+const ResetProgramSchema = z
+	.object({
+		eligible: z.boolean(),
+		grants: z.array(ResetGrantSchema).nullish(),
+		next_grant_id: z.string().nullish()
+	})
+	.passthrough()
+
+const ResetClaimResponseSchema = z
+	.object({
+		cleared: z.array(z.string()).nullish(),
+		result: z
+			.enum(['reset', 'already_used', 'not_limited', 'cooldown', 'ineligible', 'unavailable'])
+			.catch('unavailable')
+	})
+	.passthrough()
+
+const claimOutcomes = {
+	already_used: 'already_redeemed',
+	cooldown: 'unavailable',
+	ineligible: 'unavailable',
+	not_limited: 'nothing_to_reset',
+	reset: 'reset',
+	unavailable: 'unavailable'
+} as const satisfies Record<
+	z.infer<typeof ResetClaimResponseSchema>['result'],
+	ResetOutcome['code']
+>
+
 const UsageResponseSchema = z
 	.object({
+		cedar_ember: ResetProgramSchema.nullish().catch(null),
 		extra_usage: ExtraUsageResponseSchema.nullish(),
 		five_hour: UsageWindowResponseSchema.nullish(),
 		limits: z.array(LimitSchema).nullish(),
 		seven_day: UsageWindowResponseSchema.nullish(),
 		seven_day_oauth_apps: UsageWindowResponseSchema.nullish(),
-		seven_day_opus: UsageWindowResponseSchema.nullish(),
-		seven_day_sonnet: UsageWindowResponseSchema.nullish(),
 		spend: SpendResponseSchema.nullish()
 	})
 	.passthrough()
@@ -626,17 +672,61 @@ function limitWindow(limit: z.infer<typeof LimitSchema>): UsageWindow {
 
 const exhaustedSeverities = new Set(['exceeded', 'blocked', 'at_limit'])
 
-async function fetchClaudeUsage(input: {
-	accountId: string
-	accessToken: string
-	fetchImplementation?: FetchImplementation
-}): Promise<UsageSnapshot> {
-	const response = await (input.fetchImplementation ?? fetch)(usageEndpoint, {
-		headers: {
-			Authorization: `Bearer ${input.accessToken}`,
-			'anthropic-beta': oauthBeta,
-			'Content-Type': 'application/json'
-		},
+let claudeCodeUserAgent: Promise<string | null> | undefined
+
+async function resolveClaudeCodeUserAgent(): Promise<string | null> {
+	const binary = Bun.which('claude')
+	if (binary === null) {
+		return null
+	}
+	const child = Bun.spawn([binary, '--version'], {
+		stderr: 'ignore',
+		stdin: 'ignore',
+		stdout: 'pipe',
+		timeout: 10_000
+	})
+	const version = /^\d+\.\d+\.\d+/.exec(await new Response(child.stdout).text())?.[0]
+	return version === undefined ? null : `claude-cli/${version} (external, cli)`
+}
+
+async function claudeBackendHeaders(accessToken: string): Promise<Record<string, string>> {
+	claudeCodeUserAgent ??= resolveClaudeCodeUserAgent().catch(() => null)
+	const userAgent = await claudeCodeUserAgent
+	return {
+		Authorization: `Bearer ${accessToken}`,
+		'anthropic-beta': oauthBeta,
+		'Content-Type': 'application/json',
+		...(userAgent === null ? {} : { 'User-Agent': userAgent })
+	}
+}
+
+function usableGrants(program: z.infer<typeof ResetProgramSchema> | null | undefined) {
+	return program?.eligible === true
+		? (program.grants ?? []).filter(grant => grant.paused !== true && grant.resets_left > 0)
+		: []
+}
+
+function claudeResetCounts(
+	program: z.infer<typeof ResetProgramSchema> | null | undefined
+): ResetCreditCounts | null {
+	if (program?.eligible !== true) {
+		return null
+	}
+	const grants = usableGrants(program)
+	return {
+		applicable: grants
+			.filter(grant => grant.usable_now === true)
+			.reduce((total, grant) => total + grant.resets_left, 0),
+		available: grants.reduce((total, grant) => total + grant.resets_left, 0)
+	}
+}
+
+async function fetchClaudeUsageBody(
+	accessToken: string,
+	fetchImplementation: FetchImplementation = fetch
+): Promise<z.infer<typeof UsageResponseSchema>> {
+	const response = await fetchImplementation(usageEndpoint, {
+		headers: await claudeBackendHeaders(accessToken),
 		signal: AbortSignal.timeout(10_000)
 	})
 	if (response.status === 401) {
@@ -654,15 +744,21 @@ async function fetchClaudeUsage(input: {
 			`Claude usage endpoint returned HTTP ${response.status}`
 		)
 	}
-	const body = UsageResponseSchema.parse(await response.json())
+	return UsageResponseSchema.parse(await response.json())
+}
+
+async function fetchClaudeUsage(input: {
+	accountId: string
+	accessToken: string
+	fetchImplementation?: FetchImplementation
+}): Promise<UsageSnapshot> {
+	const body = await fetchClaudeUsageBody(input.accessToken, input.fetchImplementation)
 	const limits = body.limits ?? []
 	const windows: UsageWindow[] = limits.map(limitWindow)
 	const coveredIds = new Set(windows.map(window => window.id))
 	const definitions = [
 		['five_hour', '5 hour', 'session', body.five_hour],
 		['seven_day', '7 day', 'weekly_all', body.seven_day],
-		['seven_day_opus', '7 day · Opus', null, body.seven_day_opus],
-		['seven_day_sonnet', '7 day · Sonnet', null, body.seven_day_sonnet],
 		['seven_day_oauth_apps', '7 day · OAuth apps', null, body.seven_day_oauth_apps]
 	] as const
 	for (const [id, label, limitEquivalent, window] of definitions) {
@@ -692,6 +788,7 @@ async function fetchClaudeUsage(input: {
 		measuredSpendUsd: null,
 		observedAt: new Date().toISOString(),
 		provider: 'anthropic',
+		resetCredits: claudeResetCounts(body.cedar_ember),
 		source: 'claudeUsageEndpoint',
 		windows
 	}
@@ -757,6 +854,7 @@ export async function probeClaude(input: {
 				measuredSpendUsd: null,
 				observedAt: input.now().toISOString(),
 				provider: 'anthropic',
+				resetCredits: null,
 				source: 'apiKeyProbe',
 				windows: []
 			}
@@ -825,4 +923,112 @@ export async function probeClaude(input: {
 		},
 		usage
 	}
+}
+
+async function withClaudeCredential<Result>(
+	input: {
+		account: Extract<Account, { provider: 'anthropic' }>
+		vault: CredentialVault
+		fetchImplementation?: FetchImplementation
+	},
+	operation: (accessToken: string) => Promise<Result>
+): Promise<Result> {
+	const reference = input.account.secretReference
+	if (reference === null) {
+		throw new ApplicationError(
+			'CREDENTIAL_MISSING',
+			`${input.account.label} has no stored credential`
+		)
+	}
+	const refresh = (staleAccessToken: string) =>
+		refreshClaudeCredential({
+			fetchImplementation: input.fetchImplementation,
+			reference,
+			staleAccessToken,
+			vault: input.vault
+		})
+	let credential = await readClaudeCredential(input.vault, reference)
+	if (credential.expiresAt - Date.now() <= refreshMarginMilliseconds) {
+		credential = await refresh(credential.accessToken)
+	}
+	try {
+		return await operation(credential.accessToken)
+	} catch (error) {
+		if (
+			!(error instanceof ApplicationError) ||
+			(error.code !== 'ACCESS_TOKEN_REJECTED' && error.code !== 'REAUTHENTICATION_REQUIRED')
+		) {
+			throw error
+		}
+		return operation((await refresh(credential.accessToken)).accessToken)
+	}
+}
+
+export async function claudeResetCredits(input: {
+	account: Extract<Account, { provider: 'anthropic' }>
+	vault: CredentialVault
+	fetchImplementation?: FetchImplementation
+}): Promise<ResetCreditsView> {
+	return withClaudeCredential(input, async accessToken => {
+		const grants = usableGrants(
+			(await fetchClaudeUsageBody(accessToken, input.fetchImplementation)).cedar_ember
+		)
+		return {
+			available: grants.reduce((total, grant) => total + grant.resets_left, 0),
+			credits: grants
+				.map(grant => ({
+					expiresAt: resetTimestamp(grant.ends_at),
+					id: grant.id,
+					title: grant.label ?? null
+				}))
+				.sort((left, right) => (left.expiresAt ?? '~').localeCompare(right.expiresAt ?? '~'))
+		}
+	})
+}
+
+export async function redeemClaudeReset(input: {
+	account: Extract<Account, { provider: 'anthropic' }>
+	vault: CredentialVault
+	requestId: string
+	fetchImplementation?: FetchImplementation
+}): Promise<ResetOutcome> {
+	const fetchImplementation = input.fetchImplementation ?? fetch
+	return withClaudeCredential(input, async accessToken => {
+		const { organizationId } = await fetchClaudeProfile(accessToken, fetchImplementation)
+		const program = (await fetchClaudeUsageBody(accessToken, fetchImplementation)).cedar_ember
+		const grantId = program?.eligible === true ? program.next_grant_id : null
+		if (grantId == null) {
+			return { code: 'no_credit', windowsReset: 0 }
+		}
+		if (organizationId === null) {
+			throw new ApplicationError('ACCOUNT_ID_MISSING', 'Claude profile has no organization to reset')
+		}
+		const response = await fetchImplementation(
+			`${organizationsEndpoint}/${encodeURIComponent(organizationId)}/reset_rate_limits`,
+			{
+				body: JSON.stringify({
+					grant_id: grantId,
+					program: 'cedar_ember',
+					request_id: input.requestId
+				}),
+				headers: await claudeBackendHeaders(accessToken),
+				method: 'POST',
+				signal: AbortSignal.timeout(25_000)
+			}
+		)
+		if (response.status === 401) {
+			throw new ApplicationError(
+				'ACCESS_TOKEN_REJECTED',
+				'Claude reset endpoint rejected the access token'
+			)
+		}
+		if (!response.ok) {
+			throw new ApplicationError(
+				'PROVIDER_UNREACHABLE',
+				`Claude reset endpoint returned HTTP ${response.status}`
+			)
+		}
+		const body = ResetClaimResponseSchema.parse(await response.json())
+		return { code: claimOutcomes[body.result], windowsReset: body.cleared?.length ?? 0 }
+	})
 }

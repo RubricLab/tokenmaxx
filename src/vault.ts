@@ -6,6 +6,14 @@ export interface CredentialVault {
 	remove(reference: string): Promise<void>
 }
 
+export async function readApiKey(vault: CredentialVault, reference: string): Promise<string> {
+	const key = await vault.read(reference)
+	if (key === null) {
+		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
+	}
+	return key
+}
+
 const credentialLocks = new Map<string, Promise<void>>()
 
 export async function exclusive<Result>(
@@ -84,6 +92,23 @@ function requireSafeIdentifier(kind: string, value: string): string {
 		)
 	}
 	return value
+}
+
+export async function removeMacOsKeychainCredentials(
+	service = defaultService,
+	runner: KeychainCommandRunner = defaultKeychainCommandRunner()
+): Promise<void> {
+	requireSafeIdentifier('service', service)
+	for (;;) {
+		const result = await runner.run(['security', 'delete-generic-password', '-s', service])
+		if (result.exitCode === 44) return
+		if (result.exitCode !== 0) {
+			throw new ApplicationError(
+				'KEYCHAIN_DELETE_FAILED',
+				redactSecrets(result.stderr) || 'Keychain cleanup failed'
+			)
+		}
+	}
 }
 
 export function createMacOsKeychainVault(

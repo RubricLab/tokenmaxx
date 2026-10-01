@@ -7,10 +7,12 @@ import {
 	healInstalledConfigs,
 	installClaudeConfig,
 	installCodexConfig,
+	installGrokConfig,
 	installPiConfig,
 	installStatus,
 	uninstallClaudeConfig,
 	uninstallCodexConfig,
+	uninstallGrokConfig,
 	uninstallPiConfig
 } from './config-install.ts'
 import { applicationPaths } from './paths.ts'
@@ -40,17 +42,22 @@ beforeEach(async () => {
 	home = mkdtempSync(join(tmpdir(), 'tokenmaxx-config-'))
 	process.env.CODEX_HOME = join(home, 'codex')
 	process.env.CLAUDE_CONFIG_DIR = join(home, 'claude')
+	process.env.GROK_HOME = join(home, 'grok')
+	process.env.TOKENMAXX_HOME = join(home, 'state')
 	await mkdir(process.env.CODEX_HOME, { recursive: true })
 	await mkdir(process.env.CLAUDE_CONFIG_DIR, { recursive: true })
+	await mkdir(process.env.GROK_HOME, { recursive: true })
 })
 
 afterEach(() => {
 	delete process.env.CODEX_HOME
 	delete process.env.CLAUDE_CONFIG_DIR
+	delete process.env.GROK_HOME
+	delete process.env.TOKENMAXX_HOME
 	rmSync(home, { force: true, recursive: true })
 })
 
-const paths = () => applicationPaths({ ...process.env, TOKENMAXX_HOME: join(home, 'state') })
+const paths = () => applicationPaths()
 
 async function writeCodexConfig(content: string): Promise<void> {
 	await writeFile(join(process.env.CODEX_HOME ?? '', 'config.toml'), content)
@@ -77,7 +84,7 @@ describe('installCodexConfig', () => {
 	test('installStatus flags the legacy swallowed block as stale, not routed', async () => {
 		await writeCodexConfig(legacyBrokenConfig)
 		const status = await installStatus()
-		expect(status.codexRouted).toBe(false)
+		expect(status.routed.openai).toBe(false)
 		expect(status.codexStale).toBe(true)
 	})
 
@@ -85,8 +92,47 @@ describe('installCodexConfig', () => {
 		await writeCodexConfig(legacyBrokenConfig)
 		await installCodexConfig(paths())
 		const status = await installStatus()
-		expect(status.codexRouted).toBe(true)
+		expect(status.routed.openai).toBe(true)
 		expect(status.codexStale).toBe(false)
+	})
+
+	test('installStatus stays truthful when Bun.TOML cannot parse the config', async () => {
+		// Bun.TOML rejects bare table keys that start with a digit, like
+		// [mcp_servers.1password]; codex accepts them. A parse failure must not
+		// read as "not routed" while our selection line is active.
+		await writeCodexConfig(
+			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\nenabled = false\n`
+		)
+		await installCodexConfig(paths())
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(true)
+	})
+
+	test('an unparseable config without our selection still reads as not routed', async () => {
+		await writeCodexConfig(
+			'model = "gpt-5.6-sol"\n\n[mcp_servers.1password]\ncommand = "1password-mcp"\n'
+		)
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(false)
+	})
+
+	test('the fallback ignores a swallowed legacy selection under a table', async () => {
+		// legacyBrokenConfig's model_provider = "tokmax" sits under [notice], so
+		// codex never routes through it; the digit table only breaks parsing.
+		await writeCodexConfig(
+			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\n`
+		)
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(false)
+		expect(status.codexStale).toBe(true)
+	})
+
+	test('the fallback ignores our provider named inside a codex profile', async () => {
+		await writeCodexConfig(
+			'model_provider = "ollama"\n\n[profiles.work]\nmodel_provider = "tokenmaxx"\n\n[mcp_servers.1password]\ncommand = "1password-mcp"\n'
+		)
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(false)
 	})
 
 	test('reinstall is idempotent', async () => {
@@ -100,7 +146,7 @@ describe('installCodexConfig', () => {
 	test('uninstall restores the user config without managed blocks', async () => {
 		await writeCodexConfig(legacyBrokenConfig)
 		await installCodexConfig(paths())
-		await uninstallCodexConfig()
+		await uninstallCodexConfig(paths())
 		const restored = await readCodexConfig()
 		expect(restored).not.toContain('tokenmaxx')
 		expect(restored).not.toContain('tokmax')
@@ -172,7 +218,7 @@ describe('installClaudeConfig', () => {
 
 	test('installStatus reports claude routing after install', async () => {
 		await installClaudeConfig(paths())
-		expect((await installStatus()).claudeRouted).toBe(true)
+		expect((await installStatus()).routed.anthropic).toBe(true)
 	})
 
 	test('uninstall removes the routing but keeps a token the user set themselves', async () => {
@@ -181,7 +227,7 @@ describe('installClaudeConfig', () => {
 			model: 'fable[1m]'
 		})
 		await installClaudeConfig(paths())
-		await uninstallClaudeConfig()
+		await uninstallClaudeConfig(paths())
 		const settings = await readClaudeSettings()
 		expect(settings.env?.ANTHROPIC_BASE_URL).toBeUndefined()
 		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBe('users-own-token')
@@ -195,7 +241,7 @@ describe('installClaudeConfig', () => {
 				ANTHROPIC_BASE_URL: 'http://127.0.0.1:8459/anthropic'
 			}
 		})
-		await uninstallClaudeConfig()
+		await uninstallClaudeConfig(paths())
 		const settings = await readClaudeSettings()
 		expect(settings.env).toBeUndefined()
 	})
@@ -210,7 +256,7 @@ describe('healInstalledConfigs', () => {
 				ANTHROPIC_BASE_URL: 'http://127.0.0.1:8459/anthropic'
 			}
 		})
-		expect(await healInstalledConfigs(paths())).toEqual(['codex', 'claude'])
+		expect(await healInstalledConfigs(paths())).toEqual(['openai', 'anthropic'])
 		const settings = await readClaudeSettings()
 		expect(settings.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
 		expect(settings.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8459/anthropic')
@@ -219,7 +265,7 @@ describe('healInstalledConfigs', () => {
 	test('never adds routing to an unrouted harness', async () => {
 		expect(await healInstalledConfigs(paths())).toEqual([])
 		await expect(readClaudeSettings()).rejects.toThrow()
-		expect((await installStatus()).codexRouted).toBe(false)
+		expect((await installStatus()).routed.openai).toBe(false)
 	})
 
 	test('leaves configs routed to another instance alone', async () => {
@@ -266,25 +312,31 @@ describe('pi install', () => {
 		const config = JSON.parse(await readFile(modelsPath, 'utf8'))
 		expect(config.providers['tokenmaxx-anthropic'].api).toBe('anthropic-messages')
 		expect(config.providers['tokenmaxx-openai'].baseUrl).toContain('/openai')
+		expect(config.providers['tokenmaxx-xai'].baseUrl).toContain('/xai/v1')
 		expect(config.providers.mine.baseUrl).toBe('https://example.com')
-		const removed = await uninstallPiConfig()
+		const removed = await uninstallPiConfig(paths())
 		expect(removed.applied).toBe(true)
 		const restored = JSON.parse(await readFile(modelsPath, 'utf8'))
 		expect(restored.providers['tokenmaxx-anthropic']).toBeUndefined()
 		expect(restored.providers['tokenmaxx-openai']).toBeUndefined()
+		expect(restored.providers['tokenmaxx-xai']).toBeUndefined()
 		expect(restored.providers.mine.baseUrl).toBe('https://example.com')
 		delete process.env.PI_CODING_AGENT_DIR
 	})
 
 	test('a missing models.json is created on install and reported clean on uninstall', async () => {
 		process.env.PI_CODING_AGENT_DIR = join(home, 'pi-agent')
-		const removed = await uninstallPiConfig()
+		const removed = await uninstallPiConfig(paths())
 		expect(removed.applied).toBe(false)
 		expect(removed.manual).toBeNull()
 		const installed = await installPiConfig(applicationPaths())
 		expect(installed.applied).toBe(true)
 		const config = JSON.parse(await readFile(installed.path, 'utf8'))
-		expect(Object.keys(config.providers)).toEqual(['tokenmaxx-anthropic', 'tokenmaxx-openai'])
+		expect(Object.keys(config.providers)).toEqual([
+			'tokenmaxx-anthropic',
+			'tokenmaxx-openai',
+			'tokenmaxx-xai'
+		])
 		delete process.env.PI_CODING_AGENT_DIR
 	})
 
@@ -298,6 +350,97 @@ describe('pi install', () => {
 		expect(result.manual).toContain('providers')
 		expect(await readFile(modelsPath, 'utf8')).toBe('{ broken json')
 		delete process.env.PI_CODING_AGENT_DIR
+	})
+})
+
+async function writeGrokConfig(content: string): Promise<void> {
+	await writeFile(join(process.env.GROK_HOME ?? '', 'config.toml'), content)
+}
+
+async function readGrokConfig(): Promise<string> {
+	return readFile(join(process.env.GROK_HOME ?? '', 'config.toml'), 'utf8')
+}
+
+const userGrokConfig = `[marketplace]
+official_marketplace_auto_installed = true
+
+[[marketplace.sources]]
+name = "xAI Official"
+git = "https://github.com/xai-org/plugin-marketplace.git"
+`
+
+describe('installGrokConfig', () => {
+	test('a fresh config gets a marked endpoints table', async () => {
+		await installGrokConfig(paths())
+		const written = await readGrokConfig()
+		expect(written).toContain('[endpoints]')
+		expect(written).toContain('cli_chat_proxy_base_url = "http://127.0.0.1:8459/xai/v1"')
+		expect((await installStatus()).routed.xai).toBe(true)
+	})
+
+	test('the endpoint lands inside an existing endpoints table so TOML stays valid', async () => {
+		await writeGrokConfig(
+			`${userGrokConfig}\n[endpoints]\nmodels_list_url = "https://example.com/models"\n`
+		)
+		await installGrokConfig(paths())
+		const written = await readGrokConfig()
+		const parsed = Bun.TOML.parse(written) as {
+			endpoints?: Record<string, unknown>
+			marketplace?: { sources?: unknown[] }
+		}
+		expect(parsed.endpoints?.cli_chat_proxy_base_url).toBe('http://127.0.0.1:8459/xai/v1')
+		expect(parsed.endpoints?.models_list_url).toBe('https://example.com/models')
+		expect(parsed.marketplace?.sources).toHaveLength(1)
+		expect(written.match(/\[endpoints\]/g)).toHaveLength(1)
+	})
+
+	test('a user-set endpoint is disabled on install and restored on uninstall', async () => {
+		await writeGrokConfig('[endpoints]\ncli_chat_proxy_base_url = "https://grok-proxy.acme.com/v1"\n')
+		await installGrokConfig(paths())
+		const written = await readGrokConfig()
+		expect(written).toContain(
+			'# tokenmaxx-disabled: cli_chat_proxy_base_url = "https://grok-proxy.acme.com/v1"'
+		)
+		expect((await installStatus()).routed.xai).toBe(true)
+		expect(await uninstallGrokConfig()).not.toBeNull()
+		expect(await readGrokConfig()).toBe(
+			'[endpoints]\ncli_chat_proxy_base_url = "https://grok-proxy.acme.com/v1"\n'
+		)
+		expect((await installStatus()).routed.xai).toBe(false)
+	})
+
+	test('reinstall is idempotent', async () => {
+		await writeGrokConfig(userGrokConfig)
+		await installGrokConfig(paths())
+		const once = await readGrokConfig()
+		await installGrokConfig(paths())
+		expect(await readGrokConfig()).toBe(once)
+		expect(once.match(/cli_chat_proxy_base_url/g)).toHaveLength(1)
+	})
+
+	test('uninstall restores the user config and drops the table it added', async () => {
+		await writeGrokConfig(userGrokConfig)
+		await installGrokConfig(paths())
+		expect(await uninstallGrokConfig()).not.toBeNull()
+		expect(await readGrokConfig()).toBe(userGrokConfig)
+		expect(await uninstallGrokConfig()).toBeNull()
+	})
+
+	test('a bare endpoint line grok re-serialized without our markers is reclaimed', async () => {
+		await writeGrokConfig(
+			`${userGrokConfig}\n[endpoints]\ncli_chat_proxy_base_url = "http://127.0.0.1:8459/xai/v1"\n`
+		)
+		expect((await installStatus()).routed.xai).toBe(true)
+		await installGrokConfig(paths())
+		expect((await readGrokConfig()).match(/cli_chat_proxy_base_url/g)).toHaveLength(1)
+		expect(await uninstallGrokConfig()).not.toBeNull()
+		expect(await readGrokConfig()).toBe(userGrokConfig)
+	})
+
+	test('a config with no grok routing is left alone on uninstall', async () => {
+		await writeGrokConfig(userGrokConfig)
+		expect(await uninstallGrokConfig()).toBeNull()
+		expect(await readGrokConfig()).toBe(userGrokConfig)
 	})
 })
 
@@ -339,7 +482,7 @@ describe('codex-normalized configs', () => {
 		expect(parsed.notice?.hide_rate_limit_model_nudge).toBe(true)
 		expect(written.match(/\[model_providers\.tokenmaxx\]/g)).toHaveLength(1)
 		expect(written).not.toContain('# tokenmaxx-disabled: model_provider = "tokenmaxx"')
-		expect((await installStatus()).codexRouted).toBe(true)
+		expect((await installStatus()).routed.openai).toBe(true)
 	})
 
 	test('uninstall removes a bare provider table even when the markers are gone', async () => {
@@ -358,7 +501,7 @@ describe('codex-normalized configs', () => {
 				'hide_rate_limit_model_nudge = true'
 			].join('\n')
 		)
-		expect(await uninstallCodexConfig()).not.toBeNull()
+		expect(await uninstallCodexConfig(paths())).not.toBeNull()
 		const written = await readFile(configPath, 'utf8')
 		expect(written).not.toContain('tokenmaxx')
 		const parsed = Bun.TOML.parse(written) as { notice?: { hide_rate_limit_model_nudge?: boolean } }

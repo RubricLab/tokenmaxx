@@ -83,5 +83,26 @@ describe('observeRateLimitHeaders', () => {
 		expect(
 			observeRateLimitHeaders('openai', new Headers({ 'content-type': 'text/plain' }), 200)
 		).toBeNull()
+		expect(observeRateLimitHeaders('xai', new Headers(), 200)).toBeNull()
+	})
+
+	test('xai 429 fills the synthetic limit window and reads retry-after', () => {
+		const before = Date.now()
+		const observation = observeRateLimitHeaders('xai', new Headers({ 'retry-after': '90' }), 429)
+		expect(observation?.limited).toBe(true)
+		expect(observation?.windows).toHaveLength(1)
+		const window = observation?.windows[0]
+		expect(window?.id).toBe('limit')
+		expect(window?.kind).toBe('hard')
+		expect(window?.usedPercent).toBe(100)
+		const resetAt = Date.parse(window?.resetAt ?? '')
+		expect(resetAt).toBeGreaterThanOrEqual(before + 90_000)
+		expect(resetAt).toBeLessThanOrEqual(Date.now() + 90_000)
+	})
+
+	test('xai 429 without retry-after has no reset time', () => {
+		const observation = observeRateLimitHeaders('xai', new Headers(), 429)
+		expect(observation?.limited).toBe(true)
+		expect(observation?.windows[0]?.resetAt).toBeNull()
 	})
 })

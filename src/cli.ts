@@ -9,17 +9,16 @@ import { registerClaudeAccount } from './claude.ts'
 import { registerCodexAccount } from './codex.ts'
 import {
 	healInstalledConfigs,
-	installClaudeConfig,
-	installCodexConfig,
 	installPiConfig,
+	installProviderConfig,
 	installStatus,
 	piStatus,
-	uninstallClaudeConfig,
-	uninstallCodexConfig,
-	uninstallPiConfig
+	uninstallPiConfig,
+	uninstallProviderConfig
 } from './config-install.ts'
-import type { Account, ProviderId } from './domain.ts'
+import { type Account, PROVIDERS, type ProviderId, ProviderIdSchema } from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
+import { registerGrokAccount } from './grok.ts'
 import {
 	managerAvailable,
 	managerRequest,
@@ -27,6 +26,7 @@ import {
 	readDashboard,
 	readProxyPort,
 	readRouting,
+	requestAccountOrder,
 	requestAccountRemove,
 	requestAccountSave,
 	requestAddApiKey,
@@ -34,11 +34,15 @@ import {
 	requestSwitch,
 	startManagerServer
 } from './ipc.ts'
+import { LaunchAgent } from './launch-agent.ts'
 import { AccountManager } from './manager.ts'
+import { removeGlobalPackage } from './package-uninstall.ts'
 import { type ApplicationPaths, applicationPaths, ensureApplicationPaths } from './paths.ts'
 import { proxyIdentity } from './proxy.ts'
+import { orderRank } from './selection.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
+import { uninstallTokenmaxx } from './uninstall.ts'
 import { createMacOsKeychainVault } from './vault.ts'
 import { availableUpdate, compiledBinary, installedVersion, VERSION } from './version.ts'
 
@@ -195,9 +199,12 @@ const EmptyResultSchema = z.unknown()
 interface ApplicationContext {
 	paths: ApplicationPaths
 	store: StateStore
+	launchAgent: LaunchAgent
 }
 
-function providerFromCli(value: string): 'openai' | 'anthropic' {
+const cliWords = '<codex|claude|grok>'
+
+function providerFromCli(value: string): ProviderId {
 	switch (value) {
 		case 'codex':
 		case 'openai':
@@ -205,8 +212,14 @@ function providerFromCli(value: string): 'openai' | 'anthropic' {
 		case 'claude':
 		case 'anthropic':
 			return 'anthropic'
+		case 'grok':
+		case 'xai':
+			return 'xai'
 		default:
-			throw new ApplicationError('INVALID_PROVIDER', `Expected codex or claude, received ${value}`)
+			throw new ApplicationError(
+				'INVALID_PROVIDER',
+				`Expected codex, claude or grok, received ${value}`
+			)
 	}
 }
 
@@ -237,25 +250,31 @@ function help(): string {
 		return [`  ${accent(name)}`, ...lines.map(line => `${gutter}${dim(line)}`)].join('\n')
 	}
 	return [
-		`${accent('tokenmaxx')} ${dim('— switch between your own Codex and Claude Code accounts')}`,
+		`${accent('tokenmaxx')} ${dim('— switch between your own Codex, Claude Code and Grok accounts')}`,
 		'',
 		`${head('Usage')}  tokenmaxx <command> [options]        ${dim('run with no command for the dashboard')}`,
 		'',
 		head('Setup'),
 		row(
-			'login <codex|claude>',
+			`login ${cliWords}`,
 			'sign in an account · re-run to re-auth',
 			'add --api-key to use an API key instead'
 		),
-		row('install [pi]', 'route codex & claude, or pi, through tokenmaxx'),
-		row('uninstall [pi]', 'restore your original config'),
+		row('install [pi] [--autostart]', 'route codex, claude & grok, or pi; optionally start at login'),
+		row('uninstall [pi]', 'restore your original config; accounts and data stay'),
+		row('uninstall all', 'remove setup, saved credentials/data, and the global package'),
 		'',
 		head('Everyday'),
 		row('list', 'accounts, health, and live usage'),
-		row('switch <codex|claude> <email>', 'make an account active now'),
-		row('logout [codex|claude] <email>', 'sign out and delete the credential'),
+		row(`switch ${cliWords} <email>`, 'make an account active now'),
+		row('logout [codex|claude|grok] <email>', 'sign out and delete the credential'),
 		row(
-			'auto <codex|claude|both> <on|off>',
+			`order ${cliWords} [email…]`,
+			'which accounts auto-rotate uses first',
+			'no emails prints the order · --reset clears it'
+		),
+		row(
+			'auto <codex|claude|grok|all> <on|off>',
 			'switch accounts at a usage threshold',
 			'optional: --threshold N  (default 90)'
 		),
@@ -265,6 +284,7 @@ function help(): string {
 		row('refresh', 're-probe usage now'),
 		row('doctor', 'check tools, proxy, and config'),
 		row('daemon <start|stop|status>', 'the background manager'),
+		row('daemon <install|disable>', 'add or remove macOS login startup'),
 		'',
 		head('Auto-rotation'),
 		dim("  The threshold is measured against the active account's fullest rate-limit"),
@@ -275,8 +295,10 @@ function help(): string {
 		dim('  with the most headroom, and an interrupted request is retried there.'),
 		dim('  Threshold switches hold for 5 minutes to avoid flapping; hard limits'),
 		dim('  ignore the hold. Turning auto on is what authorizes the switching.'),
+		dim('  With an order set, it switches to the first account in the order with'),
+		dim('  room, and moves back to an earlier one once it has room again.'),
 		'',
-		dim('Once installed, use codex and claude normally — a local proxy injects the'),
+		dim('Once installed, use codex, claude and grok normally — a local proxy injects the'),
 		dim("active account's credential per request, so a switch takes effect on the"),
 		dim('next request, even mid-turn, with no restart.')
 	].join('\n')
@@ -285,7 +307,7 @@ function help(): string {
 async function createContext(): Promise<ApplicationContext> {
 	const paths = applicationPaths()
 	await ensureApplicationPaths(paths)
-	return { paths, store: createStateStore(paths.database) }
+	return { launchAgent: new LaunchAgent(paths), paths, store: createStateStore(paths.database) }
 }
 
 async function runDaemon(context: ApplicationContext): Promise<void> {
@@ -315,7 +337,7 @@ async function runDaemon(context: ApplicationContext): Promise<void> {
 		})
 		if (healed.length > 0) {
 			process.stdout.write(
-				`[${new Date().toISOString()}] re-applied ${healed.join(' and ')} routing for v${VERSION}\n`
+				`[${new Date().toISOString()}] re-applied ${healed.map(provider => PROVIDERS[provider].cli).join(', ')} routing for v${VERSION}\n`
 			)
 		}
 		const manager = new AccountManager({
@@ -369,8 +391,22 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 	if (await managerAvailable(context.paths.managerSocket)) {
 		return
 	}
+	const managed = await context.launchAgent.installed()
+	if (managed && (await context.launchAgent.loaded())) await stopDaemon(context)
 	await replacePortOccupant(context.paths.proxyPort)
 	await mkdir(context.paths.runtime, { mode: 0o700, recursive: true })
+	if (managed) {
+		await context.launchAgent.start()
+		const deadline = Date.now() + 15_000
+		while (Date.now() < deadline) {
+			if (await managerAvailable(context.paths.managerSocket)) return
+			await Bun.sleep(100)
+		}
+		throw new ApplicationError(
+			'DAEMON_START_FAILED',
+			`Login startup loaded, but the manager did not respond. Check ${join(context.paths.runtime, 'daemon.log')} and System Settings → General → Login Items & Extensions.`
+		)
+	}
 	const daemonArguments = daemonCommandArguments()
 	const logDescriptor = openSync(join(context.paths.runtime, 'daemon.log'), 'a', 0o600)
 	try {
@@ -404,7 +440,7 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 			'DAEMON_START_FAILED',
 			`Manager did not start${lastError === '' ? '' : ` — ${lastError.replace(/^tokenmaxx: /, '')}`}\n` +
 				'Your clients still route through tokenmaxx while it is down.\n' +
-				'Escape hatch: tokenmaxx uninstall  (codex and claude talk straight to the providers again)\n' +
+				'Escape hatch: tokenmaxx uninstall  (clients talk straight to the providers again)\n' +
 				`Then check tokenmaxx doctor, or the full log: ${logPath}`
 		)
 	} finally {
@@ -412,7 +448,7 @@ async function startDaemon(context: ApplicationContext): Promise<void> {
 	}
 }
 
-async function forceStopDaemon(context: ApplicationContext): Promise<void> {
+async function forceStopDaemon(context: Pick<ApplicationContext, 'paths'>): Promise<void> {
 	const ownerPid = await readFile(context.paths.managerLock, 'utf8').then(
 		raw => {
 			try {
@@ -434,7 +470,10 @@ async function forceStopDaemon(context: ApplicationContext): Promise<void> {
 	await rm(context.paths.managerSocket, { force: true })
 }
 
-async function stopDaemon(context: ApplicationContext): Promise<void> {
+async function stopDaemon(
+	context: Pick<ApplicationContext, 'paths' | 'launchAgent'>
+): Promise<void> {
+	if (await context.launchAgent.installed()) await context.launchAgent.stop()
 	await managerRequest({
 		method: 'manager/stop',
 		schema: EmptyResultSchema,
@@ -458,6 +497,27 @@ async function stopDaemon(context: ApplicationContext): Promise<void> {
 	process.stdout.write('Manager daemon stopped.\n')
 }
 
+async function installLoginStartup(context: ApplicationContext): Promise<void> {
+	await context.launchAgent.install()
+	await stopDaemon(context)
+	await startDaemon(context)
+	process.stdout.write(
+		'Login startup installed. macOS keeps tokenmaxx running in the background; you can close the terminal.\n'
+	)
+}
+
+async function disableLoginStartup(context: ApplicationContext): Promise<void> {
+	if (!(await context.launchAgent.installed())) {
+		process.stdout.write('Login startup is not installed for this TOKENMAXX_HOME.\n')
+		return
+	}
+	await stopDaemon(context)
+	await context.launchAgent.uninstall()
+	process.stdout.write(
+		'Login startup removed and manager stopped. Run tokenmaxx daemon start to use it manually.\n'
+	)
+}
+
 async function ensureDaemon(context: ApplicationContext): Promise<void> {
 	if (!(await managerAvailable(context.paths.managerSocket))) {
 		await startDaemon(context)
@@ -471,22 +531,25 @@ async function ensureDaemon(context: ApplicationContext): Promise<void> {
 	}
 }
 
-function registerIsolatedAccount(provider: 'openai' | 'anthropic'): Promise<Account> {
+function registerIsolatedAccount(provider: ProviderId): Promise<Account> {
 	switch (provider) {
 		case 'openai':
 			return registerCodexAccount({ vault: createMacOsKeychainVault() })
 		case 'anthropic':
 			return registerClaudeAccount({ vault: createMacOsKeychainVault() })
+		case 'xai':
+			return registerGrokAccount({ vault: createMacOsKeychainVault() })
 	}
 }
 
 const cliInstallHint: Record<ProviderId, string> = {
 	anthropic: 'npm install -g @anthropic-ai/claude-code',
-	openai: 'npm install -g @openai/codex'
+	openai: 'npm install -g @openai/codex',
+	xai: 'npm install -g @xai-official/grok'
 }
 
 function assertCliInstalled(provider: ProviderId): void {
-	const binary = provider === 'openai' ? 'codex' : 'claude'
+	const binary = PROVIDERS[provider].cli
 	if (Bun.which(binary) === null) {
 		throw new ApplicationError(
 			'CLI_MISSING',
@@ -560,7 +623,7 @@ async function promptApiKey(
 	if (process.stdin.isTTY !== true && keyArgument === undefined) {
 		throw new ApplicationError(
 			'USAGE',
-			'Pass the key inline in non-interactive shells: tokenmaxx login <codex|claude> --api-key <key>'
+			`Pass the key inline in non-interactive shells: tokenmaxx login ${cliWords} --api-key <key>`
 		)
 	}
 	await handTerminalBack()
@@ -619,7 +682,7 @@ async function login(
 	options: { apiKey: boolean; apiKeyValue?: string } = { apiKey: false }
 ): Promise<void> {
 	if (providerArgument === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx login <codex|claude> [--api-key [key]]')
+		throw new ApplicationError('USAGE', `Usage: tokenmaxx login ${cliWords} [--api-key [key]]`)
 	}
 	const provider = providerFromCli(providerArgument)
 	if (!options.apiKey) {
@@ -645,11 +708,7 @@ async function login(
 	}
 }
 
-function resolveAccount(
-	store: StateStore,
-	provider: 'openai' | 'anthropic',
-	reference: string
-): Account {
+function resolveAccount(store: StateStore, provider: ProviderId, reference: string): Account {
 	const matches = store
 		.listAccounts(provider)
 		.filter(account => account.id === reference || account.label === reference)
@@ -677,39 +736,92 @@ function listAccounts(context: ApplicationContext): void {
 	const states = new Map(context.store.listProviderStates().map(state => [state.provider, state]))
 	const accounts = context.store.listAccounts()
 	if (accounts.length === 0) {
-		process.stdout.write(
-			'No accounts yet. Sign in with:  tokenmaxx login codex   ·   tokenmaxx login claude\n'
+		const hints = ProviderIdSchema.options.map(
+			provider => `tokenmaxx login ${PROVIDERS[provider].cli}`
 		)
+		process.stdout.write(`No accounts yet. Sign in with:  ${hints.join('   ·   ')}\n`)
 		return
 	}
 	const width = Math.max(...accounts.map(account => account.label.length))
-	for (const [provider, title] of [
-		['openai', 'codex'],
-		['anthropic', 'claude']
-	] as const) {
-		const group = accounts.filter(account => account.provider === provider)
+	for (const provider of ProviderIdSchema.options) {
+		const group = inOrder(accounts.filter(account => account.provider === provider))
 		if (group.length === 0) {
 			continue
 		}
-		process.stdout.write(`\n${title}\n`)
+		process.stdout.write(`\n${PROVIDERS[provider].cli}\n`)
 		for (const account of group) {
 			const isActive = states.get(provider)?.activeAccountId === account.id
+			const place = account.priority === undefined ? '  ' : `${account.priority + 1}.`
 			process.stdout.write(
-				`  ${isActive ? '●' : ' '} ${account.label.padEnd(width)}   ${healthText[account.health]}\n`
+				`  ${isActive ? '●' : ' '} ${place} ${account.label.padEnd(width)}   ${healthText[account.health]}\n`
 			)
 		}
 	}
 	process.stdout.write('\n● = active\n')
 }
 
-const providerWords = new Set(['codex', 'claude', 'openai', 'anthropic'])
+function inOrder(accounts: readonly Account[]): Account[] {
+	return [...accounts].sort(
+		(left, right) => orderRank(left) - orderRank(right) || left.label.localeCompare(right.label)
+	)
+}
+
+async function orderAccounts(
+	context: ApplicationContext,
+	arguments_: readonly string[]
+): Promise<void> {
+	const providerArgument = arguments_[0]
+	if (providerArgument === undefined) {
+		throw new ApplicationError(
+			'USAGE',
+			`Usage: tokenmaxx order ${cliWords} [email…] | tokenmaxx order ${cliWords} --reset`
+		)
+	}
+	const provider = providerFromCli(providerArgument)
+	const references = arguments_.slice(1).filter(argument => argument !== '--reset')
+	const reset = arguments_.includes('--reset')
+	if (!reset && references.length === 0) {
+		const group = inOrder(context.store.listAccounts(provider))
+		if (group.every(account => account.priority === undefined)) {
+			process.stdout.write(
+				`No order set for ${providerArgument}; auto-rotate picks the account with the most room.\n`
+			)
+			return
+		}
+		for (const account of group) {
+			process.stdout.write(`  ${(account.priority ?? group.length) + 1}. ${account.label}\n`)
+		}
+		return
+	}
+	const accountIds = reset
+		? []
+		: references.map(reference => resolveAccount(context.store, provider, reference).id)
+	await ensureDaemon(context)
+	const snapshot = await requestAccountOrder(context.paths.managerSocket, provider, accountIds)
+	if (reset) {
+		process.stdout.write(
+			`Cleared the ${providerArgument} order; auto-rotate picks the account with the most room.\n`
+		)
+		return
+	}
+	const ordered = inOrder(snapshot.accounts.filter(account => account.provider === provider))
+	process.stdout.write(`Auto-rotate for ${providerArgument} now uses, in order:\n`)
+	for (const account of ordered) {
+		process.stdout.write(`  ${(account.priority ?? 0) + 1}. ${account.label}\n`)
+	}
+	process.stdout.write(
+		'When an earlier account has room again, tokenmaxx moves back to it after the cooldown.\n'
+	)
+}
+
+const providerWords = new Set(['codex', 'claude', 'grok', 'openai', 'anthropic', 'xai'])
 
 async function logout(context: ApplicationContext, arguments_: readonly string[]): Promise<void> {
 	const qualified = arguments_[0] !== undefined && providerWords.has(arguments_[0])
 	const provider = qualified ? providerFromCli(arguments_[0] as string) : undefined
 	const reference = qualified ? arguments_[1] : arguments_[0]
 	if (reference === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx logout [codex|claude] <email-or-name>')
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx logout [codex|claude|grok] <email-or-name>')
 	}
 	const matches = context.store
 		.listAccounts(provider)
@@ -736,7 +848,7 @@ async function switchAccount(
 	const providerArgument = arguments_[0]
 	const accountReference = arguments_[1]
 	if (providerArgument === undefined || accountReference === undefined) {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx switch <codex|claude> <email-or-id>')
+		throw new ApplicationError('USAGE', `Usage: tokenmaxx switch ${cliWords} <email-or-id>`)
 	}
 	const provider = providerFromCli(providerArgument)
 	const target = resolveAccount(context.store, provider, accountReference)
@@ -754,13 +866,13 @@ async function configureAutomation(
 	if (providerArgument === undefined || (mode !== 'on' && mode !== 'off')) {
 		throw new ApplicationError(
 			'USAGE',
-			'Usage: tokenmaxx auto <codex|claude|both> <on|off> [--threshold 95]'
+			'Usage: tokenmaxx auto <codex|claude|grok|all> <on|off> [--threshold 95]'
 		)
 	}
 	const providers =
-		providerArgument === 'both'
-			? (['openai', 'anthropic'] as const)
-			: ([providerFromCli(providerArgument)] as const)
+		providerArgument === 'all' || providerArgument === 'both'
+			? ProviderIdSchema.options
+			: [providerFromCli(providerArgument)]
 	const thresholdValue = option(arguments_, '--threshold')
 	const thresholdPercent = thresholdValue === undefined ? undefined : Number(thresholdValue)
 	if (
@@ -807,24 +919,29 @@ async function installConfig(context: ApplicationContext, targetArgument?: strin
 			return
 		}
 		process.stdout.write(
-			`pi now has tokenmaxx-anthropic and tokenmaxx-openai providers (${result.path}).\n` +
+			`pi now has tokenmaxx-anthropic, tokenmaxx-openai and tokenmaxx-xai providers (${result.path}).\n` +
 				'Pick a tokenmaxx model with /model and requests route through the proxy.\n' +
 				'Undo any time with: tokenmaxx uninstall pi\n'
 		)
 		return
 	}
-	await installCodexConfig(context.paths)
-	await installClaudeConfig(context.paths)
+	const providers = ProviderIdSchema.options.filter(
+		provider => provider !== 'xai' || Bun.which(PROVIDERS.xai.cli) !== null
+	)
+	for (const provider of providers) {
+		await installProviderConfig(provider, context.paths)
+	}
+	const clis = providers.map(provider => PROVIDERS[provider].cli)
 	process.stdout.write(
-		'Native codex and claude now route through tokenmaxx.\n' +
-			'Just run `codex` or `claude` as usual — tokenmaxx injects the active account.\n' +
+		`Native ${clis.join(', ').replace(/, ([^,]*)$/, ' and $1')} now route through tokenmaxx.\n` +
+			`Just run ${clis.map(cli => `\`${cli}\``).join(' or ')} as usual — tokenmaxx injects the active account.\n` +
 			'Undo any time with: tokenmaxx uninstall\n'
 	)
 }
 
 async function uninstallConfig(targetArgument?: string): Promise<void> {
-	if (targetArgument !== undefined && targetArgument !== 'pi') {
-		throw new ApplicationError('USAGE', 'Usage: tokenmaxx uninstall [pi]')
+	if (targetArgument !== undefined && targetArgument !== 'routing' && targetArgument !== 'pi') {
+		throw new ApplicationError('USAGE', 'Usage: tokenmaxx uninstall [pi|all]')
 	}
 	if (targetArgument === 'pi') {
 		const result = await uninstallPiConfig()
@@ -835,15 +952,19 @@ async function uninstallConfig(targetArgument?: string): Promise<void> {
 		)
 		return
 	}
-	const codex = await uninstallCodexConfig()
-	const claude = await uninstallClaudeConfig()
-	if (codex === null && claude === null) {
+	const restored: (string | null)[] = []
+	for (const provider of ProviderIdSchema.options) {
+		restored.push(await uninstallProviderConfig(provider))
+	}
+	const pi = await uninstallPiConfig()
+	if (pi.manual !== null)
+		throw new ApplicationError('CONFIG_UNINSTALL_FAILED', `${pi.path}: ${pi.manual}`)
+	if (restored.every(path => path === null) && !pi.applied) {
 		process.stdout.write('tokenmaxx was not installed; nothing to restore.\n')
 		return
 	}
 	process.stdout.write(
-		'Restored your original codex and claude config.\n' +
-			'Native clients no longer route through tokenmaxx. Re-enable with: tokenmaxx install\n'
+		'Restored client routing. Saved accounts and data are unchanged. Re-enable with: tokenmaxx install\n'
 	)
 }
 
@@ -851,11 +972,14 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	const tools = [
 		['bun', '1.2+'],
 		['codex', '0.144.1'],
-		['claude', '2.1.206']
+		['claude', '2.1.206'],
+		['grok', '1.0.13']
 	] as const
 	for (const [tool, testedVersion] of tools) {
 		if (Bun.which(tool) === null) {
-			process.stdout.write(`missing  ${tool}\n`)
+			if (tool !== PROVIDERS.xai.cli) {
+				process.stdout.write(`missing  ${tool}\n`)
+			}
 			continue
 		}
 		const version = await commandOutput([tool, '--version'])
@@ -864,6 +988,9 @@ async function doctor(context: ApplicationContext): Promise<void> {
 	process.stdout.write(`${Bun.which('security') === null ? 'missing' : 'ok     '}  security\n`)
 	const running = await managerAvailable(context.paths.managerSocket)
 	const daemonVersion = running ? await managerVersion(context.paths.managerSocket) : null
+	process.stdout.write(
+		`${(await context.launchAgent.installed()) ? 'installed' : 'not installed'}  macOS login startup (tokenmaxx daemon install)\n`
+	)
 	const unreachable = !running && (await proxyIdentity(context.paths.proxyPort)) === 'tokenmaxx'
 	if (unreachable) {
 		const processId = await portOwnerProcessId(context.paths.proxyPort)
@@ -888,22 +1015,25 @@ async function doctor(context: ApplicationContext): Promise<void> {
 		)
 	}
 	const routing = await installStatus()
-	process.stdout.write(
-		`${routing.codexRouted ? 'ok     ' : 'note   '}  codex    ${
-			routing.codexRouted
-				? 'config.toml selects the tokenmaxx provider'
-				: routing.codexStale
-					? 'a tokenmaxx block exists but codex ignores it (top-level key was swallowed by a [table]) — run tokenmaxx install to repair'
-					: 'not routed — run tokenmaxx install'
-		}\n`
-	)
-	process.stdout.write(
-		`${routing.claudeRouted ? 'ok     ' : 'note   '}  claude   ${
-			routing.claudeRouted
-				? 'settings.json routes ANTHROPIC_BASE_URL through tokenmaxx'
+	const routedText: Record<ProviderId, string> = {
+		anthropic: 'settings.json routes ANTHROPIC_BASE_URL through tokenmaxx',
+		openai: 'config.toml selects the tokenmaxx provider',
+		xai: 'config.toml points cli_chat_proxy_base_url at tokenmaxx'
+	}
+	for (const provider of ProviderIdSchema.options) {
+		const routed = routing.routed[provider]
+		if (provider === 'xai' && !routed && Bun.which(PROVIDERS.xai.cli) === null) {
+			continue
+		}
+		const detail = routed
+			? routedText[provider]
+			: provider === 'openai' && routing.codexStale
+				? 'a tokenmaxx block exists but codex ignores it (top-level key was swallowed by a [table]) — run tokenmaxx install to repair'
 				: 'not routed — run tokenmaxx install'
-		}\n`
-	)
+		process.stdout.write(
+			`${routed ? 'ok     ' : 'note   '}  ${PROVIDERS[provider].cli.padEnd(8)} ${detail}\n`
+		)
+	}
 	const pi = await piStatus()
 	if (pi.present) {
 		process.stdout.write(
@@ -930,6 +1060,32 @@ async function doctor(context: ApplicationContext): Promise<void> {
 
 export async function runCli(rawArguments: readonly string[]): Promise<number> {
 	const arguments_ = CommandSchema.parse(rawArguments)
+	if (arguments_[0] === 'uninstall' && arguments_[1] === 'all' && arguments_.length === 2) {
+		const initialPaths = applicationPaths()
+		const saved = await new LaunchAgent(initialPaths).environment()
+		const paths = saved === null ? initialPaths : applicationPaths({ ...process.env, ...saved })
+		if (process.env.TOKENMAXX_HOME !== undefined && initialPaths.root !== paths.root) {
+			throw new ApplicationError(
+				'AUTOSTART_CONFLICT',
+				`Startup uses ${paths.root}; use that TOKENMAXX_HOME to uninstall`
+			)
+		}
+		const launchAgent = new LaunchAgent(paths)
+		await uninstallTokenmaxx({
+			environment: { ...process.env, ...saved },
+			paths,
+			removeStartup: () => launchAgent.uninstall(),
+			stopDaemon: () => stopDaemon({ launchAgent, paths })
+		})
+		const entrypoint = process.argv[1]
+		if (entrypoint === undefined)
+			throw new ApplicationError('ENTRYPOINT_MISSING', 'Cannot locate the CLI entrypoint')
+		const removed = await removeGlobalPackage(entrypoint)
+		process.stdout.write(
+			`Removed tokenmaxx setup, accounts, credentials, local data, and startup files.${removed ? ' The global package was removed.' : ' This source checkout was kept.'}\n`
+		)
+		return 0
+	}
 	const context = await createContext()
 	try {
 		const command = arguments_[0]
@@ -974,7 +1130,7 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 							continue
 						}
 						if (action.kind === 'relogin' || action.kind === 'login' || action.kind === 'loginApiKey') {
-							const cli = action.provider === 'openai' ? 'codex' : 'claude'
+							const cli = PROVIDERS[action.provider].cli
 							freshScreen(action.kind === 'loginApiKey' ? `add a ${cli} api key` : `sign in with ${cli}`)
 							await login(context, cli, {
 								apiKey: action.kind === 'loginApiKey'
@@ -1034,6 +1190,9 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 			case 'logout':
 				await logout(context, arguments_.slice(1))
 				return 0
+			case 'order':
+				await orderAccounts(context, arguments_.slice(1))
+				return 0
 			case 'auto':
 				await configureAutomation(context, arguments_.slice(1))
 				return 0
@@ -1056,14 +1215,28 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 			case 'list':
 				listAccounts(context)
 				return 0
-			case 'install':
-				await installConfig(context, arguments_[1])
+			case 'install': {
+				const targets = arguments_.slice(1).filter(argument => argument !== '--autostart')
+				if (targets.length > 1 || (targets[0] !== undefined && targets[0] !== 'pi')) {
+					throw new ApplicationError('USAGE', 'Usage: tokenmaxx install [pi] [--autostart]')
+				}
+				if (arguments_.includes('--autostart')) await installLoginStartup(context)
+				await installConfig(context, targets[0])
 				return 0
+			}
 			case 'uninstall':
+				if (arguments_.length > 2)
+					throw new ApplicationError('USAGE', 'Usage: tokenmaxx uninstall [pi|all]')
 				await uninstallConfig(arguments_[1])
 				return 0
 			case 'daemon':
 				switch (arguments_[1]) {
+					case 'install':
+						await installLoginStartup(context)
+						return 0
+					case 'disable':
+						await disableLoginStartup(context)
+						return 0
 					case 'run':
 						await runDaemon(context)
 						return 0
@@ -1075,6 +1248,9 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						await stopDaemon(context)
 						return 0
 					case 'status': {
+						process.stdout.write(
+							`Login startup: ${(await context.launchAgent.installed()) ? 'installed' : 'not installed'}\n`
+						)
 						if (await managerAvailable(context.paths.managerSocket)) {
 							process.stdout.write('running\n')
 							return 0
@@ -1091,7 +1267,7 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 						return 0
 					}
 					default:
-						throw new ApplicationError('USAGE', 'Usage: daemon <start|run|stop|status>')
+						throw new ApplicationError('USAGE', 'Usage: daemon <start|run|stop|status|install|disable>')
 				}
 			case 'doctor':
 				await doctor(context)

@@ -1,21 +1,19 @@
 import { z } from 'zod'
 import {
-	installClaudeConfig,
-	installCodexConfig,
 	installPiConfig,
+	installProviderConfig,
 	installStatus,
 	piStatus,
-	uninstallClaudeConfig,
-	uninstallCodexConfig,
-	uninstallPiConfig
+	uninstallPiConfig,
+	uninstallProviderConfig
 } from './config-install.ts'
-import { ProviderIdSchema } from './domain.ts'
+import { PROVIDERS, ProviderIdSchema } from './domain.ts'
 import { ApplicationError } from './errors.ts'
 import type { ApplicationPaths } from './paths.ts'
 
 const ProviderFlagsSchema = z.record(ProviderIdSchema, z.boolean())
 
-export const RoutingTargetSchema = z.enum(['openai', 'anthropic', 'pi'])
+export const RoutingTargetSchema = z.enum([...ProviderIdSchema.options, 'pi'])
 export type RoutingTarget = z.infer<typeof RoutingTargetSchema>
 
 export const RoutingStatusSchema = z
@@ -33,10 +31,14 @@ export async function routingStatus(
 ): Promise<RoutingStatus> {
 	const [install, pi] = await Promise.all([installStatus(), piStatus(which)])
 	return {
-		clis: { anthropic: which('claude') !== null, openai: which('codex') !== null },
+		clis: {
+			anthropic: which(PROVIDERS.anthropic.cli) !== null,
+			openai: which(PROVIDERS.openai.cli) !== null,
+			xai: which(PROVIDERS.xai.cli) !== null
+		},
 		codexStale: install.codexStale,
 		pi,
-		routed: { anthropic: install.claudeRouted, openai: install.codexRouted }
+		routed: install.routed
 	}
 }
 
@@ -47,10 +49,9 @@ export async function setRouting(
 ): Promise<void> {
 	switch (target) {
 		case 'openai':
-			await (enable ? installCodexConfig(paths) : uninstallCodexConfig())
-			return
 		case 'anthropic':
-			await (enable ? installClaudeConfig(paths) : uninstallClaudeConfig())
+		case 'xai':
+			await (enable ? installProviderConfig(target, paths) : uninstallProviderConfig(target))
 			return
 		case 'pi': {
 			const result = await (enable ? installPiConfig(paths) : uninstallPiConfig())

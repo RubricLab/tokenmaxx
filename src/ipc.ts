@@ -78,6 +78,10 @@ const AddApiKeyParamsSchema = z
 
 const LatestVersionSchema = z.object({ latest: z.string().nullable() }).strict()
 
+const OrderParamsSchema = z
+	.object({ accountIds: z.array(z.uuid()), provider: ProviderIdSchema })
+	.strict()
+
 const ReplaceCredentialParamsSchema = z
 	.object({
 		account: AccountSchema,
@@ -131,10 +135,15 @@ async function dispatch(
 			await manager.removeAccount(ResetParamsSchema.parse(params).accountId)
 			return { removed: true }
 		}
-		case 'codex/resetCredits':
-			return manager.codexResetCredits(ResetParamsSchema.parse(params).accountId)
-		case 'codex/consumeReset':
-			return manager.consumeCodexReset(ResetParamsSchema.parse(params).accountId)
+		case 'account/order': {
+			const parsed = OrderParamsSchema.parse(params)
+			await manager.setAccountOrder(parsed.provider, parsed.accountIds)
+			return manager.dashboard()
+		}
+		case 'account/resetCredits':
+			return manager.resetCredits(ResetParamsSchema.parse(params).accountId)
+		case 'account/consumeReset':
+			return manager.consumeReset(ResetParamsSchema.parse(params).accountId)
 		case 'account/addApiKey': {
 			const account = await manager.addApiKeyAccount(AddApiKeyParamsSchema.parse(params))
 			return { account }
@@ -363,7 +372,7 @@ export function requestResetCredits(
 	accountId: string
 ): Promise<ResetCreditsView> {
 	return managerRequest({
-		method: 'codex/resetCredits',
+		method: 'account/resetCredits',
 		params: { accountId },
 		schema: ResetCreditsViewSchema,
 		socketPath,
@@ -373,7 +382,7 @@ export function requestResetCredits(
 
 export function requestConsumeReset(socketPath: string, accountId: string): Promise<ResetOutcome> {
 	return managerRequest({
-		method: 'codex/consumeReset',
+		method: 'account/consumeReset',
 		params: { accountId },
 		schema: ResetOutcomeSchema,
 		socketPath,
@@ -442,6 +451,20 @@ export function readRouting(socketPath: string): Promise<RoutingStatus> {
 	return managerRequest({
 		method: 'routing/read',
 		schema: RoutingStatusSchema,
+		socketPath,
+		timeoutMilliseconds: 15_000
+	})
+}
+
+export function requestAccountOrder(
+	socketPath: string,
+	provider: ProviderId,
+	accountIds: readonly string[]
+): Promise<DashboardSnapshot> {
+	return managerRequest({
+		method: 'account/order',
+		params: { accountIds, provider },
+		schema: DashboardSnapshotSchema,
 		socketPath,
 		timeoutMilliseconds: 15_000
 	})

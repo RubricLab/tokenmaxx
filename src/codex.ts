@@ -1,5 +1,3 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
@@ -13,8 +11,9 @@ import {
 	type UsageWindow
 } from './domain.ts'
 import { ApplicationError, loginFailureMessage } from './errors.ts'
+import { defaultIsolatedLoginDependencies, type IsolatedLoginDependencies } from './login.ts'
 import { type UpstreamInjection, upstreamFor } from './proxy.ts'
-import { type CredentialVault, exclusive } from './vault.ts'
+import { type CredentialVault, exclusive, readApiKey } from './vault.ts'
 
 const clientId = 'app_EMoamEEZ73f0CkXaXp7hrann'
 const refreshEndpoint = 'https://auth.openai.com/oauth/token'
@@ -75,16 +74,6 @@ interface CodexIdentity {
 	accessExpiresAt: string | null
 }
 
-interface CodexLoginDependencies {
-	run(
-		command: readonly string[],
-		environment: Record<string, string | undefined>
-	): Promise<{ exitCode: number; stderr: string }>
-	createTemporaryDirectory(prefix: string): Promise<string>
-	read(path: string): Promise<string>
-	remove(path: string): Promise<void>
-}
-
 function base64UrlJson(segment: string): unknown {
 	try {
 		return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'))
@@ -133,34 +122,11 @@ function codexIdentity(auth: CodexAuth): CodexIdentity {
 	}
 }
 
-function defaultCodexLoginDependencies(): CodexLoginDependencies {
-	return {
-		createTemporaryDirectory: prefix => mkdtemp(join(tmpdir(), prefix)),
-		read: path => readFile(path, 'utf8'),
-		remove: path => rm(path, { force: true, recursive: true }),
-		async run(command, environment) {
-			const child = Bun.spawn([...command], {
-				env: { ...process.env, ...environment },
-				stderr: 'pipe',
-				stdin: 'inherit',
-				stdout: 'inherit'
-			})
-			const decoder = new TextDecoder()
-			let stderr = ''
-			for await (const chunk of child.stderr) {
-				process.stderr.write(chunk)
-				stderr = `${stderr}${decoder.decode(chunk, { stream: true })}`.slice(-4_096)
-			}
-			return { exitCode: await child.exited, stderr }
-		}
-	}
-}
-
 export async function registerCodexAccount(input: {
 	vault: CredentialVault
-	dependencies?: CodexLoginDependencies
+	dependencies?: IsolatedLoginDependencies
 }): Promise<Account> {
-	const dependencies = input.dependencies ?? defaultCodexLoginDependencies()
+	const dependencies = input.dependencies ?? defaultIsolatedLoginDependencies()
 	const temporaryHome = await dependencies.createTemporaryDirectory('tokenmaxx-register-')
 	try {
 		const login = await dependencies.run(
@@ -264,14 +230,6 @@ async function refreshCodexCredential(input: {
 		await input.vault.write(input.reference, JSON.stringify(updated))
 		return updated
 	})
-}
-
-async function readApiKey(vault: CredentialVault, reference: string): Promise<string> {
-	const key = await vault.read(reference)
-	if (key === null) {
-		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
-	}
-	return key
 }
 
 const openAiApiBase = 'https://api.openai.com/v1'

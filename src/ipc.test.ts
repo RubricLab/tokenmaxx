@@ -66,7 +66,11 @@ afterEach(async () => {
 
 describe('routing over ipc', () => {
 	test('reads and toggles codex and claude routing', async () => {
-		expect((await readRouting(socketPath)).routed).toEqual({ anthropic: false, openai: false })
+		expect((await readRouting(socketPath)).routed).toEqual({
+			anthropic: false,
+			openai: false,
+			xai: false
+		})
 
 		const on = await requestRouting(socketPath, 'anthropic', true)
 		expect(on.routed.anthropic).toBe(true)

@@ -7,7 +7,7 @@
 		"@opentui/core": "^0.4.3",
 		"zod": "^4.0.0"
 	},
-	"description": "Switch between your own Codex and Claude Code accounts from one local dashboard, with live token analytics.",
+	"description": "Switch between your own Codex, Claude Code and Grok accounts from one local dashboard, with live token analytics.",
 	"devDependencies": {
 		"@biomejs/biome": "^2.0.0",
 		"@rubriclab/config": "*",
@@ -29,6 +29,7 @@
 		"claude-code",
 		"cli",
 		"codex",
+		"grok",
 		"proxy",
 		"rate-limits",
 		"rubric",
@@ -62,5 +63,5 @@
 		"post-commit": "bun x @rubriclab/package post-commit"
 	},
 	"type": "module",
-	"version": "0.0.67"
+	"version": "0.0.76"
 }
