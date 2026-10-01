@@ -533,8 +533,6 @@ const UsageResponseSchema = z
 		limits: z.array(LimitSchema).nullish(),
 		seven_day: UsageWindowResponseSchema.nullish(),
 		seven_day_oauth_apps: UsageWindowResponseSchema.nullish(),
-		seven_day_opus: UsageWindowResponseSchema.nullish(),
-		seven_day_sonnet: UsageWindowResponseSchema.nullish(),
 		spend: SpendResponseSchema.nullish()
 	})
 	.passthrough()
@@ -661,8 +659,6 @@ async function fetchClaudeUsage(input: {
 	const definitions = [
 		['five_hour', '5 hour', 'session', body.five_hour],
 		['seven_day', '7 day', 'weekly_all', body.seven_day],
-		['seven_day_opus', '7 day · Opus', null, body.seven_day_opus],
-		['seven_day_sonnet', '7 day · Sonnet', null, body.seven_day_sonnet],
 		['seven_day_oauth_apps', '7 day · OAuth apps', null, body.seven_day_oauth_apps]
 	] as const
 	for (const [id, label, limitEquivalent, window] of definitions) {

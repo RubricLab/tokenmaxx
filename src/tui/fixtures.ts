@@ -31,10 +31,10 @@ function buildTokens(scale: number): TokenAnalytics {
 		const buckets = raw.map(value => Math.round((value / rawSum) * target))
 		const totalTokens = buckets.reduce((sum, value) => sum + value, 0)
 		const modelMix: { model: string; provider: ProviderId; share: number }[] = [
-			{ model: 'gpt-5.6-sol', provider: 'openai', share: 0.42 },
-			{ model: 'gpt-5.6-codex', provider: 'openai', share: 0.13 },
-			{ model: 'claude-opus-4-8', provider: 'anthropic', share: 0.3 },
-			{ model: 'claude-sonnet-4-6', provider: 'anthropic', share: 0.11 },
+			{ model: 'gpt-6-sol', provider: 'openai', share: 0.42 },
+			{ model: 'gpt-6-astra', provider: 'openai', share: 0.13 },
+			{ model: 'claude-opus-5-5', provider: 'anthropic', share: 0.3 },
+			{ model: 'claude-sonnet-5', provider: 'anthropic', share: 0.11 },
 			{ model: 'claude-haiku-4-5', provider: 'anthropic', share: 0.04 }
 		]
 		const models = modelMix

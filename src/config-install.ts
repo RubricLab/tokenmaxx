@@ -196,7 +196,15 @@ export async function installStatus(): Promise<InstallStatus> {
 		const baseUrl = selected === null ? undefined : parsed.model_providers?.[selected]?.base_url
 		codexRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
 	} catch {
-		codexRouted = false
+		// Bun.TOML rejects configs codex accepts — bare table keys starting with a
+		// digit, like [mcp_servers.1password]. Reading that as "not routed" makes
+		// the dashboard show routing off while traffic flows through the proxy,
+		// and turns the routing toggle into a re-install. Fall back to our own
+		// active selection line, scanning only the top-level region: a
+		// model_provider line under a table belongs to that table, not to codex.
+		const firstTable = codexRaw.search(/^\[/m)
+		const topLevel = firstTable === -1 ? codexRaw : codexRaw.slice(0, firstTable)
+		codexRouted = topLevel.split('\n').some(line => ownProviderSelection.test(line))
 	}
 	const codexStale =
 		!codexRouted &&
@@ -249,10 +257,9 @@ function piModelsPath(): string {
 const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai']
 
 // The anthropic ids pair with an API-key account (subscription auth is not for
-// third-party harnesses); gpt-5.6-sol is the one id the ChatGPT codex backend
-// accepts for subscription accounts.
-const piAnthropicModelIds = ['claude-opus-4-8', 'claude-sonnet-4-6']
-const piOpenaiModelIds = ['gpt-5.6-sol']
+// third-party harnesses).
+const piAnthropicModelIds = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5']
+const piOpenaiModelIds = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
 
 function piProviders(paths: ApplicationPaths): Record<string, unknown> {
 	const models = (ids: readonly string[]) => ids.map(id => ({ id, reasoning: true }))

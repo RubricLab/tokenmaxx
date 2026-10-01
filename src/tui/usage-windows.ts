@@ -5,14 +5,13 @@ export function isFiveHourUsageWindow(window: UsageWindow): boolean {
 }
 
 function usageWindowPriority(window: UsageWindow): number {
-	const identity = `${window.id} ${window.label}`
 	switch (true) {
 		case isFiveHourUsageWindow(window):
 			return 0
 		case /^(7 day(?: · all models)?)$/i.test(window.label):
 		case /^(weekly_all|seven_day|weekly|codex:primary)$/.test(window.id):
 			return 1
-		case /scoped|fable|opus|sonnet|spark/i.test(identity):
+		case /^(weekly_scoped|codex_)/.test(window.id):
 			return 2
 		default:
 			return 3
