@@ -36,6 +36,7 @@ function usage(
 		measuredSpendUsd: null,
 		observedAt: new Date(NOW.getTime() - (options.ageMs ?? 10_000)).toISOString(),
 		provider: 'anthropic',
+		resetCredits: null,
 		source: 'proxyResponseHeaders',
 		windows: [{ id: 'session', kind: 'hard', label: '5h session', resetAt: null, usedPercent }]
 	}
@@ -176,5 +177,83 @@ describe('extra usage spill', () => {
 			usage: [{ ...usage(1, 96), extraUsage: extra(true) }, usage(2, 10)]
 		})
 		expect(decision.rotate).toBe(true)
+	})
+})
+
+describe('account order', () => {
+	const ranked = (n: number, priority: number) => ({ ...account(n), priority })
+
+	test('rotates onto the first account in the order that has room, not the emptiest', () => {
+		const decision = selectRotation({
+			accounts: [ranked(1, 0), ranked(2, 1), ranked(3, 2)],
+			now: NOW,
+			state: state(1),
+			usage: [usage(1, 92), usage(2, 60), usage(3, 5)]
+		})
+		expect(decision).toMatchObject({ reason: 'threshold', targetAccountId: account(2).id })
+	})
+
+	test('skips an ordered account without room', () => {
+		const decision = selectRotation({
+			accounts: [ranked(1, 0), ranked(2, 1), ranked(3, 2)],
+			now: NOW,
+			state: state(1),
+			usage: [usage(1, 92), usage(2, 88), usage(3, 50)]
+		})
+		expect(decision).toMatchObject({ targetAccountId: account(3).id })
+	})
+
+	test('ordered accounts come before unordered ones', () => {
+		const decision = selectRotation({
+			accounts: [account(1), account(2), ranked(3, 0)],
+			now: NOW,
+			state: state(1),
+			usage: [usage(1, 95), usage(2, 5), usage(3, 70)]
+		})
+		expect(decision).toMatchObject({ targetAccountId: account(3).id })
+	})
+
+	test('moves back to an earlier account once it has room again', () => {
+		const decision = selectRotation({
+			accounts: [ranked(1, 0), ranked(2, 1)],
+			now: NOW,
+			state: state(2, { switchedAgoMs: 600_000 }),
+			usage: [usage(1, 20), usage(2, 40)]
+		})
+		expect(decision).toMatchObject({
+			reason: 'preferred',
+			rotate: true,
+			targetAccountId: account(1).id
+		})
+	})
+
+	test('does not move back to an earlier account still above the ceiling', () => {
+		const decision = selectRotation({
+			accounts: [ranked(1, 0), ranked(2, 1)],
+			now: NOW,
+			state: state(2, { switchedAgoMs: 600_000 }),
+			usage: [usage(1, 87), usage(2, 40)]
+		})
+		expect(decision).toEqual({ reason: 'belowThreshold', rotate: false })
+	})
+
+	test('moving back waits out the cooldown', () => {
+		const decision = selectRotation({
+			accounts: [ranked(1, 0), ranked(2, 1)],
+			now: NOW,
+			state: state(2, { switchedAgoMs: 60_000 }),
+			usage: [usage(1, 20), usage(2, 40)]
+		})
+		expect(decision).toEqual({ reason: 'minimumDwell', rotate: false })
+	})
+
+	test('never moves to a later account below the threshold', () => {
+		const decision = selectRotation({
+			accounts: [ranked(1, 0), ranked(2, 1)],
+			now: NOW,
+			state: state(1, { switchedAgoMs: 600_000 }),
+			usage: [usage(1, 70), usage(2, 0)]
+		})
+		expect(decision).toEqual({ reason: 'belowThreshold', rotate: false })
 	})
 })

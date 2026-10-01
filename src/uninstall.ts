@@ -8,6 +8,7 @@ import {
 	clientConfigPaths,
 	uninstallClaudeConfig,
 	uninstallCodexConfig,
+	uninstallGrokConfig,
 	uninstallPiConfig
 } from './config-install.ts'
 import { ApplicationError } from './errors.ts'
@@ -76,6 +77,7 @@ export async function uninstallTokenmaxx(input: {
 	const configs = clientConfigPaths(input.environment)
 	await uninstallCodexConfig(input.paths, configs.codex)
 	await uninstallClaudeConfig(input.paths, configs.claude)
+	await uninstallGrokConfig(configs.grok)
 	const pi = await uninstallPiConfig(input.paths, configs.pi)
 	if (pi.manual !== null)
 		throw new ApplicationError('CONFIG_UNINSTALL_FAILED', `${pi.path}: ${pi.manual}`)

@@ -2,6 +2,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { forgetConfigBackup, restoreConfigBackup, saveConfigBackup } from './config-backup.ts'
+import { type ProviderId, ProviderIdSchema } from './domain.ts'
 import type { ApplicationPaths } from './paths.ts'
 import { applicationPaths, proxyBaseUrl } from './paths.ts'
 import { VERSION } from './version.ts'
@@ -21,6 +22,7 @@ export function clientConfigPaths(environment: NodeJS.ProcessEnv = process.env) 
 	return {
 		claude: resolve(environment.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'settings.json'),
 		codex: resolve(environment.CODEX_HOME ?? join(homedir(), '.codex'), 'config.toml'),
+		grok: resolve(environment.GROK_HOME ?? join(homedir(), '.grok'), 'config.toml'),
 		pi: resolve(environment.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'), 'models.json')
 	}
 }
@@ -31,6 +33,10 @@ function codexConfigPath(): string {
 
 function claudeSettingsPath(): string {
 	return clientConfigPaths().claude
+}
+
+function grokConfigPath(): string {
+	return clientConfigPaths().grok
 }
 
 async function readFileOrEmpty(path: string): Promise<string> {
@@ -209,9 +215,115 @@ export async function uninstallClaudeConfig(
 	return path
 }
 
+const endpointBeginMarker = '# >>> tokenmaxx endpoint (do not edit) >>>'
+const endpointEndMarker = '# <<< tokenmaxx endpoint <<<'
+const grokEndpointKey = 'cli_chat_proxy_base_url'
+const ownEndpointLine =
+	/^\s*(?:endpoints\.)?cli_chat_proxy_base_url\s*=\s*"[^"]*127\.0\.0\.1:\d+\/xai\/v1"\s*$/
+const anyEndpointLine = /^\s*(?:endpoints\.)?cli_chat_proxy_base_url\s*=/
+const endpointsHeader = /^\s*\[endpoints\]\s*$/
+const tableHeader = /^\s*\[/
+
+function withoutMarkedLines(lines: string[]): string[] {
+	const begin = lines.findIndex(line => line.trim() === endpointBeginMarker)
+	const end = lines.findIndex(line => line.trim() === endpointEndMarker)
+	return begin === -1 || end < begin ? lines : [...lines.slice(0, begin), ...lines.slice(end + 1)]
+}
+
+function stripGrokManagedBlocks(content: string): string {
+	return withoutMarkedLines(content.split('\n'))
+		.filter(line => !ownEndpointLine.test(line.replace(disabledPrefix, '')))
+		.map(line => (anyEndpointLine.test(line) ? `# tokenmaxx-disabled: ${line.trimStart()}` : line))
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim()
+}
+
+function dropEmptyEndpointsTable(lines: string[]): string[] {
+	return lines.filter((line, index) => {
+		if (!endpointsHeader.test(line)) {
+			return true
+		}
+		const rest = lines.slice(index + 1)
+		const next = rest.findIndex(candidate => candidate.trim().length > 0)
+		return next !== -1 && !tableHeader.test(rest[next] ?? '')
+	})
+}
+
+function restoreGrokContent(content: string): string {
+	const restored = stripGrokManagedBlocks(content)
+		.split('\n')
+		.map(line => line.replace(disabledPrefix, ''))
+	return `${dropEmptyEndpointsTable(restored).join('\n').trimEnd()}\n`
+}
+
+export async function installGrokConfig(paths: ApplicationPaths): Promise<string> {
+	const path = grokConfigPath()
+	const base = stripGrokManagedBlocks(await readFileOrEmpty(path))
+	const managedLine = `${grokEndpointKey} = "${proxyBaseUrl(paths, 'xai')}/v1"`
+	const lines = base.length === 0 ? [] : base.split('\n')
+	const header = lines.findIndex(line => endpointsHeader.test(line))
+	const managed =
+		header === -1
+			? [
+					...lines,
+					...(lines.length === 0 ? [] : ['']),
+					endpointBeginMarker,
+					'[endpoints]',
+					managedLine,
+					endpointEndMarker
+				]
+			: [
+					...lines.slice(0, header + 1),
+					endpointBeginMarker,
+					managedLine,
+					endpointEndMarker,
+					...lines.slice(header + 1)
+				]
+	await mkdir(dirname(path), { recursive: true })
+	await writeFile(path, `${managed.join('\n')}\n`, { mode: 0o600 })
+	return path
+}
+
+export async function uninstallGrokConfig(path = grokConfigPath()): Promise<string | null> {
+	const existing = await readFile(path, 'utf8').catch(() => null)
+	const carriesOurConfig = (content: string): boolean =>
+		content.includes(endpointBeginMarker) ||
+		content.split('\n').some(line => ownEndpointLine.test(line) || disabledPrefix.test(line))
+	if (existing === null || !carriesOurConfig(existing)) {
+		return null
+	}
+	await writeFile(path, restoreGrokContent(existing), { mode: 0o600 })
+	return path
+}
+
+export function installProviderConfig(
+	provider: ProviderId,
+	paths: ApplicationPaths
+): Promise<string> {
+	switch (provider) {
+		case 'openai':
+			return installCodexConfig(paths)
+		case 'anthropic':
+			return installClaudeConfig(paths)
+		case 'xai':
+			return installGrokConfig(paths)
+	}
+}
+
+export function uninstallProviderConfig(provider: ProviderId): Promise<string | null> {
+	switch (provider) {
+		case 'openai':
+			return uninstallCodexConfig()
+		case 'anthropic':
+			return uninstallClaudeConfig()
+		case 'xai':
+			return uninstallGrokConfig()
+	}
+}
+
 interface InstallStatus {
-	codexRouted: boolean
-	claudeRouted: boolean
+	routed: Record<ProviderId, boolean>
 	codexStale: boolean
 }
 
@@ -227,7 +339,15 @@ export async function installStatus(): Promise<InstallStatus> {
 		const baseUrl = selected === null ? undefined : parsed.model_providers?.[selected]?.base_url
 		codexRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
 	} catch {
-		codexRouted = false
+		// Bun.TOML rejects configs codex accepts — bare table keys starting with a
+		// digit, like [mcp_servers.1password]. Reading that as "not routed" makes
+		// the dashboard show routing off while traffic flows through the proxy,
+		// and turns the routing toggle into a re-install. Fall back to our own
+		// active selection line, scanning only the top-level region: a
+		// model_provider line under a table belongs to that table, not to codex.
+		const firstTable = codexRaw.search(/^\[/m)
+		const topLevel = firstTable === -1 ? codexRaw : codexRaw.slice(0, firstTable)
+		codexRouted = topLevel.split('\n').some(line => ownProviderSelection.test(line))
 	}
 	const codexStale =
 		!codexRouted &&
@@ -241,26 +361,35 @@ export async function installStatus(): Promise<InstallStatus> {
 	} catch {
 		claudeRouted = false
 	}
-	return { claudeRouted, codexRouted, codexStale }
+
+	let grokRouted = false
+	try {
+		const parsed = Bun.TOML.parse(await readFileOrEmpty(grokConfigPath())) as {
+			endpoints?: { cli_chat_proxy_base_url?: unknown }
+		}
+		const baseUrl = parsed.endpoints?.cli_chat_proxy_base_url
+		grokRouted = typeof baseUrl === 'string' && baseUrl.includes('127.0.0.1')
+	} catch {
+		grokRouted = false
+	}
+	return { codexStale, routed: { anthropic: claudeRouted, openai: codexRouted, xai: grokRouted } }
 }
 
 // Configs written by an older version stay stale after an update (#17): re-apply
 // install for whatever is currently routed, once per version change. Never adds
 // routing — a harness the user uninstalled or never installed stays untouched.
-export async function healInstalledConfigs(paths: ApplicationPaths): Promise<string[]> {
+export async function healInstalledConfigs(paths: ApplicationPaths): Promise<ProviderId[]> {
 	const stampPath = join(paths.root, 'healed-version')
 	if ((await readFileOrEmpty(stampPath)).trim() === VERSION) {
 		return []
 	}
-	const { claudeRouted, codexRouted } = await installStatus()
-	const healed: string[] = []
-	if (codexRouted) {
-		await installCodexConfig(paths)
-		healed.push('codex')
-	}
-	if (claudeRouted) {
-		await installClaudeConfig(paths)
-		healed.push('claude')
+	const { routed } = await installStatus()
+	const healed: ProviderId[] = []
+	for (const provider of ProviderIdSchema.options) {
+		if (routed[provider]) {
+			await installProviderConfig(provider, paths)
+			healed.push(provider)
+		}
 	}
 	await mkdir(paths.root, { recursive: true })
 	await writeFile(stampPath, `${VERSION}\n`)
@@ -277,13 +406,13 @@ function piModelsPath(): string {
 	return clientConfigPaths().pi
 }
 
-const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai']
+const piProviderKeys = ['tokenmaxx-anthropic', 'tokenmaxx-openai', 'tokenmaxx-xai']
 
 // The anthropic ids pair with an API-key account (subscription auth is not for
-// third-party harnesses); gpt-5.6-sol is the one id the ChatGPT codex backend
-// accepts for subscription accounts.
-const piAnthropicModelIds = ['claude-opus-4-8', 'claude-sonnet-4-6']
-const piOpenaiModelIds = ['gpt-5.6-sol']
+// third-party harnesses).
+const piAnthropicModelIds = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5']
+const piOpenaiModelIds = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
+const piXaiModelIds = ['grok-4.6']
 
 function piProviders(paths: ApplicationPaths): Record<string, unknown> {
 	const models = (ids: readonly string[]) => ids.map(id => ({ id, reasoning: true }))
@@ -299,6 +428,12 @@ function piProviders(paths: ApplicationPaths): Record<string, unknown> {
 			apiKey: dummyAuthToken,
 			baseUrl: proxyBaseUrl(paths, 'openai'),
 			models: models(piOpenaiModelIds)
+		},
+		'tokenmaxx-xai': {
+			api: 'openai-responses',
+			apiKey: dummyAuthToken,
+			baseUrl: `${proxyBaseUrl(paths, 'xai')}/v1`,
+			models: models(piXaiModelIds)
 		}
 	}
 }
@@ -373,7 +508,7 @@ export async function uninstallPiConfig(
 	if (!piProviderKeys.some(key => raw.includes(key))) return { applied: false, manual: null, path }
 	return writePiProviders(
 		null,
-		'could not parse it as JSON — remove the tokenmaxx-anthropic and tokenmaxx-openai providers yourself',
+		`could not parse it as JSON — remove the ${piProviderKeys.join(', ')} providers yourself`,
 		undefined,
 		path
 	)

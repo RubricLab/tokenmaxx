@@ -5,8 +5,14 @@ export type FetchImplementation = (
 	initialization?: RequestInit
 ) => Promise<Response>
 
-export const ProviderIdSchema = z.enum(['openai', 'anthropic'])
+export const ProviderIdSchema = z.enum(['openai', 'anthropic', 'xai'])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
+
+export const PROVIDERS: Record<ProviderId, { vendor: string; app: string; cli: string }> = {
+	anthropic: { app: 'Claude Code', cli: 'claude', vendor: 'Anthropic' },
+	openai: { app: 'Codex', cli: 'codex', vendor: 'OpenAI' },
+	xai: { app: 'Grok', cli: 'grok', vendor: 'xAI' }
+}
 
 export const AccountEmailSchema = z.string().trim().toLowerCase().email()
 const AccountNameSchema = z.string().trim().min(1)
@@ -35,6 +41,7 @@ const AccountFieldsSchema = z.object({
 	label: AccountNameSchema,
 	onThreshold: z.enum(['switch', 'spill']).default('switch'),
 	plan: z.string().trim().min(1).nullish(),
+	priority: z.number().int().nonnegative().optional(),
 	updatedAt: z.iso.datetime()
 })
 
@@ -51,6 +58,12 @@ export const AccountSchema = z
 			profilePath: z.string().trim().min(1).nullable(),
 			provider: z.literal('anthropic'),
 			secretReference: z.string().trim().min(1).nullable()
+		}).strict(),
+		AccountFieldsSchema.extend({
+			externalUserId: z.null().default(null),
+			profilePath: z.null(),
+			provider: z.literal('xai'),
+			secretReference: z.string().trim().min(1)
 		}).strict()
 	])
 	.refine(account => account.label === account.identity, {
@@ -77,13 +90,6 @@ const UsageWindowSchema = z
 	.strict()
 export type UsageWindow = z.infer<typeof UsageWindowSchema>
 
-const UsageSnapshotFieldsSchema = z.object({
-	accountId: z.uuid(),
-	hardLimitReached: z.boolean(),
-	observedAt: z.iso.datetime(),
-	windows: z.array(UsageWindowSchema)
-})
-
 export const ResetCreditCountsSchema = z
 	.object({
 		applicable: z.number().int().nonnegative(),
@@ -91,6 +97,14 @@ export const ResetCreditCountsSchema = z
 	})
 	.strict()
 export type ResetCreditCounts = z.infer<typeof ResetCreditCountsSchema>
+
+const UsageSnapshotFieldsSchema = z.object({
+	accountId: z.uuid(),
+	hardLimitReached: z.boolean(),
+	observedAt: z.iso.datetime(),
+	resetCredits: ResetCreditCountsSchema.nullish().default(null),
+	windows: z.array(UsageWindowSchema)
+})
 
 export const ExtraUsageSchema = z
 	.object({
@@ -109,7 +123,6 @@ export const UsageSnapshotSchema = z.discriminatedUnion('provider', [
 		extraUsage: ExtraUsageSchema.nullish().default(null),
 		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
 		provider: z.literal('openai'),
-		resetCredits: ResetCreditCountsSchema.nullish().default(null),
 		source: z.enum(['codexUsageEndpoint', 'proxyResponseHeaders', 'apiKeyProbe'])
 	}).strict(),
 	UsageSnapshotFieldsSchema.extend({
@@ -117,6 +130,12 @@ export const UsageSnapshotSchema = z.discriminatedUnion('provider', [
 		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
 		provider: z.literal('anthropic'),
 		source: z.enum(['claudeUsageEndpoint', 'proxyResponseHeaders', 'apiKeyProbe'])
+	}).strict(),
+	UsageSnapshotFieldsSchema.extend({
+		extraUsage: ExtraUsageSchema.nullish().default(null),
+		measuredSpendUsd: z.number().nonnegative().nullish().default(null),
+		provider: z.literal('xai'),
+		source: z.enum(['grokProbe', 'proxyResponseHeaders', 'apiKeyProbe'])
 	}).strict()
 ])
 export type UsageSnapshot = z.infer<typeof UsageSnapshotSchema>
@@ -139,7 +158,7 @@ export type ResetCreditsView = z.infer<typeof ResetCreditsViewSchema>
 
 export const ResetOutcomeSchema = z
 	.object({
-		code: z.enum(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed']),
+		code: z.enum(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed', 'unavailable']),
 		windowsReset: z.number().int().nonnegative()
 	})
 	.strict()

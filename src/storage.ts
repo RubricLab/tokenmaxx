@@ -264,6 +264,9 @@ function migrate(database: Database): void {
       CREATE UNIQUE INDEX IF NOT EXISTS accounts_anthropic_external
         ON accounts(external_account_id)
         WHERE provider = 'anthropic' AND external_account_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS accounts_xai_external
+        ON accounts(external_account_id)
+        WHERE provider = 'xai' AND external_account_id IS NOT NULL;
     `)
 	} catch (error) {
 		throw new ApplicationError(
@@ -338,8 +341,7 @@ export function createStateStore(databasePath: string): StateStore {
 						parsed.externalUserId !== null &&
 						candidate.externalAccountId === parsed.externalAccountId &&
 						candidate.externalUserId === parsed.externalUserId) ||
-					(parsed.provider === 'anthropic' &&
-						candidate.provider === 'anthropic' &&
+					(parsed.provider !== 'openai' &&
 						parsed.externalAccountId !== null &&
 						candidate.externalAccountId === parsed.externalAccountId))
 		)

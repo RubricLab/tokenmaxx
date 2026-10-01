@@ -22,6 +22,7 @@ beforeEach(async () => {
 	environment = {
 		CLAUDE_CONFIG_DIR: join(directory, 'claude'),
 		CODEX_HOME: join(directory, 'codex'),
+		GROK_HOME: join(directory, 'grok'),
 		PI_CODING_AGENT_DIR: join(directory, 'pi'),
 		TOKENMAXX_HOME: join(directory, 'state')
 	}

@@ -103,12 +103,35 @@ function codexObservation(headers: Headers, status: number): RateLimitObservatio
 	return { limited: status === 429, windows }
 }
 
+export const xaiLimitWindowId = 'limit'
+
+export function xaiLimitWindow(usedPercent: 0 | 100, resetAt: string | null): UsageWindow {
+	return { id: xaiLimitWindowId, kind: 'hard', label: 'rate limit', resetAt, usedPercent }
+}
+
+function xaiObservation(headers: Headers, status: number): RateLimitObservation | null {
+	if (status !== 429) {
+		return null
+	}
+	const seconds = Number(headers.get('retry-after'))
+	const resetAt =
+		Number.isFinite(seconds) && seconds > 0
+			? new Date(Date.now() + seconds * 1000).toISOString()
+			: null
+	return { limited: true, windows: [xaiLimitWindow(100, resetAt)] }
+}
+
 export function observeRateLimitHeaders(
 	provider: ProviderId,
 	headers: Headers,
 	status: number
 ): RateLimitObservation | null {
-	return provider === 'anthropic'
-		? anthropicObservation(headers, status)
-		: codexObservation(headers, status)
+	switch (provider) {
+		case 'anthropic':
+			return anthropicObservation(headers, status)
+		case 'openai':
+			return codexObservation(headers, status)
+		case 'xai':
+			return xaiObservation(headers, status)
+	}
 }

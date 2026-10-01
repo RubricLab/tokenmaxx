@@ -6,6 +6,14 @@ export interface CredentialVault {
 	remove(reference: string): Promise<void>
 }
 
+export async function readApiKey(vault: CredentialVault, reference: string): Promise<string> {
+	const key = await vault.read(reference)
+	if (key === null) {
+		throw new ApplicationError('CREDENTIAL_MISSING', `Missing credential ${reference}`)
+	}
+	return key
+}
+
 const credentialLocks = new Map<string, Promise<void>>()
 
 export async function exclusive<Result>(
