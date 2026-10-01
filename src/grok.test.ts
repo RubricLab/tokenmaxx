@@ -203,6 +203,7 @@ describe('probeGrok', () => {
 		measuredSpendUsd: null,
 		observedAt: '2026-07-20T11:59:00.000Z',
 		provider: 'xai',
+		resetCredits: null,
 		source: 'proxyResponseHeaders',
 		windows: [window]
 	})

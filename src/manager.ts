@@ -1,4 +1,11 @@
-import { claudeUpstream, migrateClaudeAccount, probeClaude, removeClaudeProfile } from './claude.ts'
+import {
+	claudeResetCredits,
+	claudeUpstream,
+	migrateClaudeAccount,
+	probeClaude,
+	redeemClaudeReset,
+	removeClaudeProfile
+} from './claude.ts'
 import {
 	codexUpstream,
 	probeCodex,
@@ -31,7 +38,7 @@ import {
 	startProxy,
 	type UpstreamInjection
 } from './proxy.ts'
-import { selectRotation } from './selection.ts'
+import { orderRank, selectRotation } from './selection.ts'
 import type { StateStore, TokenTimeframeAggregate } from './storage.ts'
 import type { CredentialVault } from './vault.ts'
 
@@ -325,6 +332,39 @@ export class AccountManager {
 		})
 	}
 
+	/** Puts `accountIds` first in this order and keeps the rest after them; an empty list clears the order. */
+	public async setAccountOrder(provider: ProviderId, accountIds: readonly string[]): Promise<void> {
+		return this.withProviderOperation(provider, async () => {
+			const accounts = this.#store.listAccounts(provider)
+			const listed = [...new Set(accountIds)].map(id => {
+				const account = accounts.find(candidate => candidate.id === id)
+				if (account === undefined) {
+					throw new ApplicationError('ACCOUNT_NOT_FOUND', `No ${provider} account ${id}`)
+				}
+				return account
+			})
+			const rest = accounts
+				.filter(account => !listed.includes(account))
+				.sort(
+					(left, right) => orderRank(left) - orderRank(right) || left.label.localeCompare(right.label)
+				)
+			const now = this.#dependencies.now().toISOString()
+			const ordered = listed.length === 0 ? accounts : [...listed, ...rest]
+			ordered.forEach((account, index) => {
+				const priority = listed.length === 0 ? undefined : index
+				if (account.priority !== priority) {
+					const { priority: _, ...unordered } = account
+					this.#store.saveAccount(
+						priority === undefined
+							? { ...unordered, updatedAt: now }
+							: { ...account, priority, updatedAt: now }
+					)
+				}
+			})
+			await this.evaluateAutomation(provider)
+		})
+	}
+
 	public setAutomationPolicy(input: {
 		provider: ProviderId
 		enabled?: boolean
@@ -400,31 +440,46 @@ export class AccountManager {
 		this.#store.saveAccount(result.account)
 	}
 
-	private codexAccountOrThrow(accountId: string): Extract<Account, { provider: 'openai' }> {
+	private accountOrThrow(accountId: string): Account {
 		const account = this.#store.findAccount(accountId)
-		if (account === null || account.provider !== 'openai') {
-			throw new ApplicationError('INVALID_TARGET', `Account ${accountId} is not a codex account`)
+		if (account === null) {
+			throw new ApplicationError('ACCOUNT_NOT_FOUND', `Unknown account ${accountId}`)
 		}
 		return account
 	}
 
-	public async codexResetCredits(accountId: string): Promise<ResetCreditsView> {
-		return probeCodexResetCredits({
-			account: this.codexAccountOrThrow(accountId),
-			fetchImplementation: this.#dependencies.fetchImplementation,
-			vault: this.#vault
-		})
+	public async resetCredits(accountId: string): Promise<ResetCreditsView> {
+		const account = this.accountOrThrow(accountId)
+		const shared = { fetchImplementation: this.#dependencies.fetchImplementation, vault: this.#vault }
+		switch (account.provider) {
+			case 'openai':
+				return probeCodexResetCredits({ account, ...shared })
+			case 'anthropic':
+				return claudeResetCredits({ account, ...shared })
+			case 'xai':
+				return { available: 0, credits: [] }
+		}
 	}
 
-	public async consumeCodexReset(accountId: string): Promise<ResetOutcome> {
-		return this.withProviderOperation('openai', async () => {
-			const account = this.codexAccountOrThrow(accountId)
-			const outcome = await redeemCodexResetCredit({
-				account,
+	public async consumeReset(accountId: string): Promise<ResetOutcome> {
+		const { provider } = this.accountOrThrow(accountId)
+		return this.withProviderOperation(provider, async () => {
+			const account = this.accountOrThrow(accountId)
+			const shared = {
 				fetchImplementation: this.#dependencies.fetchImplementation,
-				redeemRequestId: crypto.randomUUID(),
 				vault: this.#vault
-			})
+			}
+			const requestId = crypto.randomUUID()
+			const outcome = await (() => {
+				switch (account.provider) {
+					case 'openai':
+						return redeemCodexResetCredit({ account, redeemRequestId: requestId, ...shared })
+					case 'anthropic':
+						return redeemClaudeReset({ account, requestId, ...shared })
+					case 'xai':
+						return { code: 'no_credit', windowsReset: 0 } as const
+				}
+			})()
 			await this.probeAndSave(account).catch(() => undefined)
 			return outcome
 		})
@@ -577,11 +632,9 @@ export class AccountManager {
 						merged.some(window => window.kind === 'hard' && window.usedPercent >= 100),
 					observedAt: new Date(event.at).toISOString(),
 					provider: event.provider,
+					resetCredits: existing?.resetCredits ?? null,
 					source: 'proxyResponseHeaders',
-					windows: merged,
-					...(event.provider === 'openai'
-						? { resetCredits: existing?.provider === 'openai' ? (existing.resetCredits ?? null) : null }
-						: {})
+					windows: merged
 				})
 			)
 		} catch {

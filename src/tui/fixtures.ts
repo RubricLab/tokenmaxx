@@ -31,10 +31,10 @@ function buildTokens(scale: number): TokenAnalytics {
 		const buckets = raw.map(value => Math.round((value / rawSum) * target))
 		const totalTokens = buckets.reduce((sum, value) => sum + value, 0)
 		const modelMix: { model: string; provider: ProviderId; share: number }[] = [
-			{ model: 'gpt-5.6-sol', provider: 'openai', share: 0.38 },
-			{ model: 'gpt-5.6-codex', provider: 'openai', share: 0.12 },
-			{ model: 'claude-opus-4-8', provider: 'anthropic', share: 0.27 },
-			{ model: 'claude-sonnet-4-6', provider: 'anthropic', share: 0.1 },
+			{ model: 'gpt-6-sol', provider: 'openai', share: 0.33 },
+			{ model: 'gpt-6-astra', provider: 'openai', share: 0.13 },
+			{ model: 'claude-opus-5-5', provider: 'anthropic', share: 0.3 },
+			{ model: 'claude-sonnet-5', provider: 'anthropic', share: 0.11 },
 			{ model: 'claude-haiku-4-5', provider: 'anthropic', share: 0.04 },
 			{ model: 'grok-4.6', provider: 'xai', share: 0.09 }
 		]
@@ -217,16 +217,12 @@ function usage(seed: AccountSeed, now: number): UsageSnapshot {
 		observedAt: new Date(
 			now - 8_000 - Math.round(Math.abs(noise(Math.floor(now / (5 * MINUTE)))) * 16_000)
 		).toISOString(),
+		resetCredits: seed.resetCredits ?? null,
 		windows
 	} as const
 	switch (seed.provider) {
 		case 'openai':
-			return {
-				...base,
-				provider: 'openai',
-				resetCredits: seed.resetCredits ?? null,
-				source: 'codexUsageEndpoint'
-			}
+			return { ...base, provider: 'openai', source: 'codexUsageEndpoint' }
 		case 'anthropic':
 			return { ...base, provider: 'anthropic', source: 'claudeUsageEndpoint' }
 		case 'xai':

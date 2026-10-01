@@ -62,6 +62,12 @@ Turn it on and tokenmaxx watches the active account's rate-limit windows. When t
 tokenmaxx auto all on --threshold 90     # or: codex | claude | grok … off
 ```
 
+Want some accounts used before others? Put them in order. Auto-rotation then switches to the first account in your order that still has room, instead of the emptiest one, and moves back to an earlier account once its window resets, after the cooldown. Accounts you leave out go after the ones you list. In the dashboard, `[` and `]` move the selected account.
+
+```bash
+tokenmaxx order claude work@acme.com personal@me.com    # --reset goes back to "most room"
+```
+
 ## How it works
 
 A single loopback proxy on `127.0.0.1:8459`, and the clients you already use.
@@ -79,6 +85,7 @@ tokenmaxx install                          route native codex, claude & grok
 tokenmaxx uninstall                        restore native config
 tokenmaxx switch <codex|claude|grok> <email>   make an account active
 tokenmaxx logout [codex|claude|grok] <email>   sign out; the credential is deleted
+tokenmaxx order <codex|claude|grok> [email…]   which accounts auto-rotation uses first
 tokenmaxx auto <all|codex|claude|grok> <on|off> [--threshold N]
 tokenmaxx list | status | refresh | doctor
 ```

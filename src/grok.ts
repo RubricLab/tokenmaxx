@@ -284,6 +284,7 @@ export async function probeGrok(input: {
 				measuredSpendUsd: null,
 				observedAt: input.now().toISOString(),
 				provider: 'xai',
+				resetCredits: null,
 				source: 'apiKeyProbe',
 				windows: []
 			}
@@ -328,6 +329,7 @@ export async function probeGrok(input: {
 			measuredSpendUsd: null,
 			observedAt: input.now().toISOString(),
 			provider: 'xai',
+			resetCredits: null,
 			source: 'grokProbe',
 			windows: [held ?? xaiLimitWindow(0, null)]
 		}

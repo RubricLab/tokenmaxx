@@ -94,6 +94,45 @@ describe('installCodexConfig', () => {
 		expect(status.codexStale).toBe(false)
 	})
 
+	test('installStatus stays truthful when Bun.TOML cannot parse the config', async () => {
+		// Bun.TOML rejects bare table keys that start with a digit, like
+		// [mcp_servers.1password]; codex accepts them. A parse failure must not
+		// read as "not routed" while our selection line is active.
+		await writeCodexConfig(
+			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\nenabled = false\n`
+		)
+		await installCodexConfig(paths())
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(true)
+	})
+
+	test('an unparseable config without our selection still reads as not routed', async () => {
+		await writeCodexConfig(
+			'model = "gpt-5.6-sol"\n\n[mcp_servers.1password]\ncommand = "1password-mcp"\n'
+		)
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(false)
+	})
+
+	test('the fallback ignores a swallowed legacy selection under a table', async () => {
+		// legacyBrokenConfig's model_provider = "tokmax" sits under [notice], so
+		// codex never routes through it; the digit table only breaks parsing.
+		await writeCodexConfig(
+			`${legacyBrokenConfig}\n[mcp_servers.1password]\ncommand = "1password-mcp"\n`
+		)
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(false)
+		expect(status.codexStale).toBe(true)
+	})
+
+	test('the fallback ignores our provider named inside a codex profile', async () => {
+		await writeCodexConfig(
+			'model_provider = "ollama"\n\n[profiles.work]\nmodel_provider = "tokenmaxx"\n\n[mcp_servers.1password]\ncommand = "1password-mcp"\n'
+		)
+		const status = await installStatus()
+		expect(status.routed.openai).toBe(false)
+	})
+
 	test('reinstall is idempotent', async () => {
 		await writeCodexConfig(legacyBrokenConfig)
 		await installCodexConfig(paths())

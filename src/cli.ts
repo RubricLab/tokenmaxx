@@ -25,6 +25,7 @@ import {
 	managerVersion,
 	readDashboard,
 	readProxyPort,
+	requestAccountOrder,
 	requestAccountRemove,
 	requestAccountSave,
 	requestSwitch,
@@ -33,6 +34,7 @@ import {
 import { AccountManager } from './manager.ts'
 import { type ApplicationPaths, applicationPaths, ensureApplicationPaths } from './paths.ts'
 import { proxyIdentity } from './proxy.ts'
+import { orderRank } from './selection.ts'
 import { createStateStore, type StateStore } from './storage.ts'
 import { renderDashboard } from './ui.ts'
 import { createMacOsKeychainVault } from './vault.ts'
@@ -259,6 +261,11 @@ function help(): string {
 		row(`switch ${cliWords} <email>`, 'make an account active now'),
 		row('logout [codex|claude|grok] <email>', 'sign out and delete the credential'),
 		row(
+			`order ${cliWords} [email…]`,
+			'which accounts auto-rotate uses first',
+			'no emails prints the order · --reset clears it'
+		),
+		row(
 			'auto <codex|claude|grok|all> <on|off>',
 			'switch accounts at a usage threshold',
 			'optional: --threshold N  (default 90)'
@@ -279,6 +286,8 @@ function help(): string {
 		dim('  with the most headroom, and an interrupted request is retried there.'),
 		dim('  Threshold switches hold for 5 minutes to avoid flapping; hard limits'),
 		dim('  ignore the hold. Turning auto on is what authorizes the switching.'),
+		dim('  With an order set, it switches to the first account in the order with'),
+		dim('  room, and moves back to an earlier one once it has room again.'),
 		'',
 		dim('Once installed, use codex, claude and grok normally — a local proxy injects the'),
 		dim("active account's credential per request, so a switch takes effect on the"),
@@ -687,19 +696,74 @@ function listAccounts(context: ApplicationContext): void {
 	}
 	const width = Math.max(...accounts.map(account => account.label.length))
 	for (const provider of ProviderIdSchema.options) {
-		const group = accounts.filter(account => account.provider === provider)
+		const group = inOrder(accounts.filter(account => account.provider === provider))
 		if (group.length === 0) {
 			continue
 		}
 		process.stdout.write(`\n${PROVIDERS[provider].cli}\n`)
 		for (const account of group) {
 			const isActive = states.get(provider)?.activeAccountId === account.id
+			const place = account.priority === undefined ? '  ' : `${account.priority + 1}.`
 			process.stdout.write(
-				`  ${isActive ? '●' : ' '} ${account.label.padEnd(width)}   ${healthText[account.health]}\n`
+				`  ${isActive ? '●' : ' '} ${place} ${account.label.padEnd(width)}   ${healthText[account.health]}\n`
 			)
 		}
 	}
 	process.stdout.write('\n● = active\n')
+}
+
+function inOrder(accounts: readonly Account[]): Account[] {
+	return [...accounts].sort(
+		(left, right) => orderRank(left) - orderRank(right) || left.label.localeCompare(right.label)
+	)
+}
+
+async function orderAccounts(
+	context: ApplicationContext,
+	arguments_: readonly string[]
+): Promise<void> {
+	const providerArgument = arguments_[0]
+	if (providerArgument === undefined) {
+		throw new ApplicationError(
+			'USAGE',
+			`Usage: tokenmaxx order ${cliWords} [email…] | tokenmaxx order ${cliWords} --reset`
+		)
+	}
+	const provider = providerFromCli(providerArgument)
+	const references = arguments_.slice(1).filter(argument => argument !== '--reset')
+	const reset = arguments_.includes('--reset')
+	if (!reset && references.length === 0) {
+		const group = inOrder(context.store.listAccounts(provider))
+		if (group.every(account => account.priority === undefined)) {
+			process.stdout.write(
+				`No order set for ${providerArgument}; auto-rotate picks the account with the most room.\n`
+			)
+			return
+		}
+		for (const account of group) {
+			process.stdout.write(`  ${(account.priority ?? group.length) + 1}. ${account.label}\n`)
+		}
+		return
+	}
+	const accountIds = reset
+		? []
+		: references.map(reference => resolveAccount(context.store, provider, reference).id)
+	await ensureDaemon(context)
+	const snapshot = await requestAccountOrder(context.paths.managerSocket, provider, accountIds)
+	if (reset) {
+		process.stdout.write(
+			`Cleared the ${providerArgument} order; auto-rotate picks the account with the most room.\n`
+		)
+		return
+	}
+	const ordered = inOrder(snapshot.accounts.filter(account => account.provider === provider))
+	process.stdout.write(`Auto-rotate for ${providerArgument} now uses, in order:\n`)
+	for (const account of ordered) {
+		process.stdout.write(`  ${(account.priority ?? 0) + 1}. ${account.label}\n`)
+	}
+	process.stdout.write(
+		'When an earlier account has room again, tokenmaxx moves back to it after the cooldown.\n'
+	)
 }
 
 const providerWords = new Set(['codex', 'claude', 'grok', 'openai', 'anthropic', 'xai'])
@@ -1042,6 +1106,9 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 				return 0
 			case 'logout':
 				await logout(context, arguments_.slice(1))
+				return 0
+			case 'order':
+				await orderAccounts(context, arguments_.slice(1))
 				return 0
 			case 'auto':
 				await configureAutomation(context, arguments_.slice(1))
