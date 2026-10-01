@@ -30,6 +30,7 @@ async function options(): Promise<LaunchAgentOptions> {
 			ANTHROPIC_API_KEY: 'must-not-be-written',
 			CLAUDE_CONFIG_DIR: join(directory, 'claude'),
 			CODEX_HOME: join(directory, 'codex'),
+			GROK_HOME: join(directory, 'grok'),
 			OPENAI_API_KEY: 'must-not-be-written',
 			PATH: '/usr/bin:/bin',
 			PI_CODING_AGENT_DIR: join(directory, 'pi'),

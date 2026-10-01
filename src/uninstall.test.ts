@@ -206,6 +206,40 @@ test('edits made before a version re-install survive uninstall', async () => {
 	expect(codex).not.toContain('tokenmaxx')
 })
 
+test('a custom home only removes the credentials its own accounts reference', async () => {
+	const paths = await setup()
+	const store = createStateStore(paths.database)
+	store.saveAccount({
+		auth: 'oauth',
+		createdAt: '2026-09-01T00:00:00.000Z',
+		enabled: true,
+		externalAccountId: null,
+		externalUserId: null,
+		health: 'ready',
+		id: '00000000-0000-4000-8000-000000000401',
+		identity: 'max@example.com',
+		label: 'max@example.com',
+		onThreshold: 'switch',
+		plan: null,
+		profilePath: null,
+		provider: 'anthropic',
+		secretReference: 'claude:00000000-0000-4000-8000-000000000401',
+		updatedAt: '2026-09-01T00:00:00.000Z'
+	})
+	store.close()
+	let removed: readonly string[] = []
+	await uninstallTokenmaxx({
+		environment,
+		paths,
+		removeCredentials: async references => {
+			removed = references
+		},
+		removeStartup: async () => {},
+		stopDaemon: async () => {}
+	})
+	expect(removed).toEqual(['claude:00000000-0000-4000-8000-000000000401'])
+})
+
 test('failed credential cleanup keeps local recovery data and can be retried', async () => {
 	const paths = await setup()
 	let removedStartup = false

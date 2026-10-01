@@ -12,12 +12,21 @@ import {
 	uninstallPiConfig
 } from './config-install.ts'
 import { ApplicationError } from './errors.ts'
-import type { ApplicationPaths } from './paths.ts'
-import { removeMacOsKeychainCredentials } from './vault.ts'
+import { type ApplicationPaths, applicationPaths } from './paths.ts'
+import { createMacOsKeychainVault, removeMacOsKeychainCredentials } from './vault.ts'
 
 function contains(parent: string, child: string): boolean {
 	const path = relative(parent, child)
 	return path === '' || (!path.startsWith('..') && !isAbsolute(path))
+}
+
+async function removeCredentials(root: string, references: readonly string[]): Promise<void> {
+	if (root === applicationPaths({}).root) {
+		await removeMacOsKeychainCredentials()
+		return
+	}
+	const vault = createMacOsKeychainVault()
+	for (const reference of references) await vault.remove(reference)
 }
 
 export async function uninstallTokenmaxx(input: {
@@ -25,7 +34,7 @@ export async function uninstallTokenmaxx(input: {
 	environment?: NodeJS.ProcessEnv
 	stopDaemon: () => Promise<void>
 	removeStartup: () => Promise<void>
-	removeCredentials?: () => Promise<void>
+	removeCredentials?: (references: readonly string[]) => Promise<void>
 	removeProfile?: (path: string) => Promise<void>
 }): Promise<void> {
 	const root = await realpath(input.paths.root).catch(error => {
@@ -40,14 +49,19 @@ export async function uninstallTokenmaxx(input: {
 	}
 	await input.stopDaemon()
 	const profiles = new Set<string>()
+	const credentials = new Set<string>()
 	if (await Bun.file(input.paths.database).exists()) {
 		const database = new Database(input.paths.database, { readonly: true })
 		try {
 			for (const row of database
 				.query<{ payload: string }, []>('SELECT payload FROM accounts')
 				.all()) {
-				const account = JSON.parse(row.payload) as { profilePath?: unknown }
+				const account = JSON.parse(row.payload) as {
+					profilePath?: unknown
+					secretReference?: unknown
+				}
 				if (typeof account.profilePath === 'string') profiles.add(account.profilePath)
+				if (typeof account.secretReference === 'string') credentials.add(account.secretReference)
 			}
 		} finally {
 			database.close()
@@ -82,7 +96,9 @@ export async function uninstallTokenmaxx(input: {
 	if (pi.manual !== null)
 		throw new ApplicationError('CONFIG_UNINSTALL_FAILED', `${pi.path}: ${pi.manual}`)
 	for (const profile of profiles) await (input.removeProfile ?? removeClaudeProfile)(profile)
-	await (input.removeCredentials ?? removeMacOsKeychainCredentials)()
+	await (input.removeCredentials ?? (references => removeCredentials(root, references)))([
+		...credentials
+	])
 	await input.removeStartup()
 	for (const path of [
 		input.paths.database,
