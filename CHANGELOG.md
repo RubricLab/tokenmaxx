@@ -1,41 +1,8 @@
-- [2026-09-01] scope the installStatus fallback to top-level keys
-
-The parse-failure fallback matched our selection line anywhere in the file,
-but a model_provider under a table belongs to that table: a legacy selection
-swallowed into [notice], or a [profiles.x] naming our provider while another
-is active, would read as routed — and healInstalledConfigs would re-enable
-routing from that. Scan only the region before the first table header.
-Also pin that the installed fixture genuinely breaks Bun.TOML, so the
-regression test keeps exercising the fallback if bun's parser improves.
-- [2026-09-01] [installStatus reads routed state when Bun.TOML cannot parse the config
-
-Bun.TOML.parse rejects bare table keys that start with a digit — a real-world
-example is [mcp_servers.1password], which codex itself writes and accepts.
-On any config containing such a table, installStatus() threw into its catch
-and reported codexRouted = false no matter what the file actually said.
-
-The visible damage: the dashboard's Settings page showed codex routing off
-while model_provider = "tokenmaxx" was actively sending traffic through the
-proxy, and pressing the routing toggle computed enable from that wrong false
-and re-installed the managed block instead of removing it — turning routing
-off through the dashboard was impossible on such a config.
-
-On parse failure, fall back to detecting our own active selection line
-(commented-out lines never match). The semantic TOML check stays the primary
-path for configs that parse.](https://github.com/dallascrilley/tokenmaxx/commit/008b7297c177f2aa122f4ec78517e931f46b47fb)
-- [2026-09-01] [keep settings routing state live
-
-The dashboard received routing once at launch (options.routing) and never
-re-read it, so Settings kept showing the launch-time snapshot for the whole
-session. Routing actually lives in the harness config files and can change
-while the dashboard is open — tokenmaxx install/uninstall from another
-shell, first-login auto-enable, or the daemon's post-update heal — leaving
-Settings contradicting the on-disk config (e.g. showing codex routing off
-while model_provider still points at the proxy).
-
-reload() now re-reads installStatus() alongside piStatus(), so the 2s tick
-and manual refresh both bring the display back to the files' truth, and the
-routing toggle flips from the live value instead of the stale snapshot.](https://github.com/dallascrilley/tokenmaxx/commit/db617e8573c9e5390f43a9f9d732275b2a205c5e)
+- [2026-09-30] toml fallback test survives newer bun
+- [2026-09-30] [settings shows live routing state](https://github.com/RubricLab/tokenmaxx/commit/df576cf609f72bf274e932fe1bd8d74ed191cc7d)
+- [2026-09-30] [pick which accounts auto-rotation uses first](https://github.com/RubricLab/tokenmaxx/commit/8999da2b9c11f204d5b2d932b64fb221e52646dc)
+- [2026-09-23] price fable 5.1, opus 5.5, sonnet 5, gpt-6 and gpt-5.6 at current rates
+- [2026-08-21] codex keeps its shell and apply_patch tools on the gpt-5.6 models
 - [2026-08-18] meter clients that hang up early
 - [2026-08-18] reclaim bare provider tables
 - [2026-08-18] settings shows pi

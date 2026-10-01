@@ -44,19 +44,34 @@ describe('chatgpt dialect adapter', () => {
 		expect(adapted.max_output_tokens).toBeUndefined()
 	})
 
-	test('merges lifted developer messages after existing instructions', () => {
+	test('merges lifted system messages after existing instructions', () => {
 		const adapted = JSON.parse(
 			adaptChatGptRequest(
 				JSON.stringify({
-					input: [
-						{ content: [{ text: 'Prefer short replies.', type: 'input_text' }], role: 'developer' }
-					],
+					input: [{ content: [{ text: 'Prefer short replies.', type: 'input_text' }], role: 'system' }],
 					instructions: 'You are a coding agent.'
 				})
 			)
 		)
 		expect(adapted.instructions).toBe('You are a coding agent.\n\nPrefer short replies.')
 		expect(adapted.input).toHaveLength(0)
+	})
+
+	test('keeps developer messages in input', () => {
+		const adapted = JSON.parse(
+			adaptChatGptRequest(
+				JSON.stringify({
+					input: [
+						{ content: [{ text: 'You are working inside bb.', type: 'input_text' }], role: 'developer' },
+						{ content: [{ text: 'Drop this one.', type: 'input_text' }], role: 'system' },
+						{ content: [{ text: 'hi', type: 'input_text' }], role: 'user' }
+					],
+					instructions: 'You are Codex.'
+				})
+			)
+		)
+		expect(adapted.instructions).toBe('You are Codex.\n\nDrop this one.')
+		expect(adapted.input.map((item: { role: string }) => item.role)).toEqual(['developer', 'user'])
 	})
 
 	test('leaves codex-shaped requests and non-json bodies alone', () => {

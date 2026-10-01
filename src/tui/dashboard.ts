@@ -21,6 +21,7 @@ import type {
 import {
 	readAnalytics,
 	refreshUsage,
+	requestAccountOrder,
 	requestAccountSave,
 	requestConsumeReset,
 	requestPolicy,
@@ -29,6 +30,7 @@ import {
 } from '../ipc.ts'
 import { applicationPaths } from '../paths.ts'
 import { readPreferences, writePreferences } from '../preferences.ts'
+import { orderRank } from '../selection.ts'
 import { availableUpdate, installedVersion, VERSION } from '../version.ts'
 import { buildScenario } from './fixtures.ts'
 import {
@@ -258,6 +260,10 @@ function orderedRows(snapshot: DashboardSnapshot): Row[] {
 		const accounts = snapshot.accounts
 			.filter(account => account.provider === provider)
 			.sort((left, right) => {
+				const byOrder = orderRank(left) - orderRank(right)
+				if (byOrder !== 0 && !Number.isNaN(byOrder)) {
+					return byOrder
+				}
 				const byPressure = pressure(right.id) - pressure(left.id)
 				return byPressure !== 0 ? byPressure : left.label.localeCompare(right.label)
 			})
@@ -420,7 +426,12 @@ function providerPanel(
 		)
 	})
 	const routed = ctx.routing[provider]
-	const auto = state?.policy.enabled ? `auto ${state.policy.thresholdPercent}%` : 'auto off'
+	const ordered = snapshot.accounts.some(
+		account => account.provider === provider && account.priority !== undefined
+	)
+	const auto = state?.policy.enabled
+		? `auto ${state.policy.thresholdPercent}%${ordered ? ' · in order' : ''}`
+		: 'auto off'
 	const title = routed
 		? ` ${providerTitles[provider]}   ● ${auto} `
 		: ` ${providerTitles[provider]}   ✗ off `
@@ -1206,7 +1217,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 			: state.resetConfirm !== null
 				? '⏎ use one reset · esc keep it banked'
 				: state.tab === 'accounts'
-					? `↑↓ select · ⏎ switch/add · a auto${resettable ? ' · r reset' : ''}${spillable ? ' · e spill' : ''} · tab next`
+					? `↑↓ select · ⏎ switch/add · [ ] order · a auto${resettable ? ' · r reset' : ''}${spillable ? ' · e spill' : ''} · tab next`
 					: state.tab === 'analytics'
 						? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
 						: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
@@ -1577,6 +1588,30 @@ export async function runTuiDashboard(
 		)
 	}
 
+	// Rows already list each provider's accounts in auto-rotate order, so moving a row moves it in that order.
+	const moveSelected = (delta: -1 | 1) => {
+		const row = rows[state.selected]
+		if (row === undefined || row.accountId === ADD_ROW) {
+			return
+		}
+		const order = rows
+			.filter(candidate => candidate.provider === row.provider && candidate.accountId !== ADD_ROW)
+			.map(candidate => candidate.accountId)
+		const from = order.indexOf(row.accountId)
+		const to = from + delta
+		if (to < 0 || to >= order.length) {
+			return
+		}
+		order.splice(from, 1)
+		order.splice(to, 0, row.accountId)
+		void withBusy('reordering…', async () => {
+			await requestAccountOrder(socketPath, row.provider, order)
+			analytics = await readAnalytics(socketPath)
+			rows = orderedRows(analytics.snapshot)
+			state.selected = rows.findIndex(candidate => candidate.accountId === row.accountId)
+		})
+	}
+
 	const toggleWindow = (provider: ProviderId, windowId: string) => {
 		const hidden = currentPolicy(provider)?.hiddenWindowIds ?? []
 		const next = hidden.includes(windowId)
@@ -1835,6 +1870,8 @@ export async function runTuiDashboard(
 					if (row !== undefined && row.accountId !== ADD_ROW) {
 						toggleAuto(row.provider)
 					}
+				} else if ((key.name === '[' || key.name === ']') && live) {
+					moveSelected(key.name === '[' ? -1 : 1)
 				} else if (key.name === 'e' && live) {
 					const row = rows[state.selected]
 					const account =

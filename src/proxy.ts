@@ -239,7 +239,9 @@ function messageText(item: ResponsesInputMessage): string {
 // The ChatGPT codex backend rejects requests third-party harnesses send to a
 // standard Responses endpoint: system messages must ride in `instructions`
 // ("System messages are not allowed") and `max_output_tokens` is unsupported.
-// Codex's own requests already have that shape, so this is a no-op for them.
+// Developer messages are accepted and must stay in `input`: codex sends its
+// tool contract as developer items, and the gpt-5.6 models drop the shell and
+// apply_patch tools when those items arrive folded into `instructions`.
 export function adaptChatGptRequest(raw: string): string {
 	let parsed: { input?: unknown; instructions?: unknown; [key: string]: unknown }
 	try {
@@ -250,10 +252,8 @@ export function adaptChatGptRequest(raw: string): string {
 	if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.input)) {
 		return raw
 	}
-	const isSystem = (item: unknown): item is ResponsesInputMessage => {
-		const role = (item as ResponsesInputMessage | null)?.role
-		return role === 'system' || role === 'developer'
-	}
+	const isSystem = (item: unknown): item is ResponsesInputMessage =>
+		(item as ResponsesInputMessage | null)?.role === 'system'
 	const lifted = parsed.input.filter(isSystem).map(messageText)
 	const instructions = [
 		...(typeof parsed.instructions === 'string' ? [parsed.instructions] : []),

@@ -35,6 +35,7 @@ const AccountFieldsSchema = z.object({
 	label: AccountNameSchema,
 	onThreshold: z.enum(['switch', 'spill']).default('switch'),
 	plan: z.string().trim().min(1).nullish(),
+	priority: z.number().int().nonnegative().optional(),
 	updatedAt: z.iso.datetime()
 })
 
