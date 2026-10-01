@@ -134,7 +134,7 @@ pub async fn add_api_key(provider: Provider, key: &str, label: &str) -> Result<V
 
 pub async fn reset_credits(account_id: &str) -> Result<ResetCreditsView> {
     request(
-        "codex/resetCredits",
+        "account/resetCredits",
         json!({ "accountId": account_id }),
         Duration::from_secs(20),
     )
@@ -143,7 +143,7 @@ pub async fn reset_credits(account_id: &str) -> Result<ResetCreditsView> {
 
 pub async fn consume_reset(account_id: &str) -> Result<ResetOutcome> {
     request(
-        "codex/consumeReset",
+        "account/consumeReset",
         json!({ "accountId": account_id }),
         Duration::from_secs(45),
     )

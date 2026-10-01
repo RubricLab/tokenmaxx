@@ -178,6 +178,7 @@
     "accountId": "00000000-0000-4000-8000-000000000001",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "weekly",
@@ -190,13 +191,13 @@
     "extraUsage": null,
     "measuredSpendUsd": null,
     "provider": "openai",
-    "resetCredits": null,
     "source": "codexUsageEndpoint"
    },
    {
     "accountId": "00000000-0000-4000-8000-000000000002",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "weekly",
@@ -209,13 +210,13 @@
     "extraUsage": null,
     "measuredSpendUsd": null,
     "provider": "openai",
-    "resetCredits": null,
     "source": "codexUsageEndpoint"
    },
    {
     "accountId": "00000000-0000-4000-8000-000000000006",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "weekly",
@@ -228,13 +229,13 @@
     "extraUsage": null,
     "measuredSpendUsd": null,
     "provider": "openai",
-    "resetCredits": null,
     "source": "codexUsageEndpoint"
    },
    {
     "accountId": "00000000-0000-4000-8000-000000000003",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "session",
@@ -260,6 +261,7 @@
     "accountId": "00000000-0000-4000-8000-000000000004",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "session",
@@ -285,6 +287,7 @@
     "accountId": "00000000-0000-4000-8000-000000000005",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "session",
@@ -310,6 +313,7 @@
     "accountId": "00000000-0000-4000-8000-000000000007",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "session",
@@ -335,6 +339,7 @@
     "accountId": "00000000-0000-4000-8000-000000000008",
     "hardLimitReached": false,
     "observedAt": "2026-07-15T16:41:49.402Z",
+    "resetCredits": null,
     "windows": [
      {
       "id": "session",
@@ -487,70 +492,89 @@
     ],
     "byProvider": [
      {
+      "cacheCreation": 862500,
+      "cached": 40451250,
+      "costUsd": 38.367,
+      "input": 1293750,
+      "output": 517500,
+      "tokens": 43125000,
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 843750,
       "cached": 39571875,
-      "costUsd": 36.60525,
+      "costUsd": 23.303250000000002,
       "input": 1265625,
       "output": 506250,
       "tokens": 42187500,
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 1031250,
-      "cached": 48365625,
-      "costUsd": 14.166796875,
-      "input": 1546875,
-      "output": 618750,
-      "tokens": 51562500,
-      "provider": "openai"
+      "cacheCreation": 168750,
+      "cached": 7914375,
+      "costUsd": 5.070937499999999,
+      "input": 253125,
+      "output": 101250,
+      "tokens": 8437500,
+      "provider": "xai"
      }
     ],
-    "costCacheCreation": 4.3828125,
-    "costCached": 22.490015624999998,
-    "costInput": 7.1929687499999995,
-    "costOutput": 16.70625,
-    "costUsd": 50.772046875,
+    "costCacheCreation": 8.015625,
+    "costCached": 28.7555625,
+    "costInput": 10.125,
+    "costOutput": 19.845000000000002,
+    "costUsd": 66.7411875,
     "key": "1h",
     "models": [
      {
+      "cacheCreation": 243750,
+      "cached": 11431875,
+      "costUsd": 25.447499999999998,
+      "input": 365625,
+      "output": 146250,
+      "tokens": 12187500,
+      "model": "gpt-6-astra",
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 562500,
       "cached": 26381250,
-      "costUsd": 29.3625,
+      "costUsd": 18.21375,
       "input": 843750,
       "output": 337500,
       "tokens": 28125000,
-      "model": "claude-opus-4-8",
+      "model": "claude-opus-5-5",
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 787500,
-      "cached": 36933750,
-      "costUsd": 10.81828125,
-      "input": 1181250,
-      "output": 472500,
-      "tokens": 39375000,
-      "model": "gpt-5.6-sol",
+      "cacheCreation": 618750,
+      "cached": 29019375,
+      "costUsd": 12.919500000000001,
+      "input": 928125,
+      "output": 371250,
+      "tokens": 30937500,
+      "model": "gpt-6-sol",
       "provider": "openai"
+     },
+     {
+      "cacheCreation": 168750,
+      "cached": 7914375,
+      "costUsd": 5.070937499999999,
+      "input": 253125,
+      "output": 101250,
+      "tokens": 8437500,
+      "model": "grok-4.6",
+      "provider": "xai"
      },
      {
       "cacheCreation": 206250,
       "cached": 9673125,
-      "costUsd": 6.45975,
+      "costUsd": 4.306500000000001,
       "input": 309375,
       "output": 123750,
       "tokens": 10312500,
-      "model": "claude-sonnet-4-6",
+      "model": "claude-sonnet-5",
       "provider": "anthropic"
-     },
-     {
-      "cacheCreation": 243750,
-      "cached": 11431875,
-      "costUsd": 3.348515625,
-      "input": 365625,
-      "output": 146250,
-      "tokens": 12187500,
-      "model": "gpt-5.6-codex",
-      "provider": "openai"
      },
      {
       "cacheCreation": 75000,
@@ -696,70 +720,89 @@
     ],
     "byProvider": [
      {
+      "cacheCreation": 4312500,
+      "cached": 202256250,
+      "costUsd": 191.83499999999998,
+      "input": 6468750,
+      "output": 2587500,
+      "tokens": 215625000,
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 4218750,
       "cached": 197859375,
-      "costUsd": 183.02624999999998,
+      "costUsd": 116.51625,
       "input": 6328125,
       "output": 2531250,
       "tokens": 210937500,
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 5156250,
-      "cached": 241828125,
-      "costUsd": 70.833984375,
-      "input": 7734375,
-      "output": 3093750,
-      "tokens": 257812500,
-      "provider": "openai"
+      "cacheCreation": 843750,
+      "cached": 39571875,
+      "costUsd": 25.354687499999997,
+      "input": 1265625,
+      "output": 506250,
+      "tokens": 42187500,
+      "provider": "xai"
      }
     ],
-    "costCacheCreation": 21.9140625,
-    "costCached": 112.450078125,
-    "costInput": 35.96484375,
-    "costOutput": 83.53125,
-    "costUsd": 253.86023437499998,
+    "costCacheCreation": 40.078125,
+    "costCached": 143.7778125,
+    "costInput": 50.625,
+    "costOutput": 99.225,
+    "costUsd": 333.7059375,
     "key": "5h",
     "models": [
      {
+      "cacheCreation": 1218750,
+      "cached": 57159375,
+      "costUsd": 127.2375,
+      "input": 1828125,
+      "output": 731250,
+      "tokens": 60937500,
+      "model": "gpt-6-astra",
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 2812500,
       "cached": 131906250,
-      "costUsd": 146.8125,
+      "costUsd": 91.06875,
       "input": 4218750,
       "output": 1687500,
       "tokens": 140625000,
-      "model": "claude-opus-4-8",
+      "model": "claude-opus-5-5",
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 3937500,
-      "cached": 184668750,
-      "costUsd": 54.09140625,
-      "input": 5906250,
-      "output": 2362500,
-      "tokens": 196875000,
-      "model": "gpt-5.6-sol",
+      "cacheCreation": 3093750,
+      "cached": 145096875,
+      "costUsd": 64.5975,
+      "input": 4640625,
+      "output": 1856250,
+      "tokens": 154687500,
+      "model": "gpt-6-sol",
       "provider": "openai"
+     },
+     {
+      "cacheCreation": 843750,
+      "cached": 39571875,
+      "costUsd": 25.354687499999997,
+      "input": 1265625,
+      "output": 506250,
+      "tokens": 42187500,
+      "model": "grok-4.6",
+      "provider": "xai"
      },
      {
       "cacheCreation": 1031250,
       "cached": 48365625,
-      "costUsd": 32.29875,
+      "costUsd": 21.5325,
       "input": 1546875,
       "output": 618750,
       "tokens": 51562500,
-      "model": "claude-sonnet-4-6",
+      "model": "claude-sonnet-5",
       "provider": "anthropic"
-     },
-     {
-      "cacheCreation": 1218750,
-      "cached": 57159375,
-      "costUsd": 16.742578125,
-      "input": 1828125,
-      "output": 731250,
-      "tokens": 60937500,
-      "model": "gpt-5.6-codex",
-      "provider": "openai"
      },
      {
       "cacheCreation": 375000,
@@ -905,70 +948,89 @@
     ],
     "byProvider": [
      {
+      "cacheCreation": 20700000,
+      "cached": 970830000,
+      "costUsd": 920.808,
+      "input": 31050000,
+      "output": 12420000,
+      "tokens": 1035000000,
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 20250000,
       "cached": 949725000,
-      "costUsd": 878.5260000000001,
+      "costUsd": 559.278,
       "input": 30375000,
       "output": 12150000,
       "tokens": 1012500000,
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 24750000,
-      "cached": 1160775000,
-      "costUsd": 340.003125,
-      "input": 37125000,
-      "output": 14850000,
-      "tokens": 1237500000,
-      "provider": "openai"
+      "cacheCreation": 4050000,
+      "cached": 189945000,
+      "costUsd": 121.7025,
+      "input": 6075000,
+      "output": 2430000,
+      "tokens": 202500000,
+      "provider": "xai"
      }
     ],
-    "costCacheCreation": 105.1875,
-    "costCached": 539.7603750000001,
-    "costInput": 172.63125,
-    "costOutput": 400.95,
-    "costUsd": 1218.529125,
+    "costCacheCreation": 192.375,
+    "costCached": 690.1335,
+    "costInput": 243,
+    "costOutput": 476.28,
+    "costUsd": 1601.7885,
     "key": "24h",
     "models": [
      {
+      "cacheCreation": 5850000,
+      "cached": 274365000,
+      "costUsd": 610.74,
+      "input": 8775000,
+      "output": 3510000,
+      "tokens": 292500000,
+      "model": "gpt-6-astra",
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 13500000,
       "cached": 633150000,
-      "costUsd": 704.7,
+      "costUsd": 437.13,
       "input": 20250000,
       "output": 8100000,
       "tokens": 675000000,
-      "model": "claude-opus-4-8",
+      "model": "claude-opus-5-5",
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 18900000,
-      "cached": 886410000,
-      "costUsd": 259.63875,
-      "input": 28350000,
-      "output": 11340000,
-      "tokens": 945000000,
-      "model": "gpt-5.6-sol",
+      "cacheCreation": 14850000,
+      "cached": 696465000,
+      "costUsd": 310.068,
+      "input": 22275000,
+      "output": 8910000,
+      "tokens": 742500000,
+      "model": "gpt-6-sol",
       "provider": "openai"
+     },
+     {
+      "cacheCreation": 4050000,
+      "cached": 189945000,
+      "costUsd": 121.7025,
+      "input": 6075000,
+      "output": 2430000,
+      "tokens": 202500000,
+      "model": "grok-4.6",
+      "provider": "xai"
      },
      {
       "cacheCreation": 4950000,
       "cached": 232155000,
-      "costUsd": 155.034,
+      "costUsd": 103.35600000000001,
       "input": 7425000,
       "output": 2970000,
       "tokens": 247500000,
-      "model": "claude-sonnet-4-6",
+      "model": "claude-sonnet-5",
       "provider": "anthropic"
-     },
-     {
-      "cacheCreation": 5850000,
-      "cached": 274365000,
-      "costUsd": 80.364375,
-      "input": 8775000,
-      "output": 3510000,
-      "tokens": 292500000,
-      "model": "gpt-5.6-codex",
-      "provider": "openai"
      },
      {
       "cacheCreation": 1800000,
@@ -1114,70 +1176,89 @@
     ],
     "byProvider": [
      {
+      "cacheCreation": 144900000,
+      "cached": 6795809999,
+      "costUsd": 6445.6559998,
+      "input": 217350000,
+      "output": 86940000,
+      "tokens": 7244999999,
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 141750000,
       "cached": 6648074999,
-      "costUsd": 6149.681999499999,
+      "costUsd": 3914.9459998,
       "input": 212625000,
       "output": 85050000,
       "tokens": 7087499999,
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 173250000,
-      "cached": 8125424999,
-      "costUsd": 2380.021874875,
-      "input": 259875000,
-      "output": 103950000,
-      "tokens": 8662499999,
-      "provider": "openai"
+      "cacheCreation": 28350000,
+      "cached": 1329615000,
+      "costUsd": 851.9175,
+      "input": 42525000,
+      "output": 17010000,
+      "tokens": 1417500000,
+      "provider": "xai"
      }
     ],
-    "costCacheCreation": 736.3125,
-    "costCached": 3778.3226243749996,
-    "costInput": 1208.41875,
-    "costOutput": 2806.65,
-    "costUsd": 8529.703874374998,
+    "costCacheCreation": 1346.625,
+    "costCached": 4830.9344996,
+    "costInput": 1701,
+    "costOutput": 3333.96,
+    "costUsd": 11212.5194996,
     "key": "7d",
     "models": [
      {
+      "cacheCreation": 40950000,
+      "cached": 1920555000,
+      "costUsd": 4275.18,
+      "input": 61425000,
+      "output": 24570000,
+      "tokens": 2047500000,
+      "model": "gpt-6-astra",
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 94500000,
       "cached": 4432049999,
-      "costUsd": 4932.8999994999995,
+      "costUsd": 3059.9099998,
       "input": 141750000,
       "output": 56700000,
       "tokens": 4724999999,
-      "model": "claude-opus-4-8",
+      "model": "claude-opus-5-5",
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 132300000,
-      "cached": 6204869999,
-      "costUsd": 1817.471249875,
-      "input": 198450000,
-      "output": 79380000,
-      "tokens": 6614999999,
-      "model": "gpt-5.6-sol",
+      "cacheCreation": 103950000,
+      "cached": 4875254999,
+      "costUsd": 2170.4759998,
+      "input": 155925000,
+      "output": 62370000,
+      "tokens": 5197499999,
+      "model": "gpt-6-sol",
       "provider": "openai"
+     },
+     {
+      "cacheCreation": 28350000,
+      "cached": 1329615000,
+      "costUsd": 851.9175,
+      "input": 42525000,
+      "output": 17010000,
+      "tokens": 1417500000,
+      "model": "grok-4.6",
+      "provider": "xai"
      },
      {
       "cacheCreation": 34650000,
       "cached": 1625085000,
-      "costUsd": 1085.2379999999998,
+      "costUsd": 723.492,
       "input": 51975000,
       "output": 20790000,
       "tokens": 1732500000,
-      "model": "claude-sonnet-4-6",
+      "model": "claude-sonnet-5",
       "provider": "anthropic"
-     },
-     {
-      "cacheCreation": 40950000,
-      "cached": 1920555000,
-      "costUsd": 562.550625,
-      "input": 61425000,
-      "output": 24570000,
-      "tokens": 2047500000,
-      "model": "gpt-5.6-codex",
-      "provider": "openai"
      },
      {
       "cacheCreation": 12600000,
@@ -1323,70 +1404,89 @@
     ],
     "byProvider": [
      {
+      "cacheCreation": 641700000,
+      "cached": 30095730000,
+      "costUsd": 28545.048000000003,
+      "input": 962550000,
+      "output": 385020000,
+      "tokens": 32085000000,
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 627750000,
       "cached": 29441475000,
-      "costUsd": 27234.306,
+      "costUsd": 17337.618,
       "input": 941625000,
       "output": 376650000,
       "tokens": 31387500000,
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 767250000,
-      "cached": 35984025000,
-      "costUsd": 10540.096875,
-      "input": 1150875000,
-      "output": 460350000,
-      "tokens": 38362500000,
-      "provider": "openai"
+      "cacheCreation": 125550000,
+      "cached": 5888295000,
+      "costUsd": 3772.7775,
+      "input": 188325000,
+      "output": 75330000,
+      "tokens": 6277500000,
+      "provider": "xai"
      }
     ],
-    "costCacheCreation": 3260.8125,
-    "costCached": 16732.571625,
-    "costInput": 5351.568749999999,
-    "costOutput": 12429.449999999999,
-    "costUsd": 37774.40287500001,
+    "costCacheCreation": 5963.625,
+    "costCached": 21394.1385,
+    "costInput": 7533,
+    "costOutput": 14764.68,
+    "costUsd": 49655.44350000001,
     "key": "31d",
     "models": [
      {
+      "cacheCreation": 181350000,
+      "cached": 8505315000,
+      "costUsd": 18932.940000000002,
+      "input": 272025000,
+      "output": 108810000,
+      "tokens": 9067500000,
+      "model": "gpt-6-astra",
+      "provider": "openai"
+     },
+     {
       "cacheCreation": 418500000,
       "cached": 19627650000,
-      "costUsd": 21845.7,
+      "costUsd": 13551.03,
       "input": 627750000,
       "output": 251100000,
       "tokens": 20925000000,
-      "model": "claude-opus-4-8",
+      "model": "claude-opus-5-5",
       "provider": "anthropic"
      },
      {
-      "cacheCreation": 585900000,
-      "cached": 27478710000,
-      "costUsd": 8048.8012499999995,
-      "input": 878850000,
-      "output": 351540000,
-      "tokens": 29295000000,
-      "model": "gpt-5.6-sol",
+      "cacheCreation": 460350000,
+      "cached": 21590415000,
+      "costUsd": 9612.108,
+      "input": 690525000,
+      "output": 276210000,
+      "tokens": 23017500000,
+      "model": "gpt-6-sol",
       "provider": "openai"
+     },
+     {
+      "cacheCreation": 125550000,
+      "cached": 5888295000,
+      "costUsd": 3772.7775,
+      "input": 188325000,
+      "output": 75330000,
+      "tokens": 6277500000,
+      "model": "grok-4.6",
+      "provider": "xai"
      },
      {
       "cacheCreation": 153450000,
       "cached": 7196805000,
-      "costUsd": 4806.054,
+      "costUsd": 3204.036,
       "input": 230175000,
       "output": 92070000,
       "tokens": 7672500000,
-      "model": "claude-sonnet-4-6",
+      "model": "claude-sonnet-5",
       "provider": "anthropic"
-     },
-     {
-      "cacheCreation": 181350000,
-      "cached": 8505315000,
-      "costUsd": 2491.2956249999997,
-      "input": 272025000,
-      "output": 108810000,
-      "tokens": 9067500000,
-      "model": "gpt-5.6-codex",
-      "provider": "openai"
      },
      {
       "cacheCreation": 55800000,

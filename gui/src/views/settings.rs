@@ -34,6 +34,7 @@ fn slot(provider: Provider) -> usize {
     match provider {
         Provider::Openai => 0,
         Provider::Anthropic => 1,
+        Provider::Xai => unreachable!("grok has no settings group in the app yet"),
     }
 }
 

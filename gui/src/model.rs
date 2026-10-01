@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum Provider {
     Openai,
     Anthropic,
+    Xai,
 }
 
 impl Provider {
@@ -14,6 +15,7 @@ impl Provider {
         match self {
             Provider::Openai => "codex",
             Provider::Anthropic => "claude",
+            Provider::Xai => "grok",
         }
     }
 
@@ -21,6 +23,7 @@ impl Provider {
         match self {
             Provider::Openai => "Codex",
             Provider::Anthropic => "Claude Code",
+            Provider::Xai => "Grok",
         }
     }
 }
@@ -273,6 +276,7 @@ pub enum ResetCode {
     NothingToReset,
     NoCredit,
     AlreadyRedeemed,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -286,6 +290,8 @@ pub struct ResetOutcome {
 pub struct ProviderFlags {
     pub openai: bool,
     pub anthropic: bool,
+    #[serde(default)]
+    pub xai: bool,
 }
 
 impl ProviderFlags {
@@ -293,6 +299,7 @@ impl ProviderFlags {
         match provider {
             Provider::Openai => self.openai,
             Provider::Anthropic => self.anthropic,
+            Provider::Xai => self.xai,
         }
     }
 }
@@ -317,6 +324,7 @@ pub struct RoutingStatus {
 pub enum RoutingTarget {
     Openai,
     Anthropic,
+    Xai,
     Pi,
 }
 
@@ -325,6 +333,7 @@ impl From<Provider> for RoutingTarget {
         match provider {
             Provider::Openai => RoutingTarget::Openai,
             Provider::Anthropic => RoutingTarget::Anthropic,
+            Provider::Xai => RoutingTarget::Xai,
         }
     }
 }

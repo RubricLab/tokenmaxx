@@ -143,6 +143,7 @@ fn outcome_message(code: ResetCode, windows: u32) -> String {
         ResetCode::NothingToReset => "Nothing to reset; the credit stays banked".into(),
         ResetCode::NoCredit => "No reset credit is available".into(),
         ResetCode::AlreadyRedeemed => "That credit was already redeemed".into(),
+        ResetCode::Unavailable => "No reset is available right now; nothing was used".into(),
     }
 }
 
