@@ -1,4 +1,5 @@
-- [2026-09-30] pick which accounts auto-rotation uses first
+- [2026-09-30] settings shows live routing state
+- [2026-09-30] [pick which accounts auto-rotation uses first](https://github.com/RubricLab/tokenmaxx/commit/8999da2b9c11f204d5b2d932b64fb221e52646dc)
 - [2026-09-23] price fable 5.1, opus 5.5, sonnet 5, gpt-6 and gpt-5.6 at current rates
 - [2026-08-21] codex keeps its shell and apply_patch tools on the gpt-5.6 models
 - [2026-08-18] meter clients that hang up early
