@@ -8,7 +8,7 @@ import {
 
 const RotationDecisionSchema = z.discriminatedUnion('rotate', [
 	z.object({
-		reason: z.enum(['threshold', 'hardLimit']),
+		reason: z.enum(['threshold', 'hardLimit', 'preferred']),
 		rotate: z.literal(true),
 		sourceAccountId: z.uuid(),
 		sourcePressure: z.number().min(0).max(100),
@@ -50,6 +50,11 @@ function isFresh(snapshot: UsageSnapshot, now: Date, maximumAgeMilliseconds: num
 	const observedAt = Date.parse(snapshot.observedAt)
 	const age = now.getTime() - observedAt
 	return Number.isFinite(observedAt) && age >= -5_000 && age <= maximumAgeMilliseconds
+}
+
+// Accounts without a place in the order come after every ordered one.
+export function orderRank(account: Account | undefined): number {
+	return account?.priority ?? Number.POSITIVE_INFINITY
 }
 
 function eligibleHealth(account: Account): boolean {
@@ -99,15 +104,7 @@ export function selectRotation(input: RotationInput): RotationDecision {
 	if (activePressure === null) {
 		return { reason: 'activeUsageUnknown', rotate: false }
 	}
-	if (!activeSnapshot.hardLimitReached && activePressure < policy.thresholdPercent) {
-		return { reason: 'belowThreshold', rotate: false }
-	}
-	if (!activeSnapshot.hardLimitReached && input.state.switchedAt !== null) {
-		const dwell = input.now.getTime() - Date.parse(input.state.switchedAt)
-		if (dwell < policy.minimumDwellMilliseconds) {
-			return { reason: 'minimumDwell', rotate: false }
-		}
-	}
+	const overThreshold = activeSnapshot.hardLimitReached || activePressure >= policy.thresholdPercent
 
 	const targetCeiling = policy.thresholdPercent - policy.hysteresisPercent
 	const candidates = input.accounts
@@ -135,16 +132,30 @@ export function selectRotation(input: RotationInput): RotationDecision {
 		})
 		.sort(
 			(left, right) =>
-				left.pressure - right.pressure || left.account.id.localeCompare(right.account.id)
+				orderRank(left.account) - orderRank(right.account) ||
+				left.pressure - right.pressure ||
+				left.account.id.localeCompare(right.account.id)
 		)
 
-	const target = candidates[0]
+	// Below the threshold, the only reason to move is an account earlier in the order with room again.
+	const target = overThreshold
+		? candidates[0]
+		: candidates.find(candidate => orderRank(candidate.account) < orderRank(activeAccount))
+	if (!overThreshold && target === undefined) {
+		return { reason: 'belowThreshold', rotate: false }
+	}
+	if (!activeSnapshot.hardLimitReached && input.state.switchedAt !== null) {
+		const dwell = input.now.getTime() - Date.parse(input.state.switchedAt)
+		if (dwell < policy.minimumDwellMilliseconds) {
+			return { reason: 'minimumDwell', rotate: false }
+		}
+	}
 	if (target === undefined) {
 		return { reason: 'noEligibleCandidate', rotate: false }
 	}
 
 	return {
-		reason: activeSnapshot.hardLimitReached ? 'hardLimit' : 'threshold',
+		reason: activeSnapshot.hardLimitReached ? 'hardLimit' : overThreshold ? 'threshold' : 'preferred',
 		rotate: true,
 		sourceAccountId: input.state.activeAccountId,
 		sourcePressure: activePressure,
