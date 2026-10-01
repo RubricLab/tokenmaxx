@@ -4,7 +4,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, ColorName, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::component::{Disableable as _, StyledExt as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -36,7 +36,7 @@ fn window_meter(window: &UsageWindow, now: DateTime<Utc>, cx: &App) -> Div {
         .map(|reset| format!("resets in {reset}"))
         .unwrap_or_default();
     v_flex()
-        .w_32()
+        .w(px(112.))
         .flex_shrink_0()
         .gap_1()
         .child(
@@ -60,6 +60,26 @@ fn window_meter(window: &UsageWindow, now: DateTime<Utc>, cx: &App) -> Div {
                 .color(color),
         )
         .child(muted(reset, cx))
+}
+
+fn meters_width(windows: usize, extra: bool) -> Pixels {
+    let windows = windows.clamp(1, WINDOWS_PER_ROW) as f32;
+    let extra = if extra { 96. + 16. } else { 0. };
+    px(windows * 112. + (windows - 1.) * 16. + extra)
+}
+
+fn has_extra_column(snapshot: &DashboardSnapshot, provider: Provider, cx: &App) -> bool {
+    format::ordered_accounts(snapshot, provider)
+        .iter()
+        .any(|account| extra_usage_cell(snapshot, account, cx).is_some())
+}
+
+/// Width a provider's meters need: its window columns plus the extra-usage column when any account has one.
+fn provider_meters_width(snapshot: &DashboardSnapshot, provider: Provider, cx: &App) -> Pixels {
+    meters_width(
+        format::window_columns(snapshot, provider).len(),
+        has_extra_column(snapshot, provider, cx),
+    )
 }
 
 fn extra_usage_cell(snapshot: &DashboardSnapshot, account: &Account, cx: &App) -> Option<Div> {
@@ -94,6 +114,9 @@ impl AccountsPage {
         &self,
         snapshot: &DashboardSnapshot,
         account: &Account,
+        columns: &[String],
+        extra_column: bool,
+        width: Pixels,
         now: DateTime<Utc>,
         busy: bool,
         window: &mut Window,
@@ -125,7 +148,7 @@ impl AccountsPage {
         }
         if let Some(credits) = credits {
             let tag = if credits.applicable > 0 {
-                Tag::success()
+                Tag::color(ColorName::Green)
             } else {
                 Tag::secondary()
             };
@@ -141,15 +164,15 @@ impl AccountsPage {
         }
         if let Some(badge) = format::health_badge(account.health) {
             let tag = match badge.pressure {
-                Pressure::Bad => Tag::danger(),
-                Pressure::Warn => Tag::warning(),
+                Pressure::Bad => Tag::color(ColorName::Red),
+                Pressure::Warn => Tag::color(ColorName::Amber),
                 _ => Tag::secondary(),
             };
             details.push(tag.small().child(badge.text).into_any_element());
         }
         if just_switched {
             details.push(
-                Tag::info()
+                Tag::color(ColorName::Blue)
                     .small()
                     .child("Just switched")
                     .into_any_element(),
@@ -162,22 +185,36 @@ impl AccountsPage {
                 .and_then(|usage| usage.measured_spend_usd)
                 .unwrap_or_default();
             v_flex()
-                .w_32()
+                .w(width)
+                .flex_shrink_0()
                 .gap_1()
                 .child(muted("Spend · 31 days", cx))
                 .child(div().text_sm().child(format::money_usd(spend)))
                 .into_any_element()
         } else if windows.is_empty() {
-            muted("No limits reported yet", cx).into_any_element()
+            div()
+                .w(width)
+                .flex_shrink_0()
+                .child(muted("No limits reported yet", cx))
+                .into_any_element()
         } else {
             h_flex()
                 .gap_4()
-                .children(
+                .w(width)
+                .flex_shrink_0()
+                .children(columns.iter().take(WINDOWS_PER_ROW).map(|column| {
                     windows
                         .iter()
-                        .take(WINDOWS_PER_ROW)
-                        .map(|usage_window| window_meter(usage_window, now, cx)),
-                )
+                        .find(|usage_window| format::short_window(&usage_window.label) == *column)
+                        .map(|usage_window| window_meter(usage_window, now, cx))
+                        .unwrap_or_else(|| div().w(px(112.)).flex_shrink_0())
+                }))
+                .when(extra_column, |this| {
+                    this.child(
+                        extra_usage_cell(snapshot, account, cx)
+                            .unwrap_or_else(|| div().w_24().flex_shrink_0()),
+                    )
+                })
                 .into_any_element()
         };
 
@@ -307,7 +344,6 @@ impl AccountsPage {
                     .child(h_flex().gap_1().flex_wrap().children(details)),
             )
             .child(meters)
-            .children(extra_usage_cell(snapshot, account, cx))
             .child(
                 h_flex()
                     .gap_1()
@@ -322,6 +358,7 @@ impl AccountsPage {
     fn provider_section(
         &self,
         provider: Provider,
+        width: Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -334,9 +371,9 @@ impl AccountsPage {
         let policy = snapshot.state(provider).map(|state| state.policy.clone());
 
         let status = if !routed {
-            Tag::warning().small().child("Off")
+            Tag::color(ColorName::Amber).small().child("Off")
         } else if let Some(policy) = policy.as_ref().filter(|policy| policy.enabled) {
-            Tag::success()
+            Tag::color(ColorName::Green)
                 .small()
                 .child(format!("Auto-switch at {}%", policy.threshold_percent))
         } else {
@@ -354,6 +391,8 @@ impl AccountsPage {
         });
 
         let accounts = format::ordered_accounts(&snapshot, provider);
+        let columns = format::window_columns(&snapshot, provider);
+        let extra_column = has_extra_column(&snapshot, provider, cx);
         let rows: Vec<AnyElement> = accounts
             .iter()
             .enumerate()
@@ -362,7 +401,17 @@ impl AccountsPage {
                     .when(index > 0, |this| {
                         this.border_t_1().border_color(cx.theme().border)
                     })
-                    .child(self.account_row(&snapshot, account, now, busy, window, cx))
+                    .child(self.account_row(
+                        &snapshot,
+                        account,
+                        &columns,
+                        extra_column,
+                        width,
+                        now,
+                        busy,
+                        window,
+                        cx,
+                    ))
                     .into_any_element()
             })
             .collect();
@@ -453,6 +502,11 @@ impl Render for AccountsPage {
         let busy = store.is_busy();
         let connection = store.connection.clone();
         let refresh_store = self.store.clone();
+        let connecting = store.connection == Connection::Connecting;
+        let width = Provider::ALL
+            .into_iter()
+            .map(|provider| provider_meters_width(&store.analytics.snapshot, provider, cx))
+            .fold(px(0.), Pixels::max);
 
         v_flex()
             .gap_6()
@@ -483,7 +537,13 @@ impl Render for AccountsPage {
                 },
                 |this, message| this.child(muted(format!("Not connected: {message}"), cx)),
             )
-            .child(self.provider_section(Provider::Openai, window, cx))
-            .child(self.provider_section(Provider::Anthropic, window, cx))
+            .map(|this| {
+                if connecting {
+                    this.child(muted("Connecting to tokenmaxx…", cx))
+                } else {
+                    this.child(self.provider_section(Provider::Openai, width, window, cx))
+                        .child(self.provider_section(Provider::Anthropic, width, window, cx))
+                }
+            })
     }
 }

@@ -204,6 +204,23 @@ pub fn account_windows<'a>(
         .unwrap_or_default()
 }
 
+/// The window columns every row of a provider shares, so the same window lines up down the list.
+pub fn window_columns(snapshot: &DashboardSnapshot, provider: Provider) -> Vec<String> {
+    let mut windows: Vec<&UsageWindow> = ordered_accounts(snapshot, provider)
+        .into_iter()
+        .flat_map(|account| account_windows(snapshot, account))
+        .collect();
+    windows.sort_by_key(|window| window_priority(window));
+    let mut columns: Vec<String> = Vec::new();
+    for window in windows {
+        let column = short_window(&window.label);
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    columns
+}
+
 pub fn fullest_window(snapshot: &DashboardSnapshot, account: &Account) -> Option<f64> {
     account_windows(snapshot, account)
         .into_iter()

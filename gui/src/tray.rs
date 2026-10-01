@@ -1,8 +1,10 @@
 use anyhow::Result;
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{
+    Icon as MenuIcon, IconMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem,
+};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::format;
+use crate::format::{self, Pressure};
 use crate::model::{AnalyticsSnapshot, Provider};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +54,7 @@ enum Line {
         command: TrayCommand,
         text: String,
         active: bool,
+        pressure: Pressure,
     },
     Note(String),
     Command(TrayCommand, &'static str),
@@ -97,6 +100,11 @@ fn lines(analytics: &AnalyticsSnapshot) -> Vec<Line> {
                 command: TrayCommand::Switch(provider, account.id.clone()),
                 text,
                 active: active.as_deref() == Some(account.id.as_str()),
+                pressure: if account.health.needs_login() {
+                    Pressure::Bad
+                } else {
+                    format::pressure(format::fullest_window(snapshot, account))
+                },
             });
         }
         lines.push(Line::Separator);
@@ -136,11 +144,12 @@ fn build_menu(lines: &[Line]) -> Result<Menu> {
                 command,
                 text,
                 active,
-            } => menu.append(&CheckMenuItem::with_id(
+                pressure,
+            } => menu.append(&IconMenuItem::with_id(
                 command.id(),
                 text,
                 true,
-                *active,
+                Some(pressure_dot(*pressure, *active)?),
                 None,
             ))?,
             Line::Command(command, text) => {
@@ -150,6 +159,46 @@ fn build_menu(lines: &[Line]) -> Result<Menu> {
         }
     }
     Ok(menu)
+}
+
+const DOT_SIZE: u32 = 36;
+
+/// An account's pressure as a colored dot, filled for the active account and a ring otherwise,
+/// the same ● / ○ the terminal dashboard uses.
+fn dot_pixels(pressure: Pressure, active: bool) -> Vec<u8> {
+    const RADIUS: f32 = 8.5;
+    const RING: f32 = 2.5;
+    let [red, green, blue] = match pressure {
+        Pressure::Good => [52, 199, 89],
+        Pressure::Warn => [255, 159, 10],
+        Pressure::Bad => [255, 59, 48],
+        Pressure::Unknown => [142, 142, 147],
+    };
+    let center = DOT_SIZE as f32 / 2.;
+    let mut pixels = vec![0u8; (DOT_SIZE * DOT_SIZE * 4) as usize];
+    for y in 0..DOT_SIZE {
+        for x in 0..DOT_SIZE {
+            let distance =
+                ((x as f32 + 0.5 - center).powi(2) + (y as f32 + 0.5 - center).powi(2)).sqrt();
+            let outside = (RADIUS + 0.5 - distance).clamp(0., 1.);
+            let coverage = if active {
+                outside
+            } else {
+                outside.min((distance - (RADIUS - RING) + 0.5).clamp(0., 1.))
+            };
+            let index = ((y * DOT_SIZE + x) * 4) as usize;
+            pixels[index..index + 4].copy_from_slice(&[red, green, blue, (coverage * 255.) as u8]);
+        }
+    }
+    pixels
+}
+
+fn pressure_dot(pressure: Pressure, active: bool) -> Result<MenuIcon> {
+    Ok(MenuIcon::from_rgba(
+        dot_pixels(pressure, active),
+        DOT_SIZE,
+        DOT_SIZE,
+    )?)
 }
 
 /// A gauge of three rising bars, drawn as a template image so macOS tints it for the menu bar.
