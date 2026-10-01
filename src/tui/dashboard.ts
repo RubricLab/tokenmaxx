@@ -136,7 +136,7 @@ function windowCellWidth(tier: Tier, window: UsageWindow): number {
 	return 2 + shortWindow(window.label).length + BAR[tier] + 5 + 6
 }
 function accountResetCredits(usage: UsageSnapshot | undefined) {
-	return usage?.provider === 'openai' ? (usage.resetCredits ?? null) : null
+	return usage?.resetCredits ?? null
 }
 
 function resetGlyph(usage: UsageSnapshot | undefined): string {
@@ -1106,6 +1106,8 @@ function resetNote(outcome: ResetOutcome): string {
 			return 'no reset available on this account'
 		case 'already_redeemed':
 			return '↺ already used — nothing consumed'
+		case 'unavailable':
+			return '↺ not available right now — nothing consumed'
 	}
 }
 
@@ -1139,7 +1141,7 @@ function resetConfirmBody(ctx: Ctx, snapshot: DashboardSnapshot, confirm: ResetC
 		),
 		line(
 			Text({
-				content: 'clears its limited rate-limit windows immediately',
+				content: 'clears its rate-limit windows immediately',
 				fg: rgb(ctx.theme.dim)
 			})
 		),

@@ -36,6 +36,7 @@ function usage(
 		measuredSpendUsd: null,
 		observedAt: new Date(NOW.getTime() - (options.ageMs ?? 10_000)).toISOString(),
 		provider: 'anthropic',
+		resetCredits: null,
 		source: 'proxyResponseHeaders',
 		windows: [{ id: 'session', kind: 'hard', label: '5h session', resetAt: null, usedPercent }]
 	}
