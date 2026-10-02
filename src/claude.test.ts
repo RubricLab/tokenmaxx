@@ -313,7 +313,7 @@ describe('one claude login with a personal and a team subscription', () => {
 	})
 
 	test('a credential that now answers for another organization is flagged', async () => {
-		expect(probe(teamAccount, 'personal-org')).rejects.toMatchObject({
+		await expect(probe(teamAccount, 'personal-org')).rejects.toMatchObject({
 			code: 'IDENTITY_CHANGED'
 		})
 	})
