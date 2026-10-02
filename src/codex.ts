@@ -7,6 +7,7 @@ import {
 	type ProviderProbeResult,
 	type ResetCreditsView,
 	type ResetOutcome,
+	relabel,
 	type UsageSnapshot,
 	type UsageWindow
 } from './domain.ts'
@@ -666,8 +667,7 @@ export async function probeCodex(input: {
 			externalAccountId: identity.accountId,
 			externalUserId: identity.userId,
 			health: 'ready',
-			identity: email.success ? email.data : account.identity,
-			label: email.success ? email.data : account.label,
+			...relabel(account, email.success ? email.data : account.identity),
 			plan: identity.plan ?? account.plan ?? null,
 			updatedAt: input.now().toISOString()
 		},

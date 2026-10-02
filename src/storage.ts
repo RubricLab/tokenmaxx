@@ -13,6 +13,7 @@ import {
 	ProviderStateSchema,
 	type SwitchRecord,
 	SwitchRecordSchema,
+	sameExternalIdentity,
 	type TokenEvent,
 	TokenEventSchema,
 	type UsageSnapshot,
@@ -254,6 +255,7 @@ function migrate(database: Database): void {
 	try {
 		database.exec(`
       DROP INDEX IF EXISTS accounts_provider_external;
+      DROP INDEX IF EXISTS accounts_anthropic_external;
       CREATE UNIQUE INDEX IF NOT EXISTS accounts_provider_label
         ON accounts(provider, label);
       CREATE UNIQUE INDEX IF NOT EXISTS accounts_openai_external_user
@@ -261,9 +263,11 @@ function migrate(database: Database): void {
         WHERE provider = 'openai'
           AND external_account_id IS NOT NULL
           AND external_user_id IS NOT NULL;
-      CREATE UNIQUE INDEX IF NOT EXISTS accounts_anthropic_external
-        ON accounts(external_account_id)
-        WHERE provider = 'anthropic' AND external_account_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS accounts_anthropic_external_user
+        ON accounts(external_account_id, external_user_id)
+        WHERE provider = 'anthropic'
+          AND external_account_id IS NOT NULL
+          AND external_user_id IS NOT NULL;
       CREATE UNIQUE INDEX IF NOT EXISTS accounts_xai_external
         ON accounts(external_account_id)
         WHERE provider = 'xai' AND external_account_id IS NOT NULL;
@@ -334,16 +338,7 @@ export function createStateStore(databasePath: string): StateStore {
 		const duplicate = listAccounts(parsed.provider).find(
 			candidate =>
 				candidate.id !== parsed.id &&
-				(candidate.label === parsed.label ||
-					(parsed.provider === 'openai' &&
-						candidate.provider === 'openai' &&
-						parsed.externalAccountId !== null &&
-						parsed.externalUserId !== null &&
-						candidate.externalAccountId === parsed.externalAccountId &&
-						candidate.externalUserId === parsed.externalUserId) ||
-					(parsed.provider !== 'openai' &&
-						parsed.externalAccountId !== null &&
-						candidate.externalAccountId === parsed.externalAccountId))
+				(candidate.label === parsed.label || sameExternalIdentity(candidate, parsed))
 		)
 		if (duplicate !== undefined) {
 			throw new ApplicationError(

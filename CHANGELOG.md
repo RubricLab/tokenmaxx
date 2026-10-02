@@ -1,3 +1,4 @@
+- [2026-10-02] a personal and a team claude plan on one email are two accounts, fixes #26
 - [2026-10-01] mac app polish
 - [2026-09-30] proxy refuses web pages
 - [2026-09-30] a native macOS app for tokenmaxx, with a menu bar item

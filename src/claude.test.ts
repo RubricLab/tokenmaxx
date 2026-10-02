@@ -67,7 +67,8 @@ describe('registerClaudeAccount', () => {
 			vault
 		})
 		expect(account.identity).toBe('lennard@example.com')
-		expect(account.externalAccountId).toBe('account-uuid')
+		expect(account.externalAccountId).toBe('org-uuid')
+		expect(account.externalUserId).toBe('account-uuid')
 		expect(vault.items.get(account.secretReference ?? '')).toBe(JSON.stringify(stored))
 	})
 })
@@ -255,5 +256,65 @@ describe('claude banked resets on the wire', () => {
 			url: 'https://api.anthropic.com/api/organizations/org-uuid/reset_rate_limits'
 		})
 		expect(outcome).toEqual({ code: 'reset', windowsReset: 3 })
+	})
+})
+
+describe('one claude login with a personal and a team subscription', () => {
+	// a fresh access token per probe, so the verified-identity cache never answers for another test
+	const fresh = { ...stored, expiresAt: Date.now() + 3_600_000 }
+	const usage = { five_hour: { utilization: 10 }, seven_day: { utilization: 20 } }
+	const teamAccount: Extract<Account, { provider: 'anthropic' }> = {
+		auth: 'oauth',
+		createdAt: '2026-09-01T00:00:00.000Z',
+		enabled: true,
+		externalAccountId: 'team-org',
+		externalUserId: 'user-uuid',
+		health: 'ready',
+		id: '00000000-0000-4000-8000-000000000401',
+		identity: 'dev@example.com',
+		label: 'dev@example.com (team)',
+		onThreshold: 'switch',
+		plan: 'team',
+		profilePath: null,
+		provider: 'anthropic',
+		secretReference: reference,
+		updatedAt: '2026-09-01T00:00:00.000Z'
+	}
+	const probe = (account: Extract<Account, { provider: 'anthropic' }>, organization: string) =>
+		probeClaude({
+			account,
+			fetchImplementation: async request =>
+				Response.json(
+					String(request).includes('/profile')
+						? {
+								account: { email: 'dev@example.com', uuid: 'user-uuid' },
+								organization: { uuid: organization }
+							}
+						: usage
+				),
+			now: () => new Date(),
+			vault: memoryVault({
+				[reference]: JSON.stringify({ ...fresh, accessToken: crypto.randomUUID() })
+			})
+		})
+
+	test('a row saved before organizations were recorded gets its organization on the next probe', async () => {
+		const legacy = { ...teamAccount, externalAccountId: 'user-uuid', externalUserId: null }
+		const result = await probe({ ...legacy, label: 'dev@example.com' }, 'personal-org')
+		expect(result.account.externalAccountId).toBe('personal-org')
+		expect(result.account.externalUserId).toBe('user-uuid')
+		expect(result.account.label).toBe('dev@example.com')
+	})
+
+	test('a probe keeps the qualified label of the second subscription', async () => {
+		const result = await probe(teamAccount, 'team-org')
+		expect(result.account.label).toBe('dev@example.com (team)')
+		expect(result.account.identity).toBe('dev@example.com')
+	})
+
+	test('a credential that now answers for another organization is flagged', async () => {
+		await expect(probe(teamAccount, 'personal-org')).rejects.toMatchObject({
+			code: 'IDENTITY_CHANGED'
+		})
 	})
 })

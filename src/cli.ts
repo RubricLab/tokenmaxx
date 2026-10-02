@@ -16,7 +16,15 @@ import {
 	uninstallPiConfig,
 	uninstallProviderConfig
 } from './config-install.ts'
-import { type Account, PROVIDERS, type ProviderId, ProviderIdSchema } from './domain.ts'
+import {
+	type Account,
+	distinctLabel,
+	PROVIDERS,
+	type ProviderId,
+	ProviderIdSchema,
+	relabel,
+	sameExternalIdentity
+} from './domain.ts'
 import { ApplicationError, errorMessage } from './errors.ts'
 import { registerGrokAccount } from './grok.ts'
 import {
@@ -641,22 +649,19 @@ async function promptApiKey(
 
 async function signInOauth(context: ApplicationContext, provider: ProviderId): Promise<boolean> {
 	const authenticated = await registerIsolatedAccount(provider)
-	const existing = context.store
-		.listAccounts(provider)
-		.find(
-			candidate =>
-				candidate.externalAccountId !== null &&
-				candidate.externalAccountId === authenticated.externalAccountId
-		)
-	const account =
+	const stored = context.store.listAccounts(provider)
+	const existing = stored.find(candidate => sameExternalIdentity(candidate, authenticated))
+	const signedIn =
 		existing === undefined
 			? authenticated
 			: {
 					...authenticated,
+					...relabel(existing, authenticated.identity),
 					createdAt: existing.createdAt,
 					enabled: existing.enabled,
 					id: existing.id
 				}
+	const account = { ...signedIn, label: distinctLabel(signedIn, stored) }
 	try {
 		await requestAccountSave(context.paths.managerSocket, account, {
 			profilePath: existing?.profilePath ?? null,
