@@ -11,6 +11,7 @@ import {
 	type ResetCreditCounts,
 	type ResetCreditsView,
 	type ResetOutcome,
+	relabel,
 	type UsageSnapshot,
 	type UsageWindow
 } from './domain.ts'
@@ -315,10 +316,16 @@ export async function refreshClaudeCredential(input: {
 	})
 }
 
+interface ClaudeProfile {
+	email: string | null
+	organizationId: string | null
+	userId: string
+}
+
 async function fetchClaudeProfile(
 	accessToken: string,
 	fetchImplementation: FetchImplementation = fetch
-): Promise<{ accountId: string; email: string | null; organizationId: string | null }> {
+): Promise<ClaudeProfile> {
 	const response = await fetchImplementation(profileEndpoint, {
 		headers: {
 			Authorization: `Bearer ${accessToken}`,
@@ -336,19 +343,33 @@ async function fetchClaudeProfile(
 		)
 	}
 	const profile = ProfileSchema.parse(await response.json())
-	const accountId = profile.account?.uuid ?? profile.uuid
-	if (accountId === undefined) {
+	const userId = profile.account?.uuid ?? profile.uuid
+	if (userId === undefined) {
 		throw new ApplicationError('ACCOUNT_ID_MISSING', 'Claude profile response has no account id')
 	}
 	return {
-		accountId,
 		email:
 			profile.account?.email_address ??
 			profile.account?.email ??
 			profile.email_address ??
 			profile.email ??
 			null,
-		organizationId: profile.organization?.uuid ?? null
+		organizationId: profile.organization?.uuid ?? null,
+		userId
+	}
+}
+
+// One Claude login can hold several subscriptions (a personal plan and a team plan), each its
+// own organization, so an account is the (organization, user) pair, stored the way codex
+// stores (workspace, user). Rows saved before this hold only the user id in externalAccountId.
+function claudeExternalIds(
+	profile: ClaudeProfile,
+	account?: Extract<Account, { provider: 'anthropic' }>
+): { externalAccountId: string | null; externalUserId: string } {
+	const storedOrganizationId = account?.externalUserId == null ? null : account.externalAccountId
+	return {
+		externalAccountId: profile.organizationId ?? storedOrganizationId,
+		externalUserId: profile.userId
 	}
 }
 
@@ -386,8 +407,7 @@ export async function registerClaudeAccount(input: {
 			auth: 'oauth',
 			createdAt: now,
 			enabled: true,
-			externalAccountId: profile.accountId,
-			externalUserId: null,
+			...claudeExternalIds(profile),
 			health: 'ready',
 			id,
 			identity: email.data,
@@ -817,20 +837,29 @@ function refreshTokenHealth(
 
 function assertIdentity(
 	account: Extract<Account, { provider: 'anthropic' }>,
-	accountId: string
+	profile: ClaudeProfile
 ): void {
-	if (account.externalAccountId !== null && account.externalAccountId !== accountId) {
+	const userId = account.externalUserId ?? account.externalAccountId
+	if (userId !== null && userId !== profile.userId) {
 		throw new ApplicationError(
 			'IDENTITY_CHANGED',
 			'Stored Claude credential belongs to a different account'
 		)
 	}
+	if (
+		account.externalUserId !== null &&
+		account.externalAccountId !== null &&
+		profile.organizationId !== null &&
+		account.externalAccountId !== profile.organizationId
+	) {
+		throw new ApplicationError(
+			'IDENTITY_CHANGED',
+			'Stored Claude credential belongs to a different organization'
+		)
+	}
 }
 
-const verifiedIdentities = new Map<
-	string,
-	{ accessToken: string; accountId: string; email: string | null }
->()
+const verifiedIdentities = new Map<string, { accessToken: string } & ClaudeProfile>()
 
 export async function probeClaude(input: {
 	account: Extract<Account, { provider: 'anthropic' }>
@@ -877,10 +906,10 @@ export async function probeClaude(input: {
 			'Claude credential does not include the user:profile scope required for usage'
 		)
 	}
-	const verifyIdentity = async (): Promise<{ accountId: string; email: string | null }> => {
+	const verifyIdentity = async (): Promise<ClaudeProfile> => {
 		const cached = verifiedIdentities.get(reference)
 		if (cached !== undefined && cached.accessToken === credential.accessToken) {
-			return { accountId: cached.accountId, email: cached.email }
+			return { email: cached.email, organizationId: cached.organizationId, userId: cached.userId }
 		}
 		const fetched = await fetchClaudeProfile(credential.accessToken, fetchImplementation)
 		verifiedIdentities.set(reference, { accessToken: credential.accessToken, ...fetched })
@@ -893,7 +922,7 @@ export async function probeClaude(input: {
 		credential = await refresh(credential.accessToken)
 		return verifyIdentity()
 	})
-	assertIdentity(account, profile.accountId)
+	assertIdentity(account, profile)
 	const usage = await fetchClaudeUsage({
 		accessToken: credential.accessToken,
 		accountId: account.id,
@@ -910,14 +939,14 @@ export async function probeClaude(input: {
 			fetchImplementation
 		})
 	})
-	assertIdentity(account, profile.accountId)
+	assertIdentity(account, profile)
 	const email = AccountEmailSchema.safeParse(profile.email)
 	return {
 		account: {
 			...account,
+			...claudeExternalIds(profile, account),
+			...relabel(account, email.success ? email.data : account.identity),
 			health: refreshTokenHealth(credential.refreshTokenExpiresAt, input.now()),
-			identity: email.success ? email.data : account.identity,
-			label: email.success ? email.data : account.label,
 			plan: claudePlanTier(credential) ?? account.plan ?? null,
 			updatedAt: input.now().toISOString()
 		},

@@ -54,7 +54,7 @@ export const AccountSchema = z
 			secretReference: z.string().trim().min(1)
 		}).strict(),
 		AccountFieldsSchema.extend({
-			externalUserId: z.null().default(null),
+			externalUserId: z.string().trim().min(1).nullable().default(null),
 			profilePath: z.string().trim().min(1).nullable(),
 			provider: z.literal('anthropic'),
 			secretReference: z.string().trim().min(1).nullable()
@@ -66,8 +66,8 @@ export const AccountSchema = z
 			secretReference: z.string().trim().min(1)
 		}).strict()
 	])
-	.refine(account => account.label === account.identity, {
-		message: 'Account label must equal its identity',
+	.refine(account => isLabelFor(account.identity, account.label), {
+		message: 'Account label must equal its identity, optionally with a qualifier',
 		path: ['label']
 	})
 	.refine(
@@ -78,6 +78,54 @@ export const AccountSchema = z
 		}
 	)
 export type Account = z.infer<typeof AccountSchema>
+
+function qualifiedLabel(identity: string, qualifier: string): string {
+	return `${identity} (${qualifier})`
+}
+
+function isLabelFor(identity: string, label: string): boolean {
+	return label === identity || (label.startsWith(`${identity} (`) && label.endsWith(')'))
+}
+
+// Rows saved before user ids were recorded know a single id: the ChatGPT workspace for
+// openai, the Claude user for anthropic. Those rows match on that id alone.
+function singleExternalId(account: Account): string | null {
+	return account.provider === 'anthropic'
+		? (account.externalUserId ?? account.externalAccountId)
+		: account.externalAccountId
+}
+
+export function sameExternalIdentity(left: Account, right: Account): boolean {
+	if (left.provider !== right.provider) {
+		return false
+	}
+	if (left.externalUserId !== null && right.externalUserId !== null) {
+		return (
+			left.externalAccountId === right.externalAccountId &&
+			left.externalUserId === right.externalUserId
+		)
+	}
+	const id = singleExternalId(left)
+	return id !== null && id === singleExternalId(right)
+}
+
+export function distinctLabel(account: Account, stored: readonly Account[]): string {
+	const taken = new Set(
+		stored
+			.filter(other => other.provider === account.provider && other.id !== account.id)
+			.map(other => other.label)
+	)
+	const qualifiers = [
+		account.plan?.replace(/^default_(claude_)?/, ''),
+		account.externalAccountId?.slice(0, 8),
+		account.id.slice(0, 8)
+	].flatMap(qualifier => (qualifier ? [qualifiedLabel(account.identity, qualifier)] : []))
+	return [account.label, ...qualifiers].find(label => !taken.has(label)) ?? account.label
+}
+
+export function relabel(account: Account, identity: string): { identity: string; label: string } {
+	return { identity, label: identity === account.identity ? account.label : identity }
+}
 
 const UsageWindowSchema = z
 	.object({
