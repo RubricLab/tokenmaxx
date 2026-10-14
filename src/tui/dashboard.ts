@@ -1,4 +1,12 @@
-import { Box, createCliRenderer, parseColor, type RGBA, Text } from '@opentui/core'
+import {
+	Box,
+	type CliRenderer,
+	createCliRenderer,
+	parseColor,
+	type RGBA,
+	Text,
+	TextRenderable
+} from '@opentui/core'
 import {
 	type Account,
 	type AnalyticsSnapshot,
@@ -70,14 +78,14 @@ function rgb(hex: string): RGBA {
 }
 
 const providerOrder = ProviderIdSchema.options
-const grokInstalled = Bun.which(PROVIDERS.xai.cli) !== null
 
-function shownProviders(snapshot: DashboardSnapshot): ProviderId[] {
+function shownProviders(
+	snapshot: DashboardSnapshot,
+	clis: Record<ProviderId, boolean>
+): ProviderId[] {
 	return providerOrder.filter(
 		provider =>
-			provider !== 'xai' ||
-			grokInstalled ||
-			snapshot.accounts.some(account => account.provider === 'xai')
+			provider !== 'xai' || clis.xai || snapshot.accounts.some(account => account.provider === 'xai')
 	)
 }
 const providerTitle = (provider: ProviderId) =>
@@ -99,8 +107,8 @@ function tierFor(columns: number): Tier {
 interface Ctx {
 	theme: Theme
 	now: number
-	columns: number
 	rows: number
+	width: number
 	tier: Tier
 	routing: Record<ProviderId, boolean>
 	cliPresent: Record<ProviderId, boolean>
@@ -111,34 +119,47 @@ interface Ctx {
 	pi: RoutingStatus['pi']
 }
 
-function labelWidth(ctx: Ctx): number {
-	return ctx.tier === 'compact' ? 15 : ctx.tier === 'regular' ? 22 : 26
-}
-
-function column(
-	ctx: Ctx,
-	children: (ReturnType<typeof Box> | ReturnType<typeof Text>)[],
-	max: number
-) {
-	const width = Math.max(1, Math.min(max, ctx.columns - 2))
-	return Box(
-		{ flexDirection: 'row', width: '100%' },
-		Box({ flexGrow: 1, flexShrink: 1 }),
-		Box({ flexDirection: 'column', flexShrink: 0, gap: 1, width }, ...children),
-		Box({ flexGrow: 1, flexShrink: 1 })
-	)
-}
+type Node = ReturnType<typeof Box> | ReturnType<typeof Text>
 
 const ADD_ROW = '__add__'
 
 const CONTENT_MAX = 126
 
-const BAR: Record<Tier, number> = { compact: 9, regular: 11, wide: 14 }
-function windowsShown(ctx: Ctx): number {
-	return ctx.tier === 'wide' ? 3 : 2
+const VIEWPORT_ID = 'viewport'
+const CONTENT_ID = 'content'
+const SELECTED_ID = 'selected'
+const SCROLL_HINT_ID = 'scroll-hint'
+const SCROLL_HINT_WIDTH = 8
+
+interface AccountLayout {
+	labels: number
+	bar: number
+	windows: number
+	tags: boolean
+	extra: boolean
 }
-function windowCellWidth(tier: Tier, window: UsageWindow): number {
-	return 2 + shortWindow(window.label).length + BAR[tier] + 5 + 6
+
+type LayoutCandidate = Omit<AccountLayout, 'bar'> & { minBar: number }
+
+const NARROWEST_LAYOUT: LayoutCandidate = {
+	extra: false,
+	labels: 13,
+	minBar: 3,
+	tags: false,
+	windows: 1
+}
+const ACCOUNT_LAYOUTS: readonly LayoutCandidate[] = [
+	{ extra: true, labels: 26, minBar: 10, tags: true, windows: 3 },
+	{ extra: true, labels: 22, minBar: 11, tags: true, windows: 2 },
+	{ extra: true, labels: 15, minBar: 9, tags: false, windows: 2 },
+	{ extra: true, labels: 15, minBar: 5, tags: false, windows: 2 },
+	{ extra: true, labels: 13, minBar: 5, tags: false, windows: 1 },
+	NARROWEST_LAYOUT
+]
+const BAR_MAX = 20
+
+function windowCellWidth(window: UsageWindow): number {
+	return 2 + shortWindow(window.label).length + 5 + 6
 }
 function accountResetCredits(usage: UsageSnapshot | undefined) {
 	return usage?.resetCredits ?? null
@@ -147,6 +168,12 @@ function accountResetCredits(usage: UsageSnapshot | undefined) {
 function resetGlyph(usage: UsageSnapshot | undefined): string {
 	const credits = accountResetCredits(usage)
 	return credits === null || credits.available === 0 ? '' : ` ↺${credits.available}`
+}
+
+function panelTagColumn(snapshot: DashboardSnapshot, provider: ProviderId): number {
+	return snapshot.accounts
+		.filter(account => account.provider === provider)
+		.reduce((widest, account) => Math.max(widest, (planTag(account.plan)?.length ?? -1) + 1), 0)
 }
 
 function panelResetColumn(snapshot: DashboardSnapshot, provider: ProviderId): number {
@@ -160,7 +187,7 @@ function panelResetColumn(snapshot: DashboardSnapshot, provider: ProviderId): nu
 }
 
 function spendCell(
-	tier: Tier,
+	bar: number,
 	account: Account,
 	usage: UsageSnapshot | undefined
 ): { label: string; bar: string; value: string; pad: string } | null {
@@ -169,7 +196,7 @@ function spendCell(
 	}
 	const money = moneyUsd(usage?.measuredSpendUsd ?? 0)
 	return {
-		bar: '┄'.repeat(BAR[tier]),
+		bar: '┄'.repeat(bar),
 		label: '31d ',
 		pad: ''.padEnd(6),
 		value: ` ${money.padStart(4)}`
@@ -203,34 +230,46 @@ function panelBadgeColumn(ctx: Ctx, snapshot: DashboardSnapshot, provider: Provi
 		: 1
 }
 
-function accountsWidth(ctx: Ctx, snapshot: DashboardSnapshot): number {
-	const labels = labelWidth(ctx)
-	let widest = 46 // never narrower than a provider title with its routing tag
-	for (const account of snapshot.accounts) {
-		const state = snapshot.providers.find(s => s.provider === account.provider)
-		const hidden = state?.policy.hiddenWindowIds ?? []
-		const usage = snapshot.usage.find(u => u.accountId === account.id)
-		const visible = visibleUsageWindows(usage?.windows ?? [], hidden)
-		const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
-		const base =
-			3 +
-			(labels - 2) +
-			(tag === null ? 0 : tag.length + 1) +
-			panelResetColumn(snapshot, account.provider) +
-			panelBadgeColumn(ctx, snapshot, account.provider) +
-			1
-		const spend = spendCell(ctx.tier, account, usage)
-		const extra = extraCell(account, usage)
-		const body =
-			(spend === null
-				? visible
-						.slice(0, windowsShown(ctx))
-						.reduce((sum, window) => sum + windowCellWidth(ctx.tier, window), 0)
-				: spend.label.length + spend.bar.length + spend.value.length + spend.pad.length) +
-			(extra === null ? 0 : extra.label.length + extra.value.length)
-		widest = Math.max(widest, base + body)
+function accountsLayout(ctx: Ctx, snapshot: DashboardSnapshot): AccountLayout {
+	const inner = ctx.width - 2
+	const barRoom = (candidate: LayoutCandidate): number => {
+		let bar = BAR_MAX
+		for (const account of snapshot.accounts) {
+			const state = snapshot.providers.find(s => s.provider === account.provider)
+			const usage = snapshot.usage.find(u => u.accountId === account.id)
+			const visible = visibleUsageWindows(usage?.windows ?? [], state?.policy.hiddenWindowIds ?? [])
+			const spend = spendCell(0, account, usage)
+			const extra = candidate.extra ? extraCell(account, usage) : null
+			const shown = spend === null ? visible.slice(0, candidate.windows) : []
+			const bars = spend === null ? shown.length : 1
+			const fixed =
+				3 +
+				(candidate.labels - 2) +
+				(candidate.tags ? panelTagColumn(snapshot, account.provider) : 0) +
+				panelResetColumn(snapshot, account.provider) +
+				panelBadgeColumn(ctx, snapshot, account.provider) +
+				(spend === null
+					? visible.length === 0
+						? 2
+						: shown.reduce((sum, window) => sum + windowCellWidth(window), 0)
+					: spend.label.length + spend.value.length + spend.pad.length) +
+				(extra === null ? 0 : extra.label.length + extra.value.length)
+			if (bars > 0) {
+				bar = Math.min(bar, Math.floor((inner - fixed) / bars))
+			} else if (fixed > inner) {
+				return -1
+			}
+		}
+		return bar
 	}
-	return Math.min(CONTENT_MAX, ctx.columns - 2, widest + 2)
+	for (const { minBar, ...layout } of ACCOUNT_LAYOUTS) {
+		const bar = barRoom({ minBar, ...layout })
+		if (bar >= minBar) {
+			return { ...layout, bar }
+		}
+	}
+	const { minBar, ...narrowest } = NARROWEST_LAYOUT
+	return { ...narrowest, bar: minBar }
 }
 
 function recentSwitch(ctx: Ctx, state: ProviderState | undefined): boolean {
@@ -250,9 +289,9 @@ function hardWindows(windows: readonly UsageWindow[]): UsageWindow[] {
 	return windows.filter(window => window.kind === 'hard')
 }
 
-function orderedRows(snapshot: DashboardSnapshot): Row[] {
+function orderedRows(snapshot: DashboardSnapshot, clis: Record<ProviderId, boolean>): Row[] {
 	const rows: Row[] = []
-	for (const provider of shownProviders(snapshot)) {
+	for (const provider of shownProviders(snapshot, clis)) {
 		const state = snapshot.providers.find(s => s.provider === provider)
 		const hidden = state?.policy.hiddenWindowIds ?? []
 		const pressure = (accountId: string): number => {
@@ -299,6 +338,7 @@ function addAccountLine(ctx: Ctx, provider: ProviderId, isSelected: boolean, sol
 		{
 			backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
 			flexDirection: 'row',
+			id: isSelected ? SELECTED_ID : undefined,
 			width: '100%'
 		},
 		Text({ content: ` ${isSelected ? '▸' : '＋'} `, fg: rgb(color) }),
@@ -316,9 +356,11 @@ function addAccountLine(ctx: Ctx, provider: ProviderId, isSelected: boolean, sol
 
 function accountLine(
 	ctx: Ctx,
+	layout: AccountLayout,
 	account: Account,
 	usage: UsageSnapshot | undefined,
 	hiddenIds: readonly string[],
+	tagColumn: number,
 	resetColumn: number,
 	badgeColumn: number,
 	isActive: boolean,
@@ -326,11 +368,10 @@ function accountLine(
 	justSwitchedTo: boolean
 ) {
 	const badge = healthBadge(ctx.theme, account)
-	const labels = labelWidth(ctx)
-	const tag = ctx.tier === 'compact' ? null : planTag(account.plan)
+	const tag = planTag(account.plan)
 	const marker = justSwitchedTo && isActive ? '⟳' : isActive ? '●' : isSelected ? '▸' : '○'
 	const markerColor = isActive ? ctx.theme.good : isSelected ? ctx.theme.accent : ctx.theme.faint
-	const labelText = pad(account.label, labels - 2)
+	const labelText = pad(account.label, layout.labels - 2)
 	const credits = accountResetCredits(usage)
 	const children = [
 		Text({ content: ` ${marker} `, fg: rgb(markerColor) }),
@@ -339,7 +380,14 @@ function accountLine(
 			content: labelText,
 			fg: rgb(isActive || isSelected ? ctx.theme.fg : ctx.theme.dim)
 		}),
-		Text({ content: tag === null ? '' : ` ${tag}`, fg: rgb(ctx.theme.faint) }),
+		...(tagColumn === 0
+			? []
+			: [
+					Text({
+						content: (tag === null ? '' : ` ${tag}`).padEnd(tagColumn),
+						fg: rgb(ctx.theme.faint)
+					})
+				]),
 		...(resetColumn === 0
 			? []
 			: [
@@ -354,7 +402,7 @@ function accountLine(
 		})
 	]
 	const visible = visibleUsageWindows(usage?.windows ?? [], hiddenIds)
-	const spend = spendCell(ctx.tier, account, usage)
+	const spend = spendCell(layout.bar, account, usage)
 	if (spend !== null) {
 		children.push(
 			Text({ content: spend.label, fg: rgb(ctx.theme.dim) }),
@@ -365,11 +413,11 @@ function accountLine(
 	} else if (visible.length === 0) {
 		children.push(Text({ content: ' …', fg: rgb(ctx.theme.dim) }))
 	} else {
-		for (const window of visible.slice(0, windowsShown(ctx))) {
-			children.push(...windowCell(ctx, window, BAR[ctx.tier], true))
+		for (const window of visible.slice(0, layout.windows)) {
+			children.push(...windowCell(ctx, window, layout.bar, true))
 		}
 	}
-	const extra = extraCell(account, usage)
+	const extra = layout.extra ? extraCell(account, usage) : null
 	if (extra !== null) {
 		children.push(
 			Text({
@@ -386,6 +434,7 @@ function accountLine(
 		{
 			backgroundColor: isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
 			flexDirection: 'row',
+			id: isSelected ? SELECTED_ID : undefined,
 			width: '100%'
 		},
 		...children
@@ -394,6 +443,7 @@ function accountLine(
 
 function providerPanel(
 	ctx: Ctx,
+	layout: AccountLayout,
 	snapshot: DashboardSnapshot,
 	provider: ProviderId,
 	rows: Row[],
@@ -406,6 +456,7 @@ function providerPanel(
 		.map((row, index) => ({ index, row }))
 		.filter(entry => entry.row.provider === provider)
 	const accountCount = providerRows.filter(entry => entry.row.accountId !== ADD_ROW).length
+	const tagColumn = layout.tags ? panelTagColumn(snapshot, provider) : 0
 	const resetColumn = panelResetColumn(snapshot, provider)
 	const badgeColumn = panelBadgeColumn(ctx, snapshot, provider)
 	const lines = providerRows.map(entry => {
@@ -420,9 +471,11 @@ function providerPanel(
 		const usage = snapshot.usage.find(u => u.accountId === entry.row.accountId)
 		return accountLine(
 			ctx,
+			layout,
 			account,
 			usage,
 			hiddenIds,
+			tagColumn,
 			resetColumn,
 			badgeColumn,
 			state?.activeAccountId === entry.row.accountId,
@@ -502,7 +555,7 @@ function pill(ctx: Ctx, label: string, active: boolean) {
 
 function tabBar(ctx: Ctx, tab: Tab) {
 	return Box(
-		{ flexDirection: 'row', gap: 1 },
+		{ flexDirection: 'row', flexShrink: 0, gap: 1 },
 		pill(ctx, 'Accounts', tab === 'accounts'),
 		pill(ctx, 'Analytics', tab === 'analytics'),
 		pill(ctx, 'Settings', tab === 'settings')
@@ -524,7 +577,11 @@ function sessionResets(ctx: Ctx, snapshot: DashboardSnapshot): string | null {
 		const label = account.label.length <= 22 ? account.label : `${account.label.slice(0, 21)}…`
 		return [`${providerCli(provider)} · ${label} · ↻ ${reset}`]
 	})
-	return parts.length === 0 ? null : parts.join('    ')
+	const line = parts.reduce((kept, part) => {
+		const next = kept === '' ? part : `${kept}    ${part}`
+		return next.length <= ctx.width ? next : kept
+	}, '')
+	return line === '' ? null : line
 }
 
 function analyticsBar(ctx: Ctx, timeframe: Timeframe, view: AnalyticsView) {
@@ -567,8 +624,13 @@ function centered(...children: ReturnType<typeof Text>[]) {
 	return Box({ flexDirection: 'row', justifyContent: 'center', width: '100%' }, ...children)
 }
 
-function throughputChart(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width: number) {
-	const height = Math.max(4, Math.min(10, ctx.rows - 18))
+function throughputChart(
+	ctx: Ctx,
+	tokens: TokenTimeframe,
+	timeframe: Timeframe,
+	width: number,
+	height: number
+) {
 	const body: ReturnType<typeof Box>[] = []
 	const axisTop = `${compactNumber(tokens.peakPerHour)}/h`
 	const gutter = Math.max(6, axisTop.length)
@@ -611,7 +673,7 @@ function metricRow(
 	)
 }
 
-function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
+function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number, room: number) {
 	const body: ReturnType<typeof Box>[] = []
 	const nameWidth = ctx.tier === 'compact' ? 16 : 20
 	const num = (value: number) => compactNumber(value)
@@ -671,7 +733,7 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 			nameWidth + 9
 		)
 	)
-	const maxRows = Math.max(3, ctx.rows - 18)
+	const maxRows = Math.max(1, room - 3 - tokens.byProvider.length - (ctx.tier === 'wide' ? 1 : 0))
 	const start = Math.max(0, Math.min(scroll, Math.max(0, tokens.models.length - maxRows)))
 	const shown = tokens.models.slice(start, start + maxRows)
 	for (const model of shown) {
@@ -696,8 +758,16 @@ function metricsView(ctx: Ctx, tokens: TokenTimeframe, scroll: number) {
 	return body
 }
 
-function chartView(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width: number) {
-	const body: ReturnType<typeof Box>[] = [...throughputChart(ctx, tokens, timeframe, width)]
+function chartView(
+	ctx: Ctx,
+	tokens: TokenTimeframe,
+	timeframe: Timeframe,
+	width: number,
+	room: number
+) {
+	const hint = room >= 11
+	const height = Math.max(2, Math.min(10, room - (hint ? 1 : 0)))
+	const body: ReturnType<typeof Box>[] = [...throughputChart(ctx, tokens, timeframe, width, height)]
 	body.push(blankRow(ctx))
 	const headline = [
 		...stat(ctx, 'Σ', `${compactNumber(tokens.totalTokens)} tokens`),
@@ -714,7 +784,7 @@ function chartView(ctx: Ctx, tokens: TokenTimeframe, timeframe: Timeframe, width
 		)
 	}
 	body.push(centered(...headline))
-	if (ctx.rows >= 28) {
+	if (hint) {
 		body.push(
 			centered(Text({ content: 'press m for the full pricing breakdown', fg: rgb(ctx.theme.faint) }))
 		)
@@ -726,14 +796,17 @@ function analyticsBody(
 	ctx: Ctx,
 	analytics: AnalyticsSnapshot,
 	timeframe: Timeframe,
-	state: ViewState
+	state: ViewState,
+	bodyRows: number
 ) {
-	const width = Math.max(24, Math.min(150, ctx.columns - 10))
+	const resets = sessionResets(ctx, analytics.snapshot)
+	const room = bodyRows - 8 - (resets === null ? 0 : 2)
+	const width = Math.max(24, ctx.width - 2)
 	const tokens = analytics.tokens?.timeframes.find(entry => entry.key === timeframe.key)
 	const isTable = state.analyticsView === 'table'
 	const body: ReturnType<typeof Box>[] = []
 	if (tokens === undefined || tokens.totalTokens === 0) {
-		for (let index = 0; index < Math.max(1, Math.floor((ctx.rows - 14) / 2)); index += 1) {
+		for (let index = 0; index < Math.max(1, Math.floor((room - 1) / 2)); index += 1) {
 			body.push(blankRow(ctx))
 		}
 		body.push(
@@ -746,9 +819,9 @@ function analyticsBody(
 			)
 		)
 	} else if (isTable) {
-		body.push(...metricsView(ctx, tokens, state.modelScroll))
+		body.push(...metricsView(ctx, tokens, state.modelScroll, room))
 	} else {
-		body.push(...chartView(ctx, tokens, timeframe, width))
+		body.push(...chartView(ctx, tokens, timeframe, width, room))
 	}
 	const card = Box(
 		{
@@ -766,16 +839,11 @@ function analyticsBody(
 		},
 		...body
 	)
-	const resets = sessionResets(ctx, analytics.snapshot)
-	return column(
-		ctx,
-		[
-			analyticsBar(ctx, timeframe, state.analyticsView),
-			card,
-			...(resets === null ? [] : [centered(Text({ content: resets, fg: rgb(ctx.theme.dim) }))])
-		],
-		150
-	)
+	return [
+		analyticsBar(ctx, timeframe, state.analyticsView),
+		card,
+		...(resets === null ? [] : [centered(Text({ content: resets, fg: rgb(ctx.theme.dim) }))])
+	]
 }
 
 function dwellLabel(milliseconds: number): string {
@@ -811,9 +879,12 @@ function providerWindows(snapshot: DashboardSnapshot, provider: ProviderId): Usa
 	)
 }
 
-function buildSettingRows(snapshot: DashboardSnapshot): SettingRow[] {
+function buildSettingRows(
+	snapshot: DashboardSnapshot,
+	clis: Record<ProviderId, boolean>
+): SettingRow[] {
 	return [
-		...shownProviders(snapshot).flatMap(provider => [
+		...shownProviders(snapshot, clis).flatMap(provider => [
 			{ key: 'routing' as const, provider, scope: 'provider' as const },
 			{ key: 'auto' as const, provider, scope: 'provider' as const },
 			{ key: 'threshold' as const, provider, scope: 'provider' as const },
@@ -842,10 +913,12 @@ interface SettingLine {
 }
 
 function settingLine(ctx: Ctx, line: SettingLine) {
+	const hintWidth = ctx.width - 24
 	return Box(
 		{
 			backgroundColor: line.isSelected ? rgb(ctx.theme.selected) : rgb(ctx.theme.bg),
 			flexDirection: 'row',
+			id: line.isSelected ? SELECTED_ID : undefined,
 			width: '100%'
 		},
 		Text({ content: line.isSelected ? ' ▸ ' : '   ', fg: rgb(ctx.theme.accent) }),
@@ -854,7 +927,7 @@ function settingLine(ctx: Ctx, line: SettingLine) {
 			fg: rgb(line.isSelected ? ctx.theme.fg : ctx.theme.dim)
 		}),
 		Text({ attributes: 1, content: pad(line.value, 7), fg: rgb(line.valueColor) }),
-		Text({ content: pad(line.hint, 40), fg: rgb(ctx.theme.faint) })
+		...(hintWidth < 8 ? [] : [Text({ content: pad(line.hint, hintWidth), fg: rgb(ctx.theme.faint) })])
 	)
 }
 
@@ -1007,31 +1080,30 @@ function harnessPanel(ctx: Ctx, allRows: SettingRow[], selected: number) {
 }
 
 function settingsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: SettingRow[], selected: number) {
-	return column(
-		ctx,
-		[
-			...shownProviders(snapshot).map(provider =>
-				settingsPanel(ctx, snapshot, rows, provider, selected)
-			),
-			displayPanel(ctx, rows, selected),
-			harnessPanel(ctx, rows, selected)
-		],
-		78
-	)
+	return [
+		...shownProviders(snapshot, ctx.cliPresent).map(provider =>
+			settingsPanel(ctx, snapshot, rows, provider, selected)
+		),
+		displayPanel(ctx, rows, selected),
+		harnessPanel(ctx, rows, selected)
+	]
 }
 
 function accountsBody(ctx: Ctx, snapshot: DashboardSnapshot, rows: Row[], selected: number) {
 	const note = legend(ctx, snapshot)
-	const width = accountsWidth(ctx, snapshot)
-	return column(
-		ctx,
-		[
-			...shownProviders(snapshot).map(provider =>
-				providerPanel(ctx, snapshot, provider, rows, selected)
-			),
-			...(note === null ? [] : [note])
-		],
-		width + 2
+	const layout = accountsLayout(ctx, snapshot)
+	return [
+		...shownProviders(snapshot, ctx.cliPresent).map(provider =>
+			providerPanel(ctx, layout, snapshot, provider, rows, selected)
+		),
+		...(note === null ? [] : [note])
+	]
+}
+
+function confirmCard(ctx: Ctx, body: ReturnType<typeof Box>, max: number) {
+	return Box(
+		{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
+		Box({ flexDirection: 'column', width: Math.min(max, ctx.width) }, body)
 	)
 }
 
@@ -1069,7 +1141,7 @@ function addConfirmBody(ctx: Ctx, confirm: AddConfirm) {
 		),
 		...details.map(detail => line(Text({ content: `  ${detail}`, fg: rgb(ctx.theme.dim) })))
 	]
-	const card = Box(
+	const body = Box(
 		{
 			border: true,
 			borderColor: rgb(ctx.theme.accent),
@@ -1100,7 +1172,7 @@ function addConfirmBody(ctx: Ctx, confirm: AddConfirm) {
 		),
 		blankRow(ctx)
 	)
-	return column(ctx, [card], 70)
+	return [confirmCard(ctx, body, 70)]
 }
 
 function resetNote(outcome: ResetOutcome): string {
@@ -1131,7 +1203,7 @@ function resetConfirmBody(ctx: Ctx, snapshot: DashboardSnapshot, confirm: ResetC
 			Text({ content: '  ', fg: rgb(ctx.theme.bg) }),
 			...children
 		)
-	const card = Box(
+	const body = Box(
 		{
 			border: true,
 			borderColor: rgb(ctx.theme.accent),
@@ -1173,7 +1245,7 @@ function resetConfirmBody(ctx: Ctx, snapshot: DashboardSnapshot, confirm: ResetC
 		),
 		blankRow(ctx)
 	)
-	return column(ctx, [card], 60)
+	return [confirmCard(ctx, body, 60)]
 }
 
 type AnalyticsView = 'chart' | 'table'
@@ -1185,6 +1257,7 @@ interface ViewState {
 	timeframeIndex: number
 	analyticsView: AnalyticsView
 	modelScroll: number
+	scroll: number
 	note: string
 	alert: string
 	addConfirm: AddConfirm | null
@@ -1219,51 +1292,41 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 		selectedRow.accountId !== ADD_ROW &&
 		(accountResetCredits(selectedUsage)?.available ?? 0) > 0
 	const spillable = state.tab === 'accounts' && selectedUsage?.extraUsage?.enabled === true
-	const footer =
+	const hints =
 		state.addConfirm !== null
-			? '↑↓ choose · ⏎ continue · esc back'
+			? ['↑↓ choose', '⏎ continue', 'esc back']
 			: state.resetConfirm !== null
-				? '⏎ use one reset · esc keep it banked'
+				? ['⏎ use one reset', 'esc keep it banked']
 				: state.tab === 'accounts'
-					? `↑↓ select · ⏎ switch/add · [ ] order · a auto${resettable ? ' · r reset' : ''}${spillable ? ' · e spill' : ''} · tab next`
+					? [
+							'↑↓ select',
+							'⏎ switch/add',
+							'[ ] order',
+							'a auto',
+							...(resettable ? ['r reset'] : []),
+							...(spillable ? ['e spill'] : []),
+							'tab next'
+						]
 					: state.tab === 'analytics'
-						? '←→ range · m chart/metrics · ↑↓ scroll · tab next'
-						: '↑↓ select · ←→ adjust · ⏎ toggle · tab next'
-	const header = Box(
-		{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
+						? ['←→ range', 'm chart/metrics', '↑↓ scroll', 'tab next']
+						: ['↑↓ select', '←→ adjust', '⏎ toggle', 'tab next']
+	const children: Node[] = [
 		Box(
-			{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
+			{ flexDirection: 'row', flexShrink: 0, width: '100%' },
 			Text({ attributes: 1, content: 'tokenmaxx', fg: rgb(ctx.theme.accent) }),
 			Text({ content: `  ${clock}`, fg: rgb(ctx.theme.dim) }),
 			Text({ content: `   ↻ ${refreshed}`, fg: rgb(ctx.theme.faint) }),
 			...(state.note === '' ? [] : [Text({ content: `   ${state.note}`, fg: rgb(ctx.theme.warn) })])
 		)
-	)
-	const children: Array<ReturnType<typeof Box> | ReturnType<typeof Text>> = [header]
+	]
 	if (state.alert !== '') {
-		children.push(
-			Box(
-				{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
-				Box(
-					{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
-					Text({ content: state.alert, fg: rgb(ctx.theme.warn) })
-				)
-			)
-		)
+		children.push(Text({ content: state.alert, fg: rgb(ctx.theme.warn), flexShrink: 0 }))
 	}
-	children.push(
-		Box(
-			{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
-			Box(
-				{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
-				tabBar(ctx, state.tab)
-			)
-		)
-	)
+	children.push(tabBar(ctx, state.tab))
 	if (state.staleVersion !== null) {
 		children.push(
 			Box(
-				{ flexDirection: 'row', gap: 1, justifyContent: 'center', width: '100%' },
+				{ flexDirection: 'row', flexShrink: 0, gap: 1, justifyContent: 'center', width: '100%' },
 				Text({
 					attributes: 1,
 					bg: rgb(ctx.theme.warn),
@@ -1277,7 +1340,7 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 	} else if (state.updateAvailable !== null && !state.updateDismissed) {
 		children.push(
 			Box(
-				{ flexDirection: 'row', gap: 1, justifyContent: 'center', width: '100%' },
+				{ flexDirection: 'row', flexShrink: 0, gap: 1, justifyContent: 'center', width: '100%' },
 				Text({
 					attributes: 1,
 					bg: rgb(ctx.theme.accent),
@@ -1291,7 +1354,8 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 			)
 		)
 	}
-	children.push(
+	const bodyRows = ctx.rows - 2 - 2 * (children.length + 1)
+	const body =
 		state.tab === 'accounts'
 			? state.addConfirm !== null
 				? addConfirmBody(ctx, state.addConfirm)
@@ -1299,35 +1363,77 @@ function view(ctx: Ctx, analytics: AnalyticsSnapshot, rows: Row[], state: ViewSt
 					? resetConfirmBody(ctx, analytics.snapshot, state.resetConfirm)
 					: accountsBody(ctx, analytics.snapshot, rows, state.selected)
 			: state.tab === 'analytics'
-				? analyticsBody(ctx, analytics, timeframe, state)
+				? analyticsBody(ctx, analytics, timeframe, state, bodyRows)
 				: settingsBody(
 						ctx,
 						analytics.snapshot,
-						buildSettingRows(analytics.snapshot),
+						buildSettingRows(analytics.snapshot, ctx.cliPresent),
 						state.settingsSelected
 					)
-	)
-	children.push(Box({ flexGrow: 1 }))
 	children.push(
 		Box(
-			{ flexDirection: 'row', justifyContent: 'center', width: '100%' },
-			Box(
-				{ flexDirection: 'row', width: Math.min(CONTENT_MAX, ctx.columns - 2) },
-				Text({ content: footer, fg: rgb(ctx.theme.dim) })
-			)
+			{
+				flexDirection: 'column',
+				flexGrow: 1,
+				flexShrink: 1,
+				id: VIEWPORT_ID,
+				minHeight: 0,
+				overflow: 'hidden',
+				width: '100%'
+			},
+			Box({ flexDirection: 'column', flexShrink: 0, gap: 1, id: CONTENT_ID, width: '100%' }, ...body)
+		),
+		Box(
+			{ flexDirection: 'row', flexShrink: 0, width: '100%' },
+			Text({ content: fitHints(hints, ctx.width - SCROLL_HINT_WIDTH), fg: rgb(ctx.theme.dim) }),
+			Box({ flexGrow: 1 }),
+			Text({ content: '', fg: rgb(ctx.theme.faint), id: SCROLL_HINT_ID })
 		)
 	)
 	return Box(
 		{
+			alignItems: 'center',
 			backgroundColor: rgb(ctx.theme.bg),
 			flexDirection: 'column',
-			gap: 1,
 			height: '100%',
 			padding: 1,
 			width: '100%'
 		},
-		...children
+		Box(
+			{ flexDirection: 'column', flexGrow: 1, flexShrink: 1, gap: 1, minHeight: 0, width: ctx.width },
+			...children
+		)
 	)
+}
+
+function fitHints(hints: readonly string[], width: number): string {
+	const kept = [...hints]
+	while (kept.length > 2 && kept.join(' · ').length > width) {
+		kept.splice(-2, 1)
+	}
+	return kept.join(' · ')
+}
+
+function scrollOffset(
+	previous: number,
+	visible: number,
+	total: number,
+	selection: { top: number; height: number } | null
+): number {
+	const max = Math.max(0, total - visible)
+	const offset = Math.min(previous, max)
+	if (selection === null) {
+		return offset
+	}
+	const start = Math.max(0, selection.top - 1)
+	const end = Math.min(total, selection.top + selection.height + 1)
+	return start < offset ? start : end > offset + visible ? Math.min(max, end - visible) : offset
+}
+
+function scrollHint(offset: number, visible: number, total: number): string {
+	const above = offset > 0
+	const below = offset + visible < total
+	return above && below ? '↕ more' : above ? '↑ more' : below ? '↓ more' : ''
 }
 
 interface FixtureOptions {
@@ -1339,13 +1445,15 @@ interface FixtureOptions {
 
 export async function runTuiDashboard(
 	socketPath: string,
-	options: { fixture?: FixtureOptions; alert?: string }
+	options: { fixture?: FixtureOptions; alert?: string; renderer?: CliRenderer }
 ): Promise<DashboardAction | undefined> {
 	const fixture = options.fixture
 	const live = fixture === undefined
-	try {
-		process.stdin.setRawMode?.(true)
-	} catch {}
+	if (options.renderer === undefined) {
+		try {
+			process.stdin.setRawMode?.(true)
+		} catch {}
+	}
 	let routing: RoutingStatus =
 		fixture === undefined
 			? await readRouting(socketPath)
@@ -1355,14 +1463,17 @@ export async function runTuiDashboard(
 					pi: { present: true, routed: true },
 					routed: { anthropic: fixture.routed, openai: fixture.routed, xai: fixture.routed }
 				}
-	const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 })
-	await renderer.waitForThemeMode(400).catch(() => null)
+	const renderer =
+		options.renderer ?? (await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 }))
 	const themeEnvironmentOverride = themeOverride(process.env)
 	const envFallback: ThemeName = detectThemeName(process.env)
 	// Fixtures pin a built-in palette so recorded screenshots do not drift with whatever terminal
 	// renders them. TOKENMAXX_THEME=auto opts a fixture run back into terminal colors.
 	let preference: ThemePreference =
 		themeEnvironmentOverride ?? (live ? (await readPreferences()).theme : envFallback)
+	if (live || preference === 'auto') {
+		await renderer.waitForThemeMode(400).catch(() => null)
+	}
 	// Fetched even when a built-in palette is pinned, so switching back to auto needs no restart.
 	const terminalTheme =
 		live || preference === 'auto'
@@ -1377,7 +1488,7 @@ export async function runTuiDashboard(
 		fixture === undefined
 			? await readAnalytics(socketPath)
 			: buildScenario(fixture.name, simulatedNow)
-	let rows = orderedRows(analytics.snapshot)
+	let rows = orderedRows(analytics.snapshot, routing.clis)
 	const state: ViewState = {
 		addConfirm: null,
 		alert: options.alert ?? '',
@@ -1385,6 +1496,7 @@ export async function runTuiDashboard(
 		modelScroll: 0,
 		note: '',
 		resetConfirm: null,
+		scroll: 0,
 		selected: 0,
 		settingsSelected: 0,
 		staleVersion: live ? null : (process.env.TOKENMAXX_FAKE_STALE ?? null),
@@ -1407,25 +1519,52 @@ export async function runTuiDashboard(
 		state.selected = rows.length === 0 ? 0 : Math.max(0, Math.min(state.selected, rows.length - 1))
 	}
 
+	const scrollToSelection = () => {
+		const viewport = renderer.root.findDescendantById(VIEWPORT_ID)
+		const content = renderer.root.findDescendantById(CONTENT_ID)
+		if (viewport === undefined || content === undefined) {
+			return
+		}
+		renderer.root.calculateLayout()
+		const visible = viewport.getLayoutNode().getComputedHeight()
+		const total = content.getLayoutNode().getComputedHeight()
+		const selected = content.findDescendantById(SELECTED_ID)
+		let top = 0
+		for (let node = selected ?? null; node !== null && node !== content; node = node.parent) {
+			top += node.getLayoutNode().getComputedTop()
+		}
+		state.scroll = scrollOffset(
+			state.scroll,
+			visible,
+			total,
+			selected === undefined ? null : { height: selected.getLayoutNode().getComputedHeight(), top }
+		)
+		content.translateY = -state.scroll
+		const hint = renderer.root.findDescendantById(SCROLL_HINT_ID)
+		if (hint instanceof TextRenderable) {
+			hint.content = scrollHint(state.scroll, visible, total)
+		}
+	}
+
 	const paint = () => {
 		clampSelection()
-		const columns = process.stdout.columns ?? 80
+		const columns = renderer.width
 		let next: ReturnType<typeof Box>
 		try {
 			next = view(
 				{
 					cliPresent: routing.clis,
-					columns,
 					now: live ? Date.now() : simulatedNow,
 					pi: routing.pi,
 					routing: routing.routed,
-					rows: process.stdout.rows ?? 24,
+					rows: renderer.height,
 					switchFlagMs: fixture !== undefined && fixture.timewarp > 0 ? 24 * 60_000 : 120_000,
 					theme: currentTheme(),
 					themeFromTerminalActive: preference === 'auto' && terminalTheme !== null,
 					themePinnedByEnvironment: themeEnvironmentOverride !== null,
 					themePreference: preference,
-					tier: tierFor(columns)
+					tier: tierFor(columns),
+					width: Math.max(1, Math.min(CONTENT_MAX, columns - 2))
 				},
 				analytics,
 				rows,
@@ -1439,6 +1578,7 @@ export async function runTuiDashboard(
 			child.destroyRecursively()
 		}
 		renderer.root.add(next)
+		scrollToSelection()
 	}
 
 	const withBusy = async (message: string, work: () => Promise<void>) => {
@@ -1465,7 +1605,7 @@ export async function runTuiDashboard(
 				await refreshUsage(socketPath)
 			}
 			analytics = await readAnalytics(socketPath)
-			rows = orderedRows(analytics.snapshot)
+			rows = orderedRows(analytics.snapshot, routing.clis)
 			routing = await readRouting(socketPath)
 			clampSelection()
 		})
@@ -1499,7 +1639,7 @@ export async function runTuiDashboard(
 		void withBusy('switching…', async () => {
 			await requestSwitch(socketPath, row.provider, row.accountId)
 			analytics = await readAnalytics(socketPath)
-			rows = orderedRows(analytics.snapshot)
+			rows = orderedRows(analytics.snapshot, routing.clis)
 			const moved = rows.findIndex(r => r.accountId === row.accountId)
 			if (moved >= 0) {
 				state.selected = moved
@@ -1551,7 +1691,7 @@ export async function runTuiDashboard(
 		void withBusy('using a reset…', async () => {
 			outcome = await requestConsumeReset(socketPath, confirm.accountId)
 			analytics = await readAnalytics(socketPath)
-			rows = orderedRows(analytics.snapshot)
+			rows = orderedRows(analytics.snapshot, routing.clis)
 		}).then(() => {
 			if (outcome !== null) {
 				state.note = resetNote(outcome)
@@ -1614,7 +1754,7 @@ export async function runTuiDashboard(
 		void withBusy('reordering…', async () => {
 			await requestAccountOrder(socketPath, row.provider, order)
 			analytics = await readAnalytics(socketPath)
-			rows = orderedRows(analytics.snapshot)
+			rows = orderedRows(analytics.snapshot, routing.clis)
 			state.selected = rows.findIndex(candidate => candidate.accountId === row.accountId)
 		})
 	}
@@ -1643,7 +1783,7 @@ export async function runTuiDashboard(
 	}
 
 	const adjustSetting = (delta: number) => {
-		const row = buildSettingRows(analytics.snapshot)[state.settingsSelected]
+		const row = buildSettingRows(analytics.snapshot, routing.clis)[state.settingsSelected]
 		if (row === undefined) {
 			return
 		}
@@ -1715,7 +1855,7 @@ export async function runTuiDashboard(
 				? setInterval(() => {
 						simulatedNow += tick * fixture.timewarp
 						analytics = buildScenario(fixture.name, simulatedNow)
-						rows = orderedRows(analytics.snapshot)
+						rows = orderedRows(analytics.snapshot, routing.clis)
 						paint()
 					}, tick)
 				: null
@@ -1735,6 +1875,7 @@ export async function runTuiDashboard(
 			process.stdin.off('error', hangup)
 			process.stdout.off('error', hangup)
 			process.off('SIGHUP', hangup)
+			renderer.off('resize', paint)
 			try {
 				renderer.destroy()
 			} catch {}
@@ -1745,6 +1886,7 @@ export async function runTuiDashboard(
 		process.stdin.once('error', hangup)
 		process.stdout.once('error', hangup)
 		process.once('SIGHUP', hangup)
+		renderer.on('resize', paint)
 		const changeTimeframe = (delta: number) => {
 			state.timeframeIndex = Math.max(0, Math.min(TIMEFRAMES.length - 1, state.timeframeIndex + delta))
 			paint()
@@ -1811,6 +1953,7 @@ export async function runTuiDashboard(
 					paint()
 				} else if (key.name === 'tab') {
 					state.tab = TABS[(TABS.indexOf(state.tab) + 1) % TABS.length] as Tab
+					state.scroll = 0
 					paint()
 				} else if (key.name === 'r') {
 					if (!(state.tab === 'accounts' && openResetConfirm()) && live) {
@@ -1837,7 +1980,7 @@ export async function runTuiDashboard(
 						}
 					}
 				} else if (state.tab === 'settings') {
-					const settingCount = buildSettingRows(analytics.snapshot).length
+					const settingCount = buildSettingRows(analytics.snapshot, routing.clis).length
 					if (key.name === 'up' || key.name === 'k') {
 						state.settingsSelected = Math.max(0, state.settingsSelected - 1)
 						paint()
@@ -1894,7 +2037,7 @@ export async function runTuiDashboard(
 									{ profilePath: null, secretReference: null }
 								)
 								analytics = await readAnalytics(socketPath)
-								rows = orderedRows(analytics.snapshot)
+								rows = orderedRows(analytics.snapshot, routing.clis)
 							}
 						)
 					}
