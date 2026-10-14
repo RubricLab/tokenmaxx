@@ -1,0 +1,289 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`dashboard layout accounts at 120x32 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ ╭─ OpenAI · Codex   ● auto 90% ──────────────────────────────────────────────────────────────────────────────────────╮
+ │ ● dexter@rubriclabs.c… pro ↺3  5h ████████░░░░░░░░░░░░  41% ↻2h   7d ██████░░░░░░░░░░░░░░  29% ↻3d   extra $18.50  │
+ │ ○ ship@rubriclabs.com  pro     5h ██░░░░░░░░░░░░░░░░░░   8% ↻4h   7d ████░░░░░░░░░░░░░░░░  19% ↻3d                 │
+ │ ＋ add a Codex account   ⏎                                                                                         │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Anthropic · Claude Code   ● auto 90% ─────────────────────────────────────────────────────────────────────────────╮
+ │ ● dexter@rubriclabs.c… max20  5h █████░░░░░░░░░░░░░░░  25% ↻2h   7d ███░░░░░░░░░░░░░░░░░  14% ↻4d   extra  25%     │
+ │ ○ research@rubriclabs… max5   5h █░░░░░░░░░░░░░░░░░░░   5% ↻4h   7d ██░░░░░░░░░░░░░░░░░░   9% ↻4d                  │
+ │ ○ anthropic api · prod       31d ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ $23.71                                                       │
+ │ ＋ add a Claude Code account   ⏎                                                                                   │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ xAI · Grok   ● auto 90% ──────────────────────────────────────────────────────────────────────────────────────────╮
+ │ ○ ship@rubriclabs.com   limit ████████████████████ 100% ↻36m                                                       │
+ │ ● dexter@rubriclabs.c…  limit ░░░░░░░░░░░░░░░░░░░░   0% ↻1h                                                        │
+ │ ＋ add a Grok account   ⏎                                                                                          │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+ ↑↓ select · ⏎ switch/add · [ ] order · a auto · r reset · e spill · tab next
+
+"
+`;
+
+exports[`dashboard layout accounts at 80x24 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ ╭─ OpenAI · Codex   ● auto 90% ──────────────────────────────────────────────╮
+ │ ● dexter@rubri… ↺3  5h ██░░░░  41% ↻2h   7d ██░░░░  29% ↻3d   extra $18.50 │
+ │ ○ ship@rubricl…     5h ░░░░░░   8% ↻4h   7d █░░░░░  19% ↻3d                │
+ │ ＋ add a Codex account   ⏎                                                 │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Anthropic · Claude Code   ● auto 90% ─────────────────────────────────────╮
+ │ ● dexter@rubri…  5h ██░░░░  25% ↻2h   7d █░░░░░  14% ↻4d   extra  25%      │
+ │ ○ research@rub…  5h ░░░░░░   5% ↻4h   7d █░░░░░   9% ↻4d                   │
+ │ ○ anthropic ap… 31d ┄┄┄┄┄┄ $23.71                                          │
+ │ ＋ add a Claude Code account   ⏎                                           │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ xAI · Grok   ● auto 90% ──────────────────────────────────────────────────╮
+ │ ○ ship@rubricl…  limit ██████ 100% ↻36m                                    │
+ │ ● dexter@rubri…  limit ░░░░░░   0% ↻1h                                     │
+
+ ↑↓ select · ⏎ switch/add · [ ] order · a auto · r reset · tab next      ↓ more
+
+"
+`;
+
+exports[`dashboard layout accounts at 44x20 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ ╭─ OpenAI · Codex   ● auto 90% ──────────╮
+ │ ● dexter@rub… ↺3  5h ███░░░░  41% ↻2h  │
+ │ ○ ship@rubri…     5h █░░░░░░   8% ↻4h  │
+ │ ＋ add a Codex account   ⏎             │
+ ╰────────────────────────────────────────╯
+
+ ╭─ Anthropic · Claude Code   ● auto 90% ─╮
+ │ ● dexter@rub…  5h ██░░░░░  25% ↻2h     │
+ │ ○ research@r…  5h ░░░░░░░   5% ↻4h     │
+ │ ○ anthropic … 31d ┄┄┄┄┄┄┄ $23.71       │
+ │ ＋ add a Claude Code account   ⏎       │
+ ╰────────────────────────────────────────╯
+
+ ↑↓ select · tab next                ↓ more
+
+"
+`;
+
+exports[`dashboard layout accounts scroll to the selected row 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ │ ○ ops@rubriclabs.com       pro  7d ██░░░░░░░░░░░░  11% ↻5d                                     │
+ │ ＋ add a Codex account   ⏎                                                                     │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Anthropic · Claude Code   ● auto 90% ─────────────────────────────────────────────────────────╮
+ │ ○ design@rubriclabs.com    max20  5h █████████████░  92% ↻3h   Fable ███░░░░░░░░░░░  21% ↻3d   │
+ │ ○ research@rubriclabs.com  max20  5h █████████████░  92% ↻56m  Fable █████░░░░░░░░░  39% ↻5d   │
+ │ ○ zero@rubriclabs.com      max20  5h █████████████░  92% ↻2h   Fable ████░░░░░░░░░░  31% ↻4d   │
+ │ ● agents@rubriclabs.com    max20  5h ██████████░░░░  71% ↻4h   Fable ██░░░░░░░░░░░░  11% ↻5d   │
+ │ ○ dexter@rubriclabs.com    max20  5h █░░░░░░░░░░░░░   4% ↻5h   Fable ███████░░░░░░░  48% ↻5d   │
+ │ ＋ add a Claude Code account   ⏎                                                               │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ xAI · Grok   ● auto off ──────────────────────────────────────────────────────────────────────╮
+ │ ▸ add a Grok account   ⏎                                                                       │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ↑↓ select · ⏎ switch/add · [ ] order · a auto · tab next                                    ↑ more
+
+"
+`;
+
+exports[`dashboard layout settings at 106x28 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ ╭─ OpenAI · Codex   ⟳ auto 90% ────────────────────────────────────────────────────────────────────────╮
+ │ ▸ tokenmaxx   on     run codex through tokenmaxx                                                     │
+ │   auto-rotate on     switch accounts as the active one fills                                         │
+ │   switch at   90%    switch here; the rest stays in reserve                                          │
+ │   cooldown    5m     min wait between switches (anti-flap)                                           │
+ │   5h limit    shown  show on the accounts page                                                       │
+ │   7d limit    shown  show on the accounts page                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Anthropic · Claude Code   ⟳ auto 90% ───────────────────────────────────────────────────────────────╮
+ │   tokenmaxx   on     run claude through tokenmaxx                                                    │
+ │   auto-rotate on     switch accounts as the active one fills                                         │
+ │   switch at   90%    switch here; the rest stays in reserve                                          │
+ │   cooldown    5m     min wait between switches (anti-flap)                                           │
+ │   5h limit    shown  show on the accounts page                                                       │
+ │   7d limit    shown  show on the accounts page                                                       │
+ │   Fable limit shown  show on the accounts page                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ xAI · Grok   ⟳ auto 90% ────────────────────────────────────────────────────────────────────────────╮
+
+ ↑↓ select · ←→ adjust · ⏎ toggle · tab next                                                       ↓ more
+
+"
+`;
+
+exports[`dashboard layout settings scroll to the last row 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ │   5h limit    shown  show on the accounts page                                                       │
+ │   7d limit    shown  show on the accounts page                                                       │
+ │   Fable limit shown  show on the accounts page                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ xAI · Grok   ⟳ auto 90% ────────────────────────────────────────────────────────────────────────────╮
+ │   tokenmaxx   on     run grok through tokenmaxx                                                      │
+ │   auto-rotate on     switch accounts as the active one fills                                         │
+ │   switch at   90%    switch here; the rest stays in reserve                                          │
+ │   cooldown    5m     min wait between switches (anti-flap)                                           │
+ │   limit limit shown  show on the accounts page                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Display ────────────────────────────────────────────────────────────────────────────────────────────╮
+ │   theme       dark   pinned by TOKENMAXX_THEME                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Harnesses ──────────────────────────────────────────────────────────────────────────────────────────╮
+ │ ▸ pi          on     requests route through tokenmaxx                                                │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ↑↓ select · ←→ adjust · ⏎ toggle · tab next                                                       ↑ more
+
+"
+`;
+
+exports[`dashboard layout analytics chart at 80x24 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ range   1h   5h   24h   7d   31d                               chart · metrics
+
+ ╭─ Token throughput · all accounts · both providers ─────────────────────────╮
+ │                                                                            │
+ │484.1k/h                   ⡀⢸                    ⡆                          │
+ │                   ⢀      ⢠⡇⣿⢠                  ⢸⣿      ⢠                   │
+ │                  ⢸⢸      ⢸⡇⣿⢸⡄                ⡆⢸⣿      ⢸⡇                  │
+ │                  ⢸⢸ ⢀  ⢀ ⢸⣇⣿⣸⡇                ⡇⢸⣿⣷    ⡀⢸⣷⢠⡄                │
+ │                  ⣼⣾ ⣿  ⢸⢰⣾⣿⣿⣿⡇               ⣾⣧⣼⣿⣿ ⡇⣤ ⡇⢸⣿⢸⡇        ⣾       │
+ │       0  ⡇      ⢠⣿⣿⣀⣿  ⢸⢸⣿⣿⣿⣿⡇     ⢠⡄⢀⢀     ⢀⣿⣿⣿⣿⣿ ⡇⣿⢰⡇⣸⣿⣿⡇      ⢀ ⣿     ⡄ │
+ │         24h ago                                                        now │
+ │                                                                            │
+ │                   Σ 1.8M tokens      ≈ $1.28 value                         │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+
+ codex · dexter@rubriclabs.com · ↻ 2h    claude · dexter@rubriclabs.com · ↻ 2h
+
+ ←→ range · m chart/metrics · ↑↓ scroll · tab next
+
+"
+`;
+
+exports[`dashboard layout analytics metrics at 80x20 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+ range   1h   5h   24h   7d   31d                               chart · metrics
+
+ ╭─ Value · 24h · priced at API list rates ───────────────────────────────────╮
+ │                                                                            │
+ │          tokens by provi…        in       out     cache     value          │
+ │          Codex                24.8k      9.9k    793.2k     $0.74          │
+ │          Claude Code          24.3k      9.7k    776.0k     $0.45          │
+ │          Grok                  4.9k      1.9k    155.2k     $0.10          │
+ │          total                54.0k     21.6k      1.7M     $1.28          │
+ │                                                                            │
+ │               by model                     tokens     value                │
+ │               gpt-6-astra                  234.0k     $0.49                │
+
+ ←→ range · m chart/metrics · ↑↓ scroll · tab next                       ↓ more
+
+"
+`;
+
+exports[`dashboard layout add account card at 80x24 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ 11s ago
+
+  Accounts   Analytics   Settings
+
+     ╭─ Add a Codex account ──────────────────────────────────────────────╮
+     │                                                                    │
+     │  ▸ sign in with codex                                              │
+     │    your subscription account; its rate-limit windows meter here    │
+     │                                                                    │
+     │  ○ add an api key                                                  │
+     │    bills per token at api rates; account limits do not apply       │
+     │    finishes in the terminal: paste the key, name the account       │
+     │                                                                    │
+     │   ⏎  continue       esc  back                                      │
+     │                                                                    │
+     ╰────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+ ↑↓ choose · ⏎ continue · esc back
+
+"
+`;
+
+exports[`dashboard layout onboarding at 80x24 1`] = `
+"
+ tokenmaxx  HH:MM   ↻ —
+
+  Accounts   Analytics   Settings
+
+ ╭─ OpenAI · Codex   ● auto off ──────────────────────────────────────────────╮
+ │ ▸ add a Codex account   ⏎                                                  │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Anthropic · Claude Code   ● auto off ─────────────────────────────────────╮
+ │ ＋ add a Claude Code account   ⏎                                           │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ xAI · Grok   ● auto off ──────────────────────────────────────────────────╮
+ │ ＋ add a Grok account   ⏎                                                  │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+ ↑↓ select · ⏎ switch/add · [ ] order · a auto · tab next
+
+"
+`;

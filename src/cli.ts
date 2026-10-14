@@ -1086,32 +1086,35 @@ export async function runCli(rawArguments: readonly string[]): Promise<number> {
 		)
 		return 0
 	}
+	const fixtureName = process.env.TOKENMAXX_FIXTURE ?? option(arguments_, '--fixture')
+	if (
+		(arguments_[0] === undefined || arguments_[0] === 'dashboard') &&
+		fixtureName !== undefined &&
+		process.stdout.isTTY
+	) {
+		const [{ FIXTURE_NOW }, { runTuiDashboard }] = await Promise.all([
+			import('./tui/fixtures.ts'),
+			import('./tui/dashboard.ts')
+		])
+		const now = process.env.TOKENMAXX_NOW ? Number(process.env.TOKENMAXX_NOW) : FIXTURE_NOW
+		const timewarp = Number(process.env.TOKENMAXX_TIMEWARP ?? 0)
+		const routed = process.env.TOKENMAXX_INSTALLED !== 'false'
+		await runTuiDashboard('', {
+			fixture: {
+				name: fixtureName,
+				now,
+				routed,
+				timewarp: Number.isFinite(timewarp) && timewarp > 0 ? timewarp : 0
+			}
+		})
+		process.exit(0)
+	}
 	const context = await createContext()
 	try {
 		const command = arguments_[0]
 		switch (command) {
 			case undefined:
 			case 'dashboard': {
-				const fixtureName = process.env.TOKENMAXX_FIXTURE ?? option(arguments_, '--fixture')
-				if (fixtureName !== undefined && process.stdout.isTTY) {
-					const [{ FIXTURE_NOW }, { runTuiDashboard }] = await Promise.all([
-						import('./tui/fixtures.ts'),
-						import('./tui/dashboard.ts')
-					])
-					const now = process.env.TOKENMAXX_NOW ? Number(process.env.TOKENMAXX_NOW) : FIXTURE_NOW
-					const timewarp = Number(process.env.TOKENMAXX_TIMEWARP ?? 0)
-					const routed = process.env.TOKENMAXX_INSTALLED !== 'false'
-					await runTuiDashboard(context.paths.managerSocket, {
-						fixture: {
-							name: fixtureName,
-							now,
-							routed,
-							timewarp: Number.isFinite(timewarp) && timewarp > 0 ? timewarp : 0
-						}
-					})
-					context.store.close()
-					process.exit(0)
-				}
 				await ensureDaemon(context)
 				if (process.stdout.isTTY) {
 					const { runTuiDashboard } = await import('./tui/dashboard.ts')

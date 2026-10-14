@@ -1,4 +1,5 @@
-- [2026-10-01] mac app polish
+- [2026-10-14] the dashboard fits the terminal it runs in
+- [2026-10-01] [mac app polish](https://github.com/RubricLab/tokenmaxx/commit/675f52cbbc798b7ee8b161fe3794c13bde9363c8)
 - [2026-09-30] proxy refuses web pages
 - [2026-09-30] a native macOS app for tokenmaxx, with a menu bar item
 - [2026-09-30] macos login startup and uninstall all
