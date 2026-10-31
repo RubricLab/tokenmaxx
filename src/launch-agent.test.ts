@@ -110,6 +110,7 @@ describe('login startup files', () => {
 				},
 				KeepAlive: true,
 				Label: 'sh.tokenmaxx.daemon',
+				ProcessType: 'Interactive',
 				RunAtLoad: true,
 				WorkingDirectory: input.userDirectory
 			})
