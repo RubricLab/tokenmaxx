@@ -100,6 +100,9 @@ export function launchAgentFiles(input: LaunchAgentOptions) {
 					ExitTimeOut: 10,
 					KeepAlive: true,
 					Label: label,
+					// Without this launchd runs the daemon at utility QoS on efficiency cores,
+					// and every dashboard request and proxied call waits several times longer.
+					ProcessType: 'Interactive',
 					ProgramArguments: [executable, 'daemon', 'run'],
 					RunAtLoad: true,
 					StandardErrorPath: logPath,

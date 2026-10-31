@@ -24,6 +24,11 @@ type PersistedSchema<Type> = { parse(value: unknown): Type }
 
 const maxTokenEventAgeMs = 31 * 24 * 60 * 60 * 1000
 const tokenBucketCount = 120
+const tokenMinuteMs = 60_000
+// Charts whose buckets are at least this wide read the per-minute rollup. A minute
+// placed at its start shifts at most 10% of a bucket, and long windows stop
+// scanning every raw event on the daemon's only thread.
+const rollupMinBucketMs = 10 * tokenMinuteMs
 
 export interface TokenTimeframeAggregate {
 	key: string
@@ -144,6 +149,43 @@ function migratePolicyDefaults(database: Database): void {
 	}
 }
 
+// One row per minute, provider, account and model, kept in step with token_events.
+// Empty strings stand in for a missing account or model so the key stays unique.
+function migrateTokenMinutes(database: Database): void {
+	const exists =
+		database
+			.query<{ name: string }, []>(
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'token_minutes'"
+			)
+			.get() !== null
+	if (exists) {
+		return
+	}
+	database.transaction(() => {
+		database.exec(`
+      CREATE TABLE token_minutes (
+        minute INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (minute, provider, account_id, model)
+      ) WITHOUT ROWID;
+      CREATE INDEX token_minutes_account ON token_minutes(account_id, minute);
+    `)
+		database
+			.query(
+				`INSERT INTO token_minutes (minute, provider, account_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+         SELECT (at / ?) * ?, provider, COALESCE(account_id, ''), COALESCE(model, ''), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_creation_tokens)
+         FROM token_events GROUP BY 1, 2, 3, 4`
+			)
+			.run(tokenMinuteMs, tokenMinuteMs)
+	})()
+}
+
 function migrate(database: Database): void {
 	database.exec('PRAGMA journal_mode = WAL')
 	database.exec('PRAGMA foreign_keys = ON')
@@ -215,6 +257,7 @@ function migrate(database: Database): void {
 			'ALTER TABLE token_events ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0'
 		)
 	}
+	migrateTokenMinutes(database)
 	const requiresLabelMigration = !accountColumns.has('label')
 	const requiresExternalAccountIdMigration = !accountColumns.has('external_account_id')
 	const requiresExternalUserIdMigration = !accountColumns.has('external_user_id')
@@ -509,21 +552,41 @@ export function createStateStore(databasePath: string): StateStore {
 
 	function recordTokenEvent(event: TokenEvent): void {
 		const parsed = TokenEventSchema.parse(event)
-		database
-			.query(
-				'INSERT INTO token_events (at, provider, account_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-			)
-			.run(
-				parsed.at,
-				parsed.provider,
-				parsed.accountId,
-				parsed.model,
-				parsed.inputTokens,
-				parsed.outputTokens,
-				parsed.cacheReadTokens,
-				parsed.cacheCreationTokens
-			)
-		database.query('DELETE FROM token_events WHERE at < ?').run(parsed.at - maxTokenEventAgeMs)
+		const cutoff = parsed.at - maxTokenEventAgeMs
+		database.transaction(() => {
+			database
+				.query(
+					'INSERT INTO token_events (at, provider, account_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+				)
+				.run(
+					parsed.at,
+					parsed.provider,
+					parsed.accountId,
+					parsed.model,
+					parsed.inputTokens,
+					parsed.outputTokens,
+					parsed.cacheReadTokens,
+					parsed.cacheCreationTokens
+				)
+			database
+				.query(
+					'INSERT INTO token_minutes (minute, provider, account_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (minute, provider, account_id, model) DO UPDATE SET input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens, cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens, cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens'
+				)
+				.run(
+					Math.floor(parsed.at / tokenMinuteMs) * tokenMinuteMs,
+					parsed.provider,
+					parsed.accountId ?? '',
+					parsed.model ?? '',
+					parsed.inputTokens,
+					parsed.outputTokens,
+					parsed.cacheReadTokens,
+					parsed.cacheCreationTokens
+				)
+			database.query('DELETE FROM token_events WHERE at < ?').run(cutoff)
+			database
+				.query('DELETE FROM token_minutes WHERE minute < ?')
+				.run(Math.floor(cutoff / tokenMinuteMs) * tokenMinuteMs)
+		})()
 	}
 
 	function tokenAnalytics(
@@ -549,15 +612,40 @@ export function createStateStore(databasePath: string): StateStore {
 		>(
 			'SELECT model, provider, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached, SUM(cache_creation_tokens) AS cacheCreation FROM token_events WHERE at >= ? AND at <= ? GROUP BY model, provider'
 		)
+		const minuteBucketQuery = database.query<
+			{ b: number; tokens: number },
+			[number, number, number, number]
+		>(
+			'SELECT CAST((minute - ?) / ? AS INTEGER) AS b, SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) AS tokens FROM token_minutes WHERE minute >= ? AND minute <= ? GROUP BY b'
+		)
+		const minuteModelQuery = database.query<
+			{
+				model: string | null
+				provider: string
+				input: number
+				output: number
+				cached: number
+				cacheCreation: number
+			},
+			[number, number]
+		>(
+			"SELECT NULLIF(model, '') AS model, provider, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached, SUM(cache_creation_tokens) AS cacheCreation FROM token_minutes WHERE minute >= ? AND minute <= ? GROUP BY model, provider"
+		)
 		return timeframes.map(({ key, ms }) => {
 			const start = nowMillis - ms
 			const bucketMs = Math.max(1, Math.round(ms / tokenBucketCount))
+			const rollup = bucketMs >= rollupMinBucketMs
 			const buckets = new Array<number>(tokenBucketCount).fill(0)
-			for (const row of bucketQuery.all(start, bucketMs, start, nowMillis)) {
+			for (const row of (rollup ? minuteBucketQuery : bucketQuery).all(
+				start,
+				bucketMs,
+				start,
+				nowMillis
+			)) {
 				const index = Math.min(tokenBucketCount - 1, Math.max(0, row.b))
 				buckets[index] = (buckets[index] ?? 0) + row.tokens
 			}
-			const byModel = modelQuery.all(start, nowMillis).map(row => ({
+			const byModel = (rollup ? minuteModelQuery : modelQuery).all(start, nowMillis).map(row => ({
 				cacheCreation: row.cacheCreation,
 				cached: row.cached,
 				input: row.input,
@@ -581,7 +669,7 @@ export function createStateStore(databasePath: string): StateStore {
 				},
 				[string, number]
 			>(
-				'SELECT model, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached, SUM(cache_creation_tokens) AS cacheCreation FROM token_events WHERE account_id = ? AND at >= ? GROUP BY model'
+				"SELECT NULLIF(model, '') AS model, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached, SUM(cache_creation_tokens) AS cacheCreation FROM token_minutes WHERE account_id = ? AND minute >= ? GROUP BY model"
 			)
 			.all(accountId, startMillis)
 			.map(row => ({ ...row, model: row.model ?? 'unknown' }))

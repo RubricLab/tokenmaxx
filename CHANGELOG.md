@@ -1,3 +1,5 @@
+- [2026-10-30] the login daemon runs at interactive priority, so the dashboard stops timing out
+- [2026-10-28] analytics reads a per-minute rollup, so an open dashboard stops freezing the daemon
 - [2026-10-14] the dashboard fits the terminal it runs in
 - [2026-10-01] [mac app polish](https://github.com/RubricLab/tokenmaxx/commit/675f52cbbc798b7ee8b161fe3794c13bde9363c8)
 - [2026-09-30] proxy refuses web pages
